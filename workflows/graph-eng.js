@@ -212,14 +212,17 @@ const MODE_HINT = {
   review: 'Review/audit: one research node per independent dimension (e.g. correctness, security, performance), findings with file:line. No implement nodes.',
 }
 const HOW = {
-  research: 'Investigate with Read/Grep/Glob (WebSearch/WebFetch only if the question is external). Stop as soon as the acceptance is met. Each finding = claim + evidence (file:line or URL).',
+  research: 'Investigate the repo with Read/Grep/Glob. When the answer depends on something outside the repo (external API, SDK, library, framework, CLI, version upgrade), research its current docs instead of trusting memory, in this order: ' +
+    '(1) a docs MCP if the session has one (find it with ToolSearch, e.g. "context7" or "docs"; Context7 = resolve-library-id, then query-docs); (2) the official docs/reference with WebFetch; (3) WebSearch for changelog, breaking changes and known issues. ' +
+    'Match the docs to the version installed here (package.json, lockfile, requirements, go.mod...) and name that version. If none of these tools is available, say so and label external claims "unverified". ' +
+    'Stop as soon as the acceptance is met. Each finding = claim + evidence (file:line, or URL + version).',
   design: 'Write a decision record: context -> options (>=2, one line each) -> decision -> contracts/interfaces -> trade-offs and risks -> how to verify. Prefer the simplest design that meets acceptance; ground it in the real code.',
   implement: 'Edit only the files in scope (a tiny unavoidable adjacent edit is fine; list it). Follow the repo conventions. Never delete or weaken a test to make it pass. Before returning, run the fastest relevant check' +
     (CHECKS.length ? ` (${CHECKS.join(' | ')})` : '') + ' and report each one in checks (ok=false only for failures your change caused or should fix; pre-existing failures go to evidence as "pre-existing", with the tail of the output). Do not commit.',
 }
 const LENSES = {
   research: [
-    'evidence: open the cited files/URLs and confirm they say what is claimed; flag stale or unsupported claims',
+    'evidence: open the cited files/URLs and confirm they say what is claimed; for external docs, confirm they match the installed version and that the cited API/option exists there; flag stale or unsupported claims',
     'coverage: which important angle or counter-evidence did it miss that would change the conclusion',
   ],
   design: [
@@ -227,7 +230,7 @@ const LENSES = {
     'simplicity: what is speculative or over-engineered and can be cut without failing acceptance',
   ],
   implement: [
-    'correctness: run the checks, read the diff, test each acceptance item and the edge cases',
+    'correctness: run the checks, read the diff, test each acceptance item and the edge cases; external API/library calls must match the upstream docs artifact, not memory',
     'integration: callers, types, conventions and tests around the change; anything half-done or regressed',
   ],
 }
@@ -533,6 +536,7 @@ Design the SMALLEST graph of jobs that yields a high-quality result. Every extra
    - brief = the end state + expected output + where to look + what not to touch. Describe the outcome, not the steps: the node owns the how.
    - deps only where a node truly consumes another's output (no fake waiting). Inherently sequential work is a short chain, not a fan-out.
    - Reads parallelize, writes do not: implement nodes run one at a time. List their exact files, and when several must agree on a contract (types, API, schema), make them depend on one design node that fixes it.
+   - External knowledge: when the task integrates or upgrades an external API, SDK, library or service the repo does not already use the same way, add one research node for its current docs (installed version, auth, limits, errors, breaking changes), risk medium, and make every node that uses it depend on it. Memory of an API is not evidence.
    - risk: high = security, auth, money, data/migrations, public API, prod config; low = read-only work with little downside; else medium.
    - acceptance = concrete, verifiable checks for that node.
 7. Write ${RUN_DIR}/plan.md: goal, doneWhen, assumptions, node table and a mermaid graph.

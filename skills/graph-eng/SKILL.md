@@ -79,9 +79,12 @@ Faça no máximo ~6 tool calls, sem ler arquivo grande inteiro:
 - Checks determinísticos (`package.json`, `Makefile`, CLAUDE.md: typecheck, test, lint). **O grafo vale o
   que vale o oráculo.** Em `implement`, sem nenhum check executável, avise o usuário: o planner vai pôr
   "escrever o teste antes" no aceite. Se um check já falha no baseline, diga isso no `context`.
+- Dependências externas: se a tarefa integra ou atualiza API, SDK ou biblioteca, anote o nome e a versão
+  instalada (`package.json`, lockfile) e se a sessão tem MCP de docs (ex.: Context7). Não pesquise a doc
+  aqui: o planner cria um nó de pesquisa para isso, e o verificador confere a versão.
 
 Monte o `context` em **≤ 250 palavras**: onde mexer, convenções que importam, comandos de check, falhas
-pré-existentes e estado do git. Ele vai no prefixo de todo agente.
+pré-existentes, dependências externas com versão e estado do git. Ele vai no prefixo de todo agente.
 
 ## 3. Parâmetros
 
