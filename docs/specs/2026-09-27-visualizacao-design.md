@@ -655,7 +655,7 @@ outros modos), sempre com o prefixo `graph-eng`. Nenhum modo escreve fora de `os
 
 ## 8. Plano de testes
 
-Rodam com `node --test test/`, sem dependência e sem `package.json`, porque o repo não tem um
+Rodam com `node --test`, sem dependência e sem `package.json`, porque o repo não tem um
 (`ls` da raiz: `.claude-plugin/ skills/ workflows/ README.md LICENSE`). O D2 não é necessário: o
 teste do `--svg` é pulado se `which d2` falhar.
 
@@ -772,7 +772,7 @@ então `goal`, `assessment` e `result` longos são cortados ao copiar.
 
 ## 10. Como verificar esta spec implementada
 
-1. `node --test test/` passa, e os goldens batem.
+1. `node --test` passa, e os goldens batem.
 2. Checklist manual do §8.3 feito e registrado.
 3. `git diff --stat` mostra só `bin/graph-watch.mjs`, `test/**`, `skills/graph-eng/SKILL.md` (os 4
    blocos do §5.4) e `workflows/graph-eng.js` (só `graphText()` e 3 chamadas de `log`).
