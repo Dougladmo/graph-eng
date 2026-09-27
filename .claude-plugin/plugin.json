@@ -1,0 +1,11 @@
+{
+  "name": "graph-eng",
+  "version": "0.1.0",
+  "description": "Graph engineering enxuto para o Claude Code: planner → workers baratos (leitura em paralelo, escrita em raia única) → gate de checks + verificador forte → reparo → critic em loop até os critérios de pronto fecharem → relatório com gate humano. ~6-20 agentes, não 100+.",
+  "author": {
+    "name": "Douglas Oliveira",
+    "url": "https://github.com/Dougladmo"
+  },
+  "repository": "https://github.com/Dougladmo/graph-eng",
+  "keywords": ["workflow", "multi-agent", "orchestration", "graph", "verification"]
+}

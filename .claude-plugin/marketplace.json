@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "graph-eng",
+  "description": "Graph engineering enxuto para o Claude Code.",
+  "owner": {
+    "name": "Douglas Oliveira",
+    "url": "https://github.com/Dougladmo"
+  },
+  "plugins": [
+    {
+      "name": "graph-eng",
+      "description": "Orquestra tarefa complexa como um grafo pequeno de agentes, com executor barato, revisor forte e loop até os critérios de pronto fecharem.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
