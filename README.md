@@ -15,8 +15,6 @@ dúvida. Gasta ~6-20 agentes, não 100+. A fundamentação de cada decisão, com
 
 ## Instalação
 
-O repo é privado. O Claude Code clona com as suas credenciais do git (`gh auth login` já resolve).
-
 ```
 /plugin marketplace add Dougladmo/graph-eng
 /plugin install graph-eng@graph-eng
@@ -72,3 +70,7 @@ claude --plugin-dir /caminho/para/graph-eng
 ```
 
 Suba a `version` do `plugin.json` a cada release, senão o `/plugin marketplace update` não enxerga a mudança.
+
+## Licença
+
+[MIT](LICENSE)
