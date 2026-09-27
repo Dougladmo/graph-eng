@@ -121,7 +121,15 @@ config de produção ou API pública:
 
 1. `Workflow({name: 'graph-eng:graph-eng', args: {...args, planOnly: true}})` devolve `plan` (goal, doneWhen,
    premissas, nós), `questions`, `estimate` (agentes no caminho feliz e teto) e `graph` (mermaid).
-2. Mostre tudo ao usuário, faça as `questions` com AskUserQuestion e deixe ele aprovar ou editar.
+2. Mostre o plano **desenhado**: rode
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" snapshot --run <wf da run planOnly> --economy <preset> --mode <mode> --no-color`
+   e cole num bloco de código. Se o graph-watch falhar, use o `graph` (mermaid). Liste em
+   seguida as **premissas** e a **estimativa** (caminho feliz e teto). Depois decida **só com
+   AskUserQuestion**, nunca em texto corrido:
+   - uma pergunta "Aprova o plano?" com as opções `Aprovar e rodar` · `Editar nós` ·
+     `Cancelar`. A edição chega pelo campo Other ou pelas notas;
+   - uma pergunta "As premissas estão certas?" com as opções `Todas certas` · `Corrigir alguma`;
+   - uma pergunta por item de `questions` do plano, com 2-4 opções concretas.
 3. Reinvoque com `args.plan = <plano aprovado>` e as respostas embutidas na `task`. O planner não roda de novo.
 
 ## 5. Executar
@@ -130,24 +138,66 @@ config de produção ou API pública:
 Workflow({ name: 'graph-eng:graph-eng', args: { task, mode, economy, spec, doneWhen, runDir, runsRoot, runId, context, checks } })
 ```
 
-Passe `args` como objeto JSON, não como string. O workflow roda em background: avise em uma linha a
-estimativa, o teto e onde fica o paper trail, e **não faça polling**, porque a notificação chega sozinha.
+Passe `args` como objeto JSON, não como string. O workflow roda em **background**: o retorno da
+chamada **não** é o fim da run.
+
+O retorno da chamada traz o id da run (`wf_…`, na linha antes de `Script file:`). Guarde-o como
+`<wf>`: **todo** comando abaixo leva `--run <wf>`. Se o retorno não trouxer o id, use
+`--run-id <runId>` no lugar de `--run <wf>`. Nunca rode o graph-watch sem um dos dois.
+`<preset>` e `<mode>` são os mesmos `args.economy` e `args.mode` passados ao Workflow.
+
+1. Responda em até 4 linhas, começando por `⏳ RODANDO — graph-eng <runId>`: estimativa, teto,
+   paper trail e o comando para ver o grafo ao vivo **num terminal à parte** (aba ou split na
+   CLI; "Terminal: Split" no VSCode):
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" live --run <wf> --economy <preset> --mode <mode>`
+   (acrescente `--svg` para a visão no browser, se o `d2` estiver instalado).
+2. Arme o Monitor com este comando literal:
+   ```
+   Monitor({ description: "graph-eng <runId>", timeout_ms: 1800000,
+             command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" events --run <wf> --economy <preset> --mode <mode>' })
+   ```
+   Se ele expirar antes de `TERMINADO`, rearme com o **mesmo** comando.
+3. **Enquanto não chegar `TERMINADO` ou a notificação de conclusão do workflow, toda resposta
+   começa com `⏳ RODANDO — graph-eng <runId> · k/N prontos`.** Não escreva "pronto", "terminei"
+   nem "concluído" sobre a tarefa, e não resuma resultado de nó como se fosse final. Um
+   `erro: nenhuma run do graph-eng` do Monitor **não** é fim da run: siga como no item 6.
+4. "Como está?": rode via Bash
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" snapshot --run <wf> --economy <preset> --mode <mode> --no-color`
+   e cole a saída num bloco de código. Sobre um nó, rode
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" agent <id> --run <wf> --no-color`
+   e cole a saída. Não faça polling por conta própria: o Monitor e a notificação final bastam.
+5. Onde abrir cada agente: no terminal, `/workflows` → run → fase → agente (prompt, tool calls
+   recentes e resultado). No VSCode, o agent map (contador de agentes no prompt ou `/tasks`). Em
+   qualquer lugar, o comando `agent` do item 4.
+6. Se o graph-watch sair com `erro` (formato não reconhecido, run não achada), siga sem ele:
+   só a notificação de conclusão do Workflow e o `/workflows`. Continue com ⏳ RODANDO até essa
+   notificação chegar.
 
 ## 6. Entregar (gate humano)
 
 1. Leia `<runDir>/REPORT.md`.
-2. Responda curto: **status** · o que mudou ou o que achou · decisões · **premissas assumidas** (para o
-   usuário confirmar) · o que falhou ou ficou aberto (`openGaps` e nós `failed` com os `blocking`) ·
-   **gate humano** (`humanGate`) · custo (`stats.agents` contra a estimativa).
-3. Em implement, mostre o `git diff --stat` contra o baseline da etapa 2.
-4. **Nunca** faça commit, push, deploy ou migration remota por conta própria. Isso é o gate, e é do usuário.
-5. Se voltar `partial` ou houver `openGaps`, ofereça mais uma rodada: nova run com a tarefa focada nos
-   gaps e `context` apontando para o REPORT.md anterior.
+2. Abra a resposta com `✅ TERMINADO — graph-eng <runId> · <status>`. Siga curto: o que mudou ou
+   o que achou · decisões · o que falhou ou ficou aberto (`openGaps` e nós `failed` com os
+   `blocking`) · custo (`stats.agents` contra a estimativa) · o grafo final (a saída de
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" snapshot --run <wf> --economy <preset> --mode <mode> --no-color`
+   num bloco de código, ou o mermaid do REPORT como reserva).
+3. **Premissas e gate humano vão por AskUserQuestion, não em prosa:**
+   - uma pergunta "Confirma as premissas?", listando as premissas que mudam comportamento, com
+     as opções `Confirmo` · `Alguma está errada`;
+   - uma pergunta por item de `humanGate` que exige ação (commit, deploy, migration, publicar),
+     com as opções `Aprovo` · `Ainda não` · `Quero ver o diff`;
+   - se voltar `partial` ou houver `openGaps`: "Rodar mais um round focado nos gaps?", com as
+     opções `Sim` · `Não`.
+4. Em implement, mostre o `git diff --stat` contra o baseline da etapa 2.
+5. **Nunca** faça commit, push, deploy ou migration remota por conta própria. Isso é o gate, e é do usuário.
 
 ## Recuperação
 
 - **Interrompido:** `Workflow({scriptPath, resumeFromRunId})`. Os agentes já concluídos voltam do cache.
-- **Resultado estranho:** leia `journal.jsonl` no diretório de transcript da run antes de diagnosticar.
+- **Resultado estranho:** rode
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" snapshot --run <wf> --economy <preset> --mode <mode> --no-color`
+  e `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" agent <id> --run <wf> --no-color` antes de
+  diagnosticar. Leia o `journal.jsonl` cru só se o graph-watch não reconhecer o formato.
 - **Nó `blocked` por orçamento:** rode de novo com `economy: 'max'` ou com `maxAgents` maior.
 - **Não ligue ultracode junto.** Ele desliga o aviso de workflow grande e troca de propósito o teto pelo
   máximo de tokens.

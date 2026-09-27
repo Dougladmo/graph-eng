@@ -1,0 +1,12 @@
+graph-eng · happy · round 2 · 6/6 prontos · agent…
+
+[+] R1 pronto  ← plan
+[o] R2 pronto s/ verif.  ← plan
+  └▶ [+] I1 pronto  ← R2
+  └▶ [o] r2-G2 pronto s/ verif.  ← R2
+    └▶ [+] I2 pronto  ← R1 I1
+    └▶ [+] r2-G1 pronto  ← I1
+
+critic r2: critérios atendidos · synth: pronto
+legenda: [~] trabalhando  [?] verificando  [R] re…
+         [o] pronto s/ verif.  [x] falhou / falho…

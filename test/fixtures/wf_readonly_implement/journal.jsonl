@@ -1,0 +1,7 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0068aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0065aaaaaaaaaaaaa","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:0068aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0065aaaaaaaaaaaaa","result":{"goal":"Exemplo de implement em modo leitura.","complexity":"trivial","doneWhen":["critério de exemplo"],"assumptions":[],"nodes":[{"id":"I2","title":"Nó implement de risco baixo","kind":"implement","brief":"Exemplo de implement que vira design em modo leitura.","deps":[],"risk":"low","acceptance":["critério de exemplo"]}],"questions":[]}}
+{"type":"started","key":"v2:0069aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0066aaaaaaaaaaaaa","label":"work:I2","phase":"Execute"}
+{"type":"result","key":"v2:0069aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0066aaaaaaaaaaaaa","result":{"status":"done","summary":"Proposta de exemplo sem edição.","confidence":"medium","artifact":"<run dir>/I2.md","checks":[]}}
+{"type":"started","key":"v2:006aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0067aaaaaaaaaaaaa","label":"critic:r1","phase":"Critic"}
+{"type":"result","key":"v2:006aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0067aaaaaaaaaaaaa","result":{"done":true,"gaps":[]}}

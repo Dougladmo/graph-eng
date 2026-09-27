@@ -1,0 +1,7 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0048aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0045aaaaaaaaaaaaa","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:0048aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0045aaaaaaaaaaaaa","result":{"goal":"Exemplo de defer com check vermelho.","complexity":"trivial","doneWhen":["critério de exemplo"],"assumptions":[],"nodes":[{"id":"G1","title":"Nó de risco baixo com check vermelho","kind":"research","brief":"Exemplo de defer com check vermelho.","deps":[],"risk":"low","acceptance":["critério de exemplo"]}],"questions":[]}}
+{"type":"started","key":"v2:0049aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0046aaaaaaaaaaaaa","label":"work:G1","phase":"Execute"}
+{"type":"result","key":"v2:0049aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0046aaaaaaaaaaaaa","result":{"status":"done","summary":"Achado de exemplo, check vermelho informado mesmo sem gate.","confidence":"medium","artifact":"<run dir>/G1.md","evidence":["evidência de exemplo"],"checks":[{"cmd":"npm run exemplo:check","ok":false,"output":"falha de exemplo"}]}}
+{"type":"started","key":"v2:004aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0047aaaaaaaaaaaaa","label":"critic:r1","phase":"Critic"}
+{"type":"result","key":"v2:004aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0047aaaaaaaaaaaaa","result":{"done":true,"gaps":[]}}

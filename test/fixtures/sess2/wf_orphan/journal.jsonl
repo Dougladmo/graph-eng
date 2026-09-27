@@ -1,0 +1,3 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0074aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0073aaaaaaaaaaaaa","label":"work:Q1","phase":"Execute"}
+{"type":"result","key":"v2:0074aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0073aaaaaaaaaaaaa","result":{"status":"done","summary":"Achado órfão de exemplo.","confidence":"medium","artifact":"<run dir>/Q1.md","evidence":["evidência de exemplo"],"checks":[]}}

@@ -1,0 +1,6 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0070aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a006daaaaaaaaaaaaa","label":"work:P1","phase":"Execute"}
+{"type":"result","key":"v2:0070aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a006daaaaaaaaaaaaa","result":{"status":"done","summary":"Achado de exemplo do plan gate.","confidence":"high","artifact":"<run dir>/P1.md","evidence":["evidência de exemplo"],"checks":[]}}
+{"type":"started","key":"v2:0071aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a006eaaaaaaaaaaaaa","label":"verify:P1","phase":"Verify"}
+{"type":"result","key":"v2:0071aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a006eaaaaaaaaaaaaa","result":{"pass":true,"confidence":"high","blocking":[]}}
+{"type":"started","key":"v2:0072aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a006faaaaaaaaaaaaa","label":"work:P2","phase":"Execute"}

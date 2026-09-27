@@ -1,0 +1,8 @@
+{"type":"launched"}
+{"type":"started","key":"v2:004faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a004baaaaaaaaaaaaa","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:004faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a004baaaaaaaaaaaaa","result":{"goal":"Exemplo de draft falho.","complexity":"moderate","doneWhen":["critério de exemplo"],"assumptions":[],"nodes":[{"id":"D1","title":"Nó exploratório com um draft falho","kind":"design","brief":"Exemplo de exploração com draft falho.","deps":[],"risk":"medium","explore":true,"acceptance":["critério de exemplo"]},{"id":"E1","title":"Dependente aguardando o exploratório","kind":"implement","brief":"Depende de D1.","deps":["D1"],"risk":"medium","acceptance":["critério de exemplo"]}],"questions":[]}}
+{"type":"started","key":"v2:0050aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a004caaaaaaaaaaaaa","label":"draft-a:D1","phase":"Execute"}
+{"type":"failed","key":"v2:0050aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a004caaaaaaaaaaaaa"}
+{"type":"started","key":"v2:0051aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a004daaaaaaaaaaaaa","label":"draft-b:D1","phase":"Execute"}
+{"type":"result","key":"v2:0051aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a004daaaaaaaaaaaaa","result":{"status":"done","summary":"Draft B de exemplo, sozinho.","confidence":"medium","artifact":"<run dir>/D1.b.md","filesChanged":["<arquivo de exemplo>"],"checks":[]}}
+{"type":"started","key":"v2:0052aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a004eaaaaaaaaaaaaa","label":"verify:D1","phase":"Verify"}

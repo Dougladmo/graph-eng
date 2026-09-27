@@ -1,0 +1,6 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0042aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a003faaaaaaaaaaaaa","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:0042aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a003faaaaaaaaaaaaa","result":{"goal":"Exemplo de reparo em aberto.","complexity":"trivial","doneWhen":["critério de exemplo"],"assumptions":[],"nodes":[{"id":"X","title":"Nó em reparo aberto","kind":"implement","brief":"Exemplo de reparo em aberto.","deps":[],"risk":"medium","acceptance":["critério de exemplo"]}],"questions":[]}}
+{"type":"started","key":"v2:0043aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0040aaaaaaaaaaaaa","label":"work:X","phase":"Execute"}
+{"type":"result","key":"v2:0043aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0040aaaaaaaaaaaaa","result":{"status":"done","summary":"Mudança de exemplo, check vermelho.","confidence":"medium","artifact":"<run dir>/X.md","filesChanged":["<arquivo de exemplo>"],"checks":[{"cmd":"npm run exemplo:check","ok":false,"output":"falha de exemplo"}]}}
+{"type":"started","key":"v2:0044aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0041aaaaaaaaaaaaa","label":"repair:X","phase":"Verify"}

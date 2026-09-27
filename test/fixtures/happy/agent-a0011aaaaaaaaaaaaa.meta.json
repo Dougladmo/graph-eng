@@ -1,0 +1,6 @@
+{
+  "agentType": "workflow-subagent",
+  "description": "synth",
+  "workflowPhase": "Synthesize",
+  "model": "sonnet"
+}

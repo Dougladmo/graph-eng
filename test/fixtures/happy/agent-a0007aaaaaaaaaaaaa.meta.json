@@ -1,0 +1,6 @@
+{
+  "agentType": "workflow-subagent",
+  "description": "verify:I1",
+  "workflowPhase": "Verify",
+  "model": "sonnet"
+}

@@ -1,0 +1,5 @@
+{"type":"launched"}
+{"type":"started","key":"v2:005baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0059aaaaaaaaaaaaa","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:005baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0059aaaaaaaaaaaaa","result":{"goal":"Exemplo de trabalho que falha.","complexity":"moderate","doneWhen":["critério de exemplo"],"assumptions":[],"nodes":[{"id":"X","title":"Nó cujo trabalho falha","kind":"implement","brief":"Exemplo de trabalho que falha.","deps":[],"risk":"medium","acceptance":["critério de exemplo"]},{"id":"Y","title":"Dependente pulado","kind":"implement","brief":"Depende de X.","deps":["X"],"risk":"medium","acceptance":["critério de exemplo"]}],"questions":[]}}
+{"type":"started","key":"v2:005caaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a005aaaaaaaaaaaaaa","label":"work:X","phase":"Execute"}
+{"type":"failed","key":"v2:005caaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a005aaaaaaaaaaaaaa"}

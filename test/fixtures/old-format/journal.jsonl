@@ -1,0 +1,4 @@
+{"type":"started","key":"v2:0029aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0027aaaaaaaaaaaaa"}
+{"type":"result","key":"v2:0029aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0027aaaaaaaaaaaaa","result":{"summary":"resultado de exemplo antigo"}}
+{"type":"started","key":"v2:002aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0028aaaaaaaaaaaaa"}
+{"type":"result","key":"v2:002aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0028aaaaaaaaaaaaa","result":{"summary":"resultado de exemplo antigo dois"}}

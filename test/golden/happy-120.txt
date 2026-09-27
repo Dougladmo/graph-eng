@@ -1,0 +1,30 @@
+graph-eng · happy · round 2 · 6/6 prontos · agentes 17 (estimativa ~10, teto 24)
+
+┌──────────────────────┐   ┌──────────────────────┐
+│ R1 · research        │   │ R2 · research        │
+│ [+] pronto           │   │ [o] pronto s/ verif. │
+│ Nó de pesquisa de ex…│   │ Nó de pesquisa de ex…│
+│ ← plan               │   │ ← plan               │
+└──────────────────────┘   └──────────────────────┘
+                                       │
+            ┌──────────────────────────┤
+            ▼                          ▼
+┌──────────────────────┐   ┌──────────────────────┐
+│ I1 · implement       │   │ r2-G2 · research     │
+│ [+] pronto           │   │ [o] pronto s/ verif. │
+│ Nó de implementação …│   │ Gap de exemplo secun…│
+│ ← R2                 │   │ ← R2                 │
+└──────────────────────┘   └──────────────────────┘
+            │                           
+            ├──────────────────────────┐
+            ▼                          ▼
+┌──────────────────────┐   ┌──────────────────────┐
+│ I2 · implement       │   │ r2-G1 · implement    │
+│ [+] pronto           │   │ [+] pronto           │
+│ Nó de implementação …│   │ Gap de exemplo depen…│
+│ ← R1 I1              │   │ ← I1                 │
+└──────────────────────┘   └──────────────────────┘
+
+critic r2: critérios atendidos · synth: pronto
+legenda: [~] trabalhando  [?] verificando  [R] reparando N  [r] reparado, sem reverificação  [+] pronto
+         [o] pronto s/ verif.  [x] falhou / falhou (check) / bloqueado  [!] erro  [ ] aguardando  [-] pulado

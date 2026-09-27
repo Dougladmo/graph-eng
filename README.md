@@ -48,6 +48,26 @@ o `INDEX.md` guarda a memória entre runs.
 
 O workflow nunca faz commit, push, deploy nem migration remota. Isso fica no gate humano.
 
+## Acompanhar uma run
+
+A skill sempre imprime o id da run (`wf_…`) e os comandos prontos, mas dá para chamar o
+`graph-watch` (`bin/graph-watch.mjs`, só leitura) na mão a qualquer momento:
+
+```bash
+# grafo ao vivo, redesenhado sozinho, num terminal à parte
+node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" live --run <wf>
+
+# uma foto do estado atual, para colar na conversa
+node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" snapshot --run <wf> --no-color
+
+# prompt, tool calls recentes e resultado de um nó específico
+node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" agent <id> --run <wf> --no-color
+```
+
+Sem `d2` instalado, o `live` e o `snapshot` desenham caixas e setas com caracteres puros no
+próprio terminal. Com `which d2` encontrando o binário, acrescente `--svg` no `live` para abrir a
+mesma visão como SVG no browser.
+
 ## Estrutura
 
 ```

@@ -368,6 +368,56 @@ function mermaid() {
   return L.join('\n')
 }
 
+// Forma compacta (§6.4) direto de NODES/RESULTS/BLOCKED: a verdade do motor, sem dedução de
+// journal. Estados que só existem em progresso (trabalhando/verificando/reparando/erro) não dão
+// pra saber daqui, então um nó ainda sem resultado sai como "aguardando".
+function graphText() {
+  const depth = new Map()
+  const depthOf = (id) => {
+    if (depth.has(id)) return depth.get(id)
+    depth.set(id, 0)
+    const n = NODES.get(id)
+    const deps = (n && n.deps) || []
+    const v = deps.length ? Math.max(0, ...deps.map((p) => (NODES.has(p) ? depthOf(p) + 1 : 0))) : 0
+    depth.set(id, v)
+    return v
+  }
+  const lines = []
+  for (const n of NODES.values()) {
+    const r = RESULTS.get(n.id)
+    let marker = ' '
+    let label = 'aguardando'
+    if (!r) {
+      // segue aguardando
+    } else if (r.status === 'skipped') {
+      marker = '-'
+      label = 'pulado'
+    } else if (r.status === 'blocked') {
+      marker = 'x'
+      label = 'bloqueado'
+    } else if (r.status === 'failed') {
+      const isCheck = ((r.verdict && r.verdict.blocking) || []).some((b) => String((b && b.issue) || '').startsWith('check failing:'))
+      marker = 'x'
+      label = isCheck ? 'falhou (check)' : 'falhou'
+    } else if (r.status === 'done') {
+      if (r.verified) {
+        marker = '+'
+        label = 'pronto'
+      } else if (r.attempts > 1) {
+        marker = 'r'
+        label = 'sem reverificação'
+      } else {
+        marker = 'o'
+        label = 'pronto s/ verif.'
+      }
+    }
+    const k = depthOf(n.id)
+    const deps = n.deps.length ? n.deps.join(' ') : 'plan'
+    lines.push(`${'  '.repeat(k)}${k ? '└▶ ' : ''}[${marker}] ${n.id} ${label}  ← ${deps}`)
+  }
+  return lines.join('\n')
+}
+
 // Leitura paraleliza, escrita não: dois nós implement nunca rodam ao mesmo tempo (Cognition 2026, Google/DeepMind 2026).
 function writeBusy(n, running) {
   return n.kind === 'implement' && [...running.values()].some((m) => m.kind === 'implement')
@@ -417,6 +467,7 @@ async function executeGraph(batch) {
     RESULTS.set(n.id, r)
     if (r.status === 'blocked' || r.status === 'skipped') BLOCKED.add(n.id)
     log(`${n.id} -> ${r.status}${r.verified ? ' (verificado)' : ''}${r.attempts > 1 ? `, ${r.attempts - 1} reparo(s)` : ''}`)
+    log(graphText())
   }
 }
 
@@ -571,6 +622,7 @@ if (A.planOnly) {
 }
 
 log(`plano: ${first.length} nó(s), ${plan.complexity}, preset ${ECONOMY}: ~${estimate} agentes no caminho feliz (teto ${C.maxAgents}, largura ${C.width})`)
+log(graphText())
 
 // ── Loop: executa o DAG, o critic julga o todo, os gaps viram o próximo round ──
 let batch = first
@@ -606,6 +658,7 @@ for (let round = 1; round <= C.maxRounds; round++) {
   batch = normalize(fresh, `r${round + 1}-`, round + 1)
   batch.forEach((n) => NODES.set(n.id, n))
   log(`round ${round + 1}: ${batch.map((n) => n.id).join(', ')}`)
+  log(graphText())
 }
 
 const nodesOut = () => [...NODES.values()].map((n) => {

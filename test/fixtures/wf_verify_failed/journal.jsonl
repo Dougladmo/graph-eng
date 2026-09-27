@@ -1,0 +1,7 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0056aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0053aaaaaaaaaaaaa","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:0056aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0053aaaaaaaaaaaaa","result":{"goal":"Exemplo de verificador que falha.","complexity":"moderate","doneWhen":["critério de exemplo"],"assumptions":[],"nodes":[{"id":"X","title":"Nó cujo verificador falha","kind":"implement","brief":"Exemplo de verificador que falha.","deps":[],"risk":"medium","acceptance":["critério de exemplo"]},{"id":"Y","title":"Dependente aguardando X","kind":"implement","brief":"Depende de X.","deps":["X"],"risk":"medium","acceptance":["critério de exemplo"]}],"questions":[]}}
+{"type":"started","key":"v2:0057aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0054aaaaaaaaaaaaa","label":"work:X","phase":"Execute"}
+{"type":"result","key":"v2:0057aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0054aaaaaaaaaaaaa","result":{"status":"done","summary":"Mudança de exemplo.","confidence":"high","artifact":"<run dir>/X.md","filesChanged":["<arquivo de exemplo>"],"checks":[{"cmd":"npm run exemplo:check","ok":true,"output":""}]}}
+{"type":"started","key":"v2:0058aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0055aaaaaaaaaaaaa","label":"verify:X","phase":"Verify"}
+{"type":"failed","key":"v2:0058aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0055aaaaaaaaaaaaa"}

@@ -1,0 +1,4 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0025aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0023aaaaaaaaaaaaa","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:0025aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0023aaaaaaaaaaaaa","result":{"goal":"Exemplo de run interrompida.","complexity":"trivial","doneWhen":["critério de exemplo"],"assumptions":[],"nodes":[{"id":"X","title":"Nó de exemplo interrompido","kind":"research","brief":"Investigar exemplo interrompido.","deps":[],"risk":"medium","acceptance":["critério de exemplo"]}],"questions":[]}}
+{"type":"started","key":"v2:0026aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a0024aaaaaaaaaaaaa","label":"work:X","phase":"Execute"}

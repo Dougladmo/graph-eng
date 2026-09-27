@@ -1,0 +1,6 @@
+{"type":"assistant","timestamp":"2026-01-01T09:00:00.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"tool_use","id":"toolu_0001","name":"Bash","input":{"command":"echo exemplo-um","description":"Rodar checagem de exemplo um"}}]}}
+{"type":"user","timestamp":"2026-01-01T09:00:05.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_0001","content":"saída de exemplo um"}]}}
+{"type":"assistant","timestamp":"2026-01-01T09:00:10.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"tool_use","id":"toolu_0002","name":"Read","input":{"file_path":"<arquivo de exemplo um>"}}]}}
+{"type":"user","timestamp":"2026-01-01T09:00:12.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_0002","content":"conteúdo de exemplo"}]}}
+{"type":"assistant","timestamp":"2026-01-01T09:00:20.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":""}]}}
+{"type":"assistant","timestamp":"2026-01-01T09:00:25.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_0003","name":"StructuredOutput","input":{"pass":false,"confidence":"high","blocking":[{"issue":"bloqueio de exemplo um","where":"<arquivo de exemplo um>","evidence":"evidência de exemplo","fix":"correção de exemplo"}]}}]}}

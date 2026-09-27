@@ -1,0 +1,5 @@
+{"type":"launched"}
+{"type":"started","key":"v2:002daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a002baaaaaaaaaaaaa","label":"confirma:exemplo","phase":"Confirma"}
+{"type":"result","key":"v2:002daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a002baaaaaaaaaaaaa","result":{"summary":"confirmação de exemplo"}}
+{"type":"started","key":"v2:002eaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a002caaaaaaaaaaaaa","label":"investiga:exemplo","phase":"Investiga"}
+{"type":"failed","key":"v2:002eaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","agentId":"a002caaaaaaaaaaaaa"}
