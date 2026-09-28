@@ -98,7 +98,9 @@ bin/
   graph-watch.mjs      CLI só leitura: live, snapshot, agent, events, ui
   ui-server.mjs        servidor do painel web (Node puro, 0 deps)
   ui/                  página do painel: graph-layout.mjs (modelo → layout, puro e testado),
-                       app.js (DOM ao vivo), style.css (visual trocável), index.html
+                       app.js (DOM ao vivo), theme.js (tema claro/escuro), index.html,
+                       src/style.css (fonte, Tailwind) → style.css (gerado, versionado),
+                       fonts/ (Geist e Geist Mono, SIL OFL)
 ```
 
 ## Desenvolvimento
@@ -108,6 +110,19 @@ Para testar uma mudança local sem publicar:
 ```bash
 claude --plugin-dir /caminho/para/graph-eng
 ```
+
+O painel é estilizado com Tailwind CSS v4, só em desenvolvimento: quem instala o plugin recebe o
+`bin/ui/style.css` já gerado e não precisa de `npm install`. Para mexer no visual:
+
+```bash
+npm install            # só o Tailwind (devDependencies)
+npm run css:watch      # regera bin/ui/style.css a cada mudança em bin/ui/src/style.css, index.html ou app.js
+npm test               # inclui a checagem de que o style.css versionado está em dia com a fonte
+```
+
+Os tokens do painel viram utilitários (`bg-surface`, `text-fg3`, `border-line`, `text-accent`,
+`font-mono`…) e `dark:` segue o switch de tema. Edite `bin/ui/src/style.css`, nunca o gerado, e versione
+os dois.
 
 Suba a `version` do `plugin.json` a cada release, senão o `/plugin marketplace update` não enxerga a mudança.
 

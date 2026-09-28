@@ -1,0 +1,14 @@
+{
+  "name": "graph-eng",
+  "private": true,
+  "description": "Ferramentas de desenvolvimento do graph-eng. O plugin em si roda sem dependências: o CSS do painel sai daqui já gerado (bin/ui/style.css).",
+  "scripts": {
+    "test": "node --test",
+    "css:build": "tailwindcss -i bin/ui/src/style.css -o bin/ui/style.css",
+    "css:watch": "tailwindcss -i bin/ui/src/style.css -o bin/ui/style.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  }
+}

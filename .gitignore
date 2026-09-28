@@ -1,2 +1,3 @@
 .DS_Store
 .graph-runs/
+node_modules/

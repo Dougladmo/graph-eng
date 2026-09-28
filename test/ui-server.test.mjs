@@ -223,7 +223,7 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
     assert.equal((await get(panel.port, '/api/health', { Host: `localhost:${panel.port}` })).status, 200)
   })
 
-  test('estáticos por lista fixa: /, /app.js e /style.css com content-type; fora da lista → 404', async () => {
+  test('estáticos por lista fixa (página, tema, ícone, fontes) com content-type; fora da lista → 404', async () => {
     const idx = await get(panel.port, '/')
     assert.equal(idx.status, 200)
     assert.match(idx.headers['content-type'], /text\/html/)
@@ -233,7 +233,19 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
     const css = await get(panel.port, '/style.css')
     assert.equal(css.status, 200)
     assert.match(css.headers['content-type'], /text\/css/)
-    for (const p of ['/../graph-watch.mjs', '/%2e%2e/graph-watch.mjs', '/x.js', '/ui/app.js', '/graph-watch.mjs', '/..%2fgraph-watch.mjs']) {
+    // tema, ícone e fontes saem do próprio painel: a CSP não libera nenhuma origem de fora
+    for (const [p, type] of [
+      ['/theme.js', /javascript/],
+      ['/favicon.svg', /image\/svg\+xml/],
+      ['/fonts/geist-latin.woff2', /font\/woff2/],
+      ['/fonts/geist-mono-latin.woff2', /font\/woff2/],
+    ]) {
+      const r = await get(panel.port, p)
+      assert.equal(r.status, 200, p)
+      assert.match(r.headers['content-type'], type)
+    }
+    assert.equal(/https?:/.test(idx.headers['content-security-policy']), false)
+    for (const p of ['/fonts/OFL.txt', '/fonts/x.woff2', '/../graph-watch.mjs', '/%2e%2e/graph-watch.mjs', '/x.js', '/ui/app.js', '/graph-watch.mjs', '/..%2fgraph-watch.mjs']) {
       assert.equal((await get(panel.port, p)).status, 404, `esperava 404 para ${p}`)
     }
   })

@@ -53,9 +53,9 @@
 //   último cliente desconecta.
 //
 // Estáticos (lista fixa, qualquer outro caminho → 404): `/` e `/index.html` (text/html), `/app.js`
-// (text/javascript), `/graph-layout.mjs` (text/javascript, módulo importado pelo app.js), `/style.css`
-// (text/css), lidos de bin/ui/. CSP: script só 'self'; estilo 'self',
-// inline e fonts.googleapis.com; fonte fonts.gstatic.com; conexão só 'self'.
+// (text/javascript), `/graph-layout.mjs` (módulo importado pelo app.js), `/theme.js` (aplica o tema antes
+// da pintura), `/style.css`, `/favicon.svg` e as fontes Geist em `/fonts/*.woff2` (SIL OFL, fonts/OFL.txt),
+// lidos de bin/ui/. Nada vem de fora: CSP com script, estilo, fonte e conexão só 'self'.
 
 import fs from 'node:fs'
 import http from 'node:http'
@@ -80,8 +80,14 @@ const STATIC = {
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/graph-layout.mjs': ['graph-layout.mjs', 'text/javascript; charset=utf-8'],
+  '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
+  '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
+  '/fonts/geist-latin.woff2': ['fonts/geist-latin.woff2', 'font/woff2'],
+  '/fonts/geist-latin-ext.woff2': ['fonts/geist-latin-ext.woff2', 'font/woff2'],
+  '/fonts/geist-mono-latin.woff2': ['fonts/geist-mono-latin.woff2', 'font/woff2'],
+  '/fonts/geist-mono-latin-ext.woff2': ['fonts/geist-mono-latin-ext.woff2', 'font/woff2'],
 }
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
 // ── Leitura das runs (com cache por assinatura do journal, para não reler journal antigo a cada tick) ──
 
