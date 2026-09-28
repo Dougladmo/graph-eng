@@ -1095,9 +1095,12 @@ function renderHeader(model) {
     els.header.append(h1, chips, el('p', 'goal'))
   }
   const [h1, chips, goal] = els.header.children
-  const id = shortWf(model.wf)
+  // O nome é o mesmo da lateral (titleOf): numa retomada o wf muda e o nome da run não. O wf da execução
+  // mostrada fica no title do h1, e a barra de ações avisa quando ela já foi retomada em outra.
+  const name = model.runId ? titleOf({ runId: model.runId }) : shortWf(model.wf)
   if (h1.firstChild.data !== (model.project ? `${model.project} — ` : '')) h1.firstChild.data = model.project ? `${model.project} — ` : ''
-  setText(h1.lastChild, id)
+  setText(h1.lastChild, name)
+  if (h1.title !== (model.wf || '')) h1.title = model.wf || ''
   const [status, round, agents, , , warns] = chips.children
   setText(status, model.status || '')
   setData(status, { status: model.status || '' })

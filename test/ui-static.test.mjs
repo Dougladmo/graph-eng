@@ -149,6 +149,15 @@ test('style.css estiliza as 5 variantes de bolinha por data-variant e a legenda 
   }
 })
 
+test('cabeçalho da run usa o mesmo nome da lateral (titleOf do runId), e o wf fica no title do h1', () => {
+  const start = js.indexOf('function renderHeader(')
+  const body = js.slice(start, js.indexOf('\n}\n', start))
+  assert.match(body, /model\.runId \? titleOf\(\{ runId: model\.runId \}\) : shortWf\(model\.wf\)/)
+  assert.match(body, /setText\(h1\.lastChild, name\)/)
+  assert.match(body, /h1\.title = model\.wf/)
+  assert.doesNotMatch(body, /setText\(h1\.lastChild, id\)/)
+})
+
 test('empty-msg e conn não são filhos de run-header (renderHeader não pode apagá-los)', () => {
   const headerOpen = html.indexOf('<header id="run-header"')
   const headerClose = html.indexOf('</header>', headerOpen)
