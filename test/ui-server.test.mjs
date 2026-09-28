@@ -37,6 +37,17 @@ function copyMulti() {
   return dir
 }
 
+// Estado do painel (config.json, organize.json, fila…) sempre num dir temporário: nenhum teste lê nem
+// grava em ~/.claude (spec C1).
+function tmpState() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-eng-ui-state-'))
+  return { dir, configPath: path.join(dir, 'config.json') }
+}
+const tmpEnv = () => {
+  const { dir, configPath } = tmpState()
+  return { ...process.env, GRAPH_ENG_CONFIG: configPath, GRAPH_ENG_STATE_DIR: dir }
+}
+
 function runDirOf(projectsDir, wf) {
   const [slug, sess] = RUNS[wf]
   return path.join(projectsDir, slug, sess, 'subagents', 'workflows', wf)
@@ -62,7 +73,7 @@ async function getJson(port, p) {
 
 // Sobe `graph-watch ui` como subprocesso e resolve quando a URL aparece no stdout (ou quando ele sai).
 function spawnUi(args) {
-  const child = spawn(process.execPath, [BIN, 'ui', '--no-open', ...args], { cwd: ROOT, env: { ...process.env } })
+  const child = spawn(process.execPath, [BIN, 'ui', '--no-open', ...args], { cwd: ROOT, env: tmpEnv() })
   let stdout = ''
   let stderr = ''
   child.stdout.on('data', (d) => (stdout += d))
@@ -92,7 +103,7 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
   let panel
   before(async () => {
     projectsDir = copyMulti()
-    panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100 })
+    panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath: tmpState().configPath })
   })
   after(async () => {
     await panel.close()
@@ -519,7 +530,7 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
 describe('painel web: SSE /api/events (item 6)', () => {
   test('emite `runs` ao conectar e `run` com o wf depois de um append no journal', async () => {
     const projectsDir = copyMulti()
-    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100 })
+    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath: tmpState().configPath })
     const events = []
     let req
     try {
@@ -618,10 +629,10 @@ describe('`live --svg` vira alias do painel (item 9)', () => {
   test('imprime a URL com ?run=<wf> e segue como live, sem D2', async () => {
     const projectsDir = copyMulti()
     // porta ocupada por um graph-watch já de pé: o live --svg reaproveita e não sobe outro.
-    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100 })
+    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath: tmpState().configPath })
     try {
       const runDir = runDirOf(projectsDir, 'wf_aaaa0000-alfa-ativo')
-      const child = spawn(process.execPath, [BIN, 'live', '--svg', '--run-dir', runDir, '--port', String(panel.port), '--projects-dir', projectsDir, '--no-color'], { cwd: ROOT })
+      const child = spawn(process.execPath, [BIN, 'live', '--svg', '--run-dir', runDir, '--port', String(panel.port), '--projects-dir', projectsDir, '--no-color'], { cwd: ROOT, env: tmpEnv() })
       let out = ''
       child.stdout.on('data', (d) => (out += d))
       child.stderr.on('data', (d) => (out += d))
