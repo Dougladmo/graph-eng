@@ -563,27 +563,12 @@ export async function buildModel(opts = {}) {
   let resumeMeta = null // { id, from } (C11/I8): wf retomado sem `plan` no journal
   const resumeSynthEvents = [] // eventos sintéticos p/ desenhar resume.done como pronto (I8, D2 §8)
 
+  // Run retomada (I8, D2 §8): o wf retomado não chama o planner de novo (o motor recebe args.plan). O
+  // prefixo do próprio wf traz `Resume: <rs>`, e o plano e o estado prontos saem de
+  // `<runDir do header>/resume/<rs>.json`. Vem antes da irmã planOnly: numa run com plan gate, a irmã
+  // tem o plano de antes da aprovação e não sabe quais nós já estavam prontos — com ela na frente, todo
+  // nó pronto da retomada saía como pulado.
   if (!planStarted) {
-    const sibDir = siblingPlanOnlyDir || findSiblingPlanOnly(runDir)
-    if (sibDir) {
-      const { events: sibEvents } = readJournalTolerant(path.join(sibDir, 'journal.jsonl'))
-      const st = sibEvents.find((e) => e.type === 'started' && e.label === 'plan')
-      const res = st && sibEvents.find((e) => e.key === st.key && e.type === 'result')
-      const hasWork = sibEvents.some((e) => e.type === 'started' && e.label && e.label.startsWith('work:'))
-      if (res && !hasWork) {
-        planRes = res.result
-        applyPlanEffortAndMode(planRes)
-        const first = doNormalize(planRes.nodes, { round: 1 })
-        applyRoundOneRails(first)
-        warns.push(`plano lido da run planOnly ${path.basename(sibDir)}`)
-      }
-    }
-  }
-
-  // Fallback de uma run retomada (I8, D2 §8): o wf retomado não chama o planner de novo (o motor recebe
-  // args.plan) nem tem irmã planOnly (a retomada pode vir de outra sessão). O prefixo do próprio wf traz
-  // `Resume: <rs>`, e o plano e o estado prontos saem de `<runDir do header>/resume/<rs>.json`.
-  if (!planStarted && !planRes) {
     const { runDirRaw, resumeId } = readWfPrefixInfo(runDir)
     if (runDirRaw && resumeId) {
       const rd = loadResume(runDirRaw, resumeId)
@@ -605,15 +590,42 @@ export async function buildModel(opts = {}) {
           const key = `resume:${++n}:${id}`
           resumeSynthEvents.push({ type: 'started', key, agentId: null, label: `work:${id}`, phase: 'Execute', synthetic: true })
           resumeSynthEvents.push({ type: 'result', key, result: { status: 'done', summary: entry.summary || '', artifact: entry.artifact || '', filesChanged: entry.filesChanged || [] } })
-          if (node.kind === 'implement') {
+          if (node.kind === 'implement' || entry.verified === true) {
             const vkey = `resume:${++n}:v:${id}`
             resumeSynthEvents.push({ type: 'started', key: vkey, agentId: null, label: `verify:${id}`, phase: 'Verify', synthetic: true })
             resumeSynthEvents.push({ type: 'result', key: vkey, result: { pass: true, confidence: 'high', blocking: [] } })
           }
         }
+        // Revisão do design herdada: o motor não roda outra quando a da execução anterior passou. Sem ela,
+        // a coluna ficava "aguardando" e os nós de design, "pronto s/ verif.".
+        const dr = rd.resume && rd.resume.designReview
+        const drInJournal = events.some((e) => e.type === 'started' && /^design-review:/.test(e.label || ''))
+        if (dr && dr.pass === true && !drInJournal) {
+          const att = Number.isInteger(dr.attempts) && dr.attempts > 0 ? dr.attempts : 1
+          const dkey = `resume:${++n}:dr`
+          resumeSynthEvents.push({ type: 'started', key: dkey, agentId: null, label: `design-review:r${att}`, phase: 'Design review', synthetic: true })
+          resumeSynthEvents.push({ type: 'result', key: dkey, result: { pass: true, confidence: 'high', blocking: [] } })
+        }
         warns.push(`plano e estado prontos lidos de resume/${resumeId} (sem plan neste journal)`)
       } else {
         warns.push(`Resume: ${resumeId} sem resume/${resumeId}.json legível`)
+      }
+    }
+  }
+
+  if (!planStarted && !planRes) {
+    const sibDir = siblingPlanOnlyDir || findSiblingPlanOnly(runDir)
+    if (sibDir) {
+      const { events: sibEvents } = readJournalTolerant(path.join(sibDir, 'journal.jsonl'))
+      const st = sibEvents.find((e) => e.type === 'started' && e.label === 'plan')
+      const res = st && sibEvents.find((e) => e.key === st.key && e.type === 'result')
+      const hasWork = sibEvents.some((e) => e.type === 'started' && e.label && e.label.startsWith('work:'))
+      if (res && !hasWork) {
+        planRes = res.result
+        applyPlanEffortAndMode(planRes)
+        const first = doNormalize(planRes.nodes, { round: 1 })
+        applyRoundOneRails(first)
+        warns.push(`plano lido da run planOnly ${path.basename(sibDir)}`)
       }
     }
   }

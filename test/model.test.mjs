@@ -780,3 +780,87 @@ describe('wf_phases: esqueleto de fases, effort/ceiling, revisão do design e po
     assert.equal(withAuto.effort.mode, 'implement')
   })
 })
+
+// Retomada de uma run que passou pelo plan gate: o wf da retomada não chama o planner (o plano vem por
+// args) e tem, na mesma pasta de workflows, a irmã planOnly do gate. O resume/<rs>.json tem de vencer a
+// irmã: ela traz o plano de antes da aprovação e não sabe quais nós já estavam prontos.
+describe('run retomada com irmã planOnly do plan gate', () => {
+  const RS = 'rs-20260928-154129'
+  const line = (o) => JSON.stringify(o)
+  const ok = { status: 'done', summary: 'ok', confidence: 'high', checks: [] }
+  const pass = { pass: true, confidence: 'high', blocking: [] }
+
+  // Monta a pasta de workflows com a irmã do gate (plano antigo, mais velha) e o wf da retomada, que só
+  // roda `workNode`; o prefixo aponta o run dir e o rs, e o resume/<rs>.json traz o plano aprovado.
+  async function resumedModel({ plan, done, designReview, workNode, mode }) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-resume-gate-'))
+    const wfs = path.join(root, 'proj', '11111111-2222-4333-8444-555555555555', 'subagents', 'workflows')
+    const runDir = path.join(root, 'repo', '.graph-runs', '20260928-1146-exemplo')
+    try {
+      const gate = path.join(wfs, 'wf_gate0001')
+      fs.mkdirSync(gate, { recursive: true })
+      const oldPlan = { goal: 'plano antigo', effort: { level: 'high', why: 'x' }, nodes: [{ id: 'R1', title: 'Pesquisa antiga', kind: 'research', deps: [] }, { id: 'I1', title: 'Implementação antiga', kind: 'implement', deps: ['R1'], files: ['x.js'] }] }
+      fs.writeFileSync(path.join(gate, 'journal.jsonl'), [line({ type: 'launched' }), line({ type: 'started', key: 'g1', agentId: 'ag1', label: 'plan' }), line({ type: 'result', key: 'g1', agentId: 'ag1', result: oldPlan })].join('\n') + '\n')
+      const old = (Date.now() - 3_600_000) / 1000
+      fs.utimesSync(path.join(gate, 'journal.jsonl'), old, old)
+
+      const wf = path.join(wfs, 'wf_resume01')
+      fs.mkdirSync(wf, { recursive: true })
+      fs.writeFileSync(path.join(wf, 'journal.jsonl'), [line({ type: 'launched' }), line({ type: 'started', key: 'k1', agentId: 'aw1', label: `work:${workNode}`, phase: 'Execute' }), line({ type: 'result', key: 'k1', agentId: 'aw1', result: ok }), line({ type: 'started', key: 'k2', agentId: 'av1', label: `verify:${workNode}`, phase: 'Verify' }), line({ type: 'result', key: 'k2', agentId: 'av1', result: pass })].join('\n') + '\n')
+      fs.writeFileSync(path.join(wf, 'agent-aw1.jsonl'), line({ type: 'user', message: { role: 'user', content: `# Graph run 20260928-1146-exemplo\nMode: ${mode}\nRun dir (paper trail): ${runDir}\nResume: ${RS}\n` } }) + '\n')
+
+      fs.mkdirSync(path.join(runDir, 'resume'), { recursive: true })
+      fs.writeFileSync(path.join(runDir, 'resume', `${RS}.json`), JSON.stringify({ mode, plan, resume: { id: RS, from: ['wf_antigo'], done, rerun: [], designReview } }))
+      return await buildModel({ runDir: wf, economy: 'balanced', mode })
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }
+
+  // `effort` é obrigatório no schema do planner (workflows/graph-eng.js), e só o motor que o exige grava resume.
+  const effort = { level: 'high', why: 'teste' }
+
+  test('plano e prontos vêm de resume/<rs>.json, e a revisão do design que passou é herdada', async () => {
+    const plan = {
+      goal: 'plano aprovado',
+      mode: 'implement',
+      effort,
+      nodes: [
+        { id: 'R1', title: 'Pesquisa', kind: 'research', deps: [] },
+        { id: 'D1', title: 'Design', kind: 'design', deps: ['R1'] },
+        { id: 'I1', title: 'Parte um', kind: 'implement', deps: ['D1'], files: ['a.js'] },
+        { id: 'I2', title: 'Parte dois', kind: 'implement', deps: ['D1'], files: ['b.js'] },
+      ],
+    }
+    const done = { R1: { summary: 'r', verified: true }, D1: { summary: 'd', verified: false }, I1: { summary: 'i', verified: true } }
+    const model = await resumedModel({ plan, done, designReview: { pass: true, attempts: 2 }, workNode: 'I2', mode: 'implement' })
+    const st = Object.fromEntries(model.nodes.map((n) => [n.id, n.state]))
+    assert.deepEqual(st, { R1: 'pronto', D1: 'pronto', I1: 'pronto', I2: 'pronto' }, 'nenhum pronto da retomada pode sair como pulado')
+    assert.equal(model.nodes.find((n) => n.id === 'I1').title, 'Parte um', 'o plano é o aprovado, não o da irmã do gate')
+    assert.deepEqual(model.nodes.filter((n) => n.resumed).map((n) => n.id).sort(), ['D1', 'I1', 'R1'])
+    assert.ok(model.warns.some((w) => w.includes(`lidos de resume/${RS}`)))
+    assert.ok(!model.warns.some((w) => w.includes('run planOnly')), 'a irmã planOnly não pode ser usada')
+    assert.equal(model.designReview.state, 'pronto')
+    assert.equal(model.designReview.attempts, 2)
+    assert.equal(model.spent, 2, 'eventos sintéticos da retomada não contam no custo')
+  })
+
+  test('sem revisão do design (research), o nó não-implement verificado antes volta pronto, não "s/ verif."', async () => {
+    const plan = {
+      goal: 'pesquisa aprovada',
+      mode: 'research',
+      effort,
+      nodes: [
+        { id: 'R1', title: 'Fontes', kind: 'research', deps: [] },
+        { id: 'R2', title: 'Sem verificação', kind: 'research', deps: [] },
+        { id: 'R3', title: 'Síntese', kind: 'research', deps: ['R1', 'R2'] },
+      ],
+    }
+    const done = { R1: { summary: 'r1', verified: true }, R2: { summary: 'r2', verified: false } }
+    const model = await resumedModel({ plan, done, workNode: 'R3', mode: 'research' })
+    const st = Object.fromEntries(model.nodes.map((n) => [n.id, n.state]))
+    assert.equal(st.R1, 'pronto')
+    assert.equal(st.R2, 'pronto-sem-verif', 'o que não foi verificado antes continua sem verificação')
+    assert.equal(model.designReview, null)
+  })
+})
