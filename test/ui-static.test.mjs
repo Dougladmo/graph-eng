@@ -414,6 +414,15 @@ test('openDetail (app.js) sai do modo run antes de montar a gaveta do nó', () =
   assert.match(actionsMod, /export function onDrawerClosed\(\) \{\s*artifactsState = null/)
 })
 
+test('openArtifacts (actions.mjs) esconde o motivo do nó ao entrar no modo run', () => {
+  // O #drawer-reason é do nó (renderDetailHead): vindo da gaveta de um nó falho sem fechar, o motivo
+  // dele seguia no topo dos artefatos da run.
+  const start = actionsMod.indexOf('async function openArtifacts(')
+  const body = actionsMod.slice(start, actionsMod.indexOf('\n}\n', start))
+  assert.match(actionsMod, /drawerReason: \$\('drawer-reason'\)/)
+  assert.match(body, /refs\.drawerReason\.hidden = true/)
+})
+
 test('actions.mjs reaproveita .node-actions do mesmo nó em vez de recriar o bloco a cada renderNodeActions', () => {
   assert.match(actionsMod, /node-actions-slot/)
   assert.match(actionsMod, /const sameNode = current && current\.id === id/)

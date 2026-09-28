@@ -147,7 +147,7 @@ async function cancelRequest(id) {
 }
 
 // ── Estado do módulo ──
-let refs = null // { app, drawerTitle, drawerState, drawerBody, els: { runActions, actWhy, reqStatus } }
+let refs = null // { app, drawerTitle, drawerState, drawerReason, drawerBody, els: { runActions, actWhy, reqStatus } }
 let hooks = null // { getModel, getWf, openArtifactsDrawer, deselectNodes }
 let lastModel = null
 let lastRequest = null // o pedido mostrado em #req-status: actions.open, senão requests[0]
@@ -161,6 +161,7 @@ export function initActions(o) {
     reqStatus: $('req-status'),
     drawerTitle: $('drawer-title'),
     drawerState: $('drawer-state'),
+    drawerReason: $('drawer-reason'),
     drawerBody: $('drawer-body'),
     app: $('app'),
   }
@@ -515,6 +516,9 @@ async function openArtifacts(wf) {
   setText(refs.drawerTitle, '')
   refs.drawerTitle.append(document.createTextNode('Artefatos '), el('span', 'mono', (lastModel && lastModel.runId) || wf))
   setText(refs.drawerState, 'Carregando…')
+  // O motivo é do nó (renderDetailHead, app.js): vindo da gaveta de um nó falho sem fechar, ele seguia
+  // à mostra no topo dos artefatos da run.
+  refs.drawerReason.hidden = true
   refs.drawerBody.replaceChildren(el('p', 'drawer-note', 'Carregando…'))
   artifactsState = { wf, current: null }
   await loadArtifacts(wf, true)
