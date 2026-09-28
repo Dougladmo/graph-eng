@@ -1,0 +1,3 @@
+{"type": "launched"}
+{"type": "started", "key": "v2:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "agentId": "o0001planonlyaaaaa", "label": "plan", "phase": "Plan"}
+{"type": "result", "key": "v2:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "agentId": "o0001planonlyaaaaa", "result": {"goal": "Exemplo de run para teste de detecção de parada.", "complexity": "simple", "doneWhen": ["critério de exemplo"], "assumptions": [], "nodes": [{"id": "X", "title": "Nó de exemplo X", "kind": "implement", "brief": "Fazer exemplo X.", "deps": [], "risk": "medium", "acceptance": ["critério de exemplo"]}], "questions": []}}

@@ -1,0 +1,2 @@
+{"type": "assistant", "timestamp": "2026-01-01T09:00:00.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "echo ok"}}]}}
+{"type": "user", "timestamp": "2026-01-01T09:05:00.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user]"}]}}

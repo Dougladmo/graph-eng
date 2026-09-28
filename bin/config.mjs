@@ -10,19 +10,32 @@ import path from 'node:path'
 
 import { DEFAULTS, EFFORTS_GRAPH, CEILING_MAX, floorOf, validateCeiling, targetTable, targetRange } from './ui/agent-target.mjs'
 
-export const CONFIG_KEYS = ['effort', 'ceiling', 'economy', 'planGate', 'maxRounds', 'maxRepairs'] // ordem de gravação
+export const CONFIG_KEYS = ['effort', 'ceiling', 'economy', 'planGate', 'maxRounds', 'maxRepairs', 'stallMinutes'] // ordem de gravação
 export const ECONOMIES = ['lean', 'balanced', 'max']
 export const MAX_BODY = 4096
 export const LIMITS = {
   ceiling: { min: floorOf(), max: CEILING_MAX },
   maxRounds: { min: 1, max: 5 },
   maxRepairs: { min: 1, max: 3 },
+  stallMinutes: { min: 1, max: 60 },
   effort: EFFORTS_GRAPH,
   economy: ECONOMIES,
 }
 
+// Padrão de campos que não vêm da tabela de alvos (bin/ui/agent-target.mjs, que tem teste de
+// paridade com o DEFAULTS_TARGET do workflow e não pode ganhar um campo à toa). Ver spec
+// docs/specs/2026-09-28-acoes-no-painel.md C6 (D1 §3.6).
+export const PANEL_DEFAULTS = { stallMinutes: 5 }
+
 export function defaultConfigPath(env = process.env, home = os.homedir()) {
   return env.GRAPH_ENG_CONFIG || path.join(home, '.claude', 'graph-eng', 'config.json')
+}
+
+// `stateDir` (spec C1): pasta com config.json, organize.json, requests/ e listeners/. Fica ao lado do
+// config.json por padrão, e `GRAPH_ENG_STATE_DIR` sobrepõe os dois (para os testes, que nunca tocam
+// `~/.claude`). bin/requests.mjs a reexporta; o servidor a importa daqui, sem depender de requests.mjs.
+export function defaultStateDir(env = process.env, home = os.homedir()) {
+  return env.GRAPH_ENG_STATE_DIR || path.dirname(defaultConfigPath(env, home))
 }
 
 export const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -44,6 +57,7 @@ const CHECK = {
   planGate: (v) => (typeof v === 'boolean' ? null : 'use true ou false'),
   maxRounds: (v) => (intIn(v, LIMITS.maxRounds) ? null : 'de 1 a 5'),
   maxRepairs: (v) => (intIn(v, LIMITS.maxRepairs) ? null : 'de 1 a 3'),
+  stallMinutes: (v) => (intIn(v, LIMITS.stallMinutes) ? null : 'de 1 a 60'),
 }
 
 // Estrita. `mode` só muda o piso do teto (ausente ou 'auto' → 8, o maior; a config vale para todo modo).
@@ -117,7 +131,7 @@ export function resolveConfig({ flags = {}, stored = {} } = {}) {
   for (const k of CONFIG_KEYS) {
     if (flags[k] !== undefined) [config[k], source[k]] = [flags[k], 'flag']
     else if (stored[k] !== undefined) [config[k], source[k]] = [stored[k], 'config']
-    else [config[k], source[k]] = [DEFAULTS[k], 'default']
+    else [config[k], source[k]] = [DEFAULTS[k] !== undefined ? DEFAULTS[k] : PANEL_DEFAULTS[k], 'default']
   }
   return { config, source, warnings: [] }
 }
@@ -143,6 +157,6 @@ export function publicConfig(file, { home = os.homedir() } = {}) {
   const { stored, warnings } = readConfig(file)
   const { config, source } = resolveConfig({ stored })
   const defaults = {}
-  for (const k of CONFIG_KEYS) defaults[k] = DEFAULTS[k]
+  for (const k of CONFIG_KEYS) defaults[k] = DEFAULTS[k] !== undefined ? DEFAULTS[k] : PANEL_DEFAULTS[k]
   return { config, source, defaults, limits: LIMITS, file: displayPath(file, home), warnings }
 }

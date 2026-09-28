@@ -36,8 +36,12 @@
 //     wf: "wf_…",                       // id do diretório do workflow
 //     project: "postify-backend",       // basename do `cwd` das transcrições; sem elas, último trecho do slug
 //     status: "rodando" | "parada?" | "terminado",
-//                                       // terminado = synth com result; rodando = journal ou transcrição de
-//                                       // agente mexeu nos últimos 2 min; senão parada?
+//                                       // terminado = synth com result, ou run planOnly (spec C6);
+//                                       // parada? = computeStop() ≠ null (mesma regra do buildModel,
+//                                       // bin/graph-watch.mjs: silêncio > N min sem sessão dona ouvindo,
+//                                       // ou 3·N com ela, cota/interrupção na hora); senão rodando.
+//     stop: null | { reason, text, idleSec }, // motivo da parada (spec C6), null fora de "parada?"
+//     planOnly: boolean,                // só o planner rodou; nunca conta como parada
 //     goal: string | null,              // goal do plano
 //     done: number, total: number,      // nós com estado pronto* / todos os nós
 //     round: number,
@@ -91,13 +95,12 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-import { buildModel, listAllWfDirs, isGraphEngRun, isTerminatedRun, agentsOfNode, readJournalTolerant, GraphWatchError } from './graph-watch.mjs'
-import { MAX_BODY, defaultConfigPath, isPlainObject, publicConfig, validateConfig, writeConfig } from './config.mjs'
+import { buildModel, computeStop, listAllWfDirs, isGraphEngRun, isTerminatedRun, agentsOfNode, readJournalTolerant, GraphWatchError } from './graph-watch.mjs'
+import { MAX_BODY, defaultConfigPath, isPlainObject, publicConfig, readConfig, resolveConfig, validateConfig, writeConfig } from './config.mjs'
 
 export const DEFAULT_PORT = 4477
 const HOST = '127.0.0.1'
 const RUNS_LIMIT = 50
-const ACTIVE_WINDOW_MS = 2 * 60 * 1000
 const WF_RE = /^wf_[A-Za-z0-9_-]+$/
 const NODE_RE = /^[A-Za-z0-9_-]{1,64}$/
 const PSEUDO = new Set(['plan', 'critic', 'design-review', 'synth'])
@@ -237,8 +240,9 @@ function planGoal(dir) {
 }
 
 // Cria o leitor de runs de um projectsDir. `scan()` devolve a lista (RunResumo + campos internos
-// `dir`, `sig`); o cache guarda o que depende só do journal.
-export function createRunIndex(projectsDir) {
+// `dir`, `sig`); o cache guarda o que depende só do journal. `configPath` é de onde sai `stallMinutes`
+// (C6): lido a cada scan, tolerante como o resto da config, para o modal de engrenagem valer na hora.
+export function createRunIndex(projectsDir, { configPath = defaultConfigPath() } = {}) {
   const cache = new Map() // dir → { sig, info | null }
   const projects = new Map() // dir → nome do projeto (fixo depois de achado pelo cwd)
 
@@ -260,6 +264,8 @@ export function createRunIndex(projectsDir) {
       const nodes = model ? model.nodes : []
       info = {
         terminated: isTerminatedRun(c.dir),
+        planOnly: model ? model.planOnly : false,
+        openAgentIds: model ? model.openAgentIds : [],
         goal: planGoal(c.dir),
         mode,
         economy,
@@ -277,6 +283,13 @@ export function createRunIndex(projectsDir) {
   }
 
   async function scan(now = Date.now()) {
+    // Só `stallMinutes` importa aqui; os demais campos (effort/ceiling/…) não afetam a lista.
+    let stallMinutes = 5
+    try {
+      stallMinutes = resolveConfig({ stored: readConfig(configPath).stored }).config.stallMinutes
+    } catch {
+      /* config ilegível: mantém o padrão, como o resto da leitura de config */
+    }
     const all = listAllWfDirs(projectsDir).sort((a, b) => b.mtime - a.mtime)
     const out = []
     const seen = new Set()
@@ -289,10 +302,17 @@ export function createRunIndex(projectsDir) {
       const agents = info.terminated ? 0 : agentActivity(c.dir)
       const last = Math.max(info.journalMtime, agents)
       if (!projects.has(c.dir)) projects.set(c.dir, projectOf(projectsDir, c.dir))
+      // C6: a mesma regra e o mesmo motivo do `buildModel` (bin/graph-watch.mjs), sem janela fixa —
+      // `openAgentIds`/`planOnly` vêm cacheados (dependem só do journal); `computeStop` é recalculado
+      // a cada scan porque depende de `now` e lê a cauda só dos agentes ainda abertos.
+      const stop = computeStop({ runDir: c.dir, openAgentIds: info.openAgentIds, terminated: info.terminated, planOnly: info.planOnly, now, stallMinutes })
+      const status = info.terminated || info.planOnly ? 'terminado' : stop ? 'parada?' : 'rodando'
       out.push({
         wf: c.wf,
         project: projects.get(c.dir),
-        status: info.terminated ? 'terminado' : now - last < ACTIVE_WINDOW_MS ? 'rodando' : 'parada?',
+        status,
+        stop,
+        planOnly: info.planOnly,
         goal: info.goal,
         done: info.done,
         total: info.total,
@@ -359,7 +379,7 @@ function readBody(req) {
 }
 
 export function createPanelServer({ projectsDir, pollMs = 1000, heartbeatMs = 15000, configPath = defaultConfigPath() } = {}) {
-  const index = createRunIndex(projectsDir)
+  const index = createRunIndex(projectsDir, { configPath })
   const clients = new Set()
   let pollTimer = null
   let beatTimer = null
@@ -532,7 +552,19 @@ export function createPanelServer({ projectsDir, pollMs = 1000, heartbeatMs = 15
         throw e
       }
       if (parts.length === 3) {
-        return send(res, 200, { ...model, status: run.status, project: run.project, goal: run.goal, mode: run.mode, economy: run.economy, lastActivity: run.mtime })
+        // status/stop/planOnly vêm do RunResumo (run.*), não do buildModel isolado acima: só ele usa o
+        // stallMinutes da config (o buildModel aqui roda com o default, sem ler ~/.claude/graph-eng).
+        return send(res, 200, {
+          ...model,
+          status: run.status,
+          stop: run.stop,
+          planOnly: run.planOnly,
+          project: run.project,
+          goal: run.goal,
+          mode: run.mode,
+          economy: run.economy,
+          lastActivity: run.mtime,
+        })
       }
       const id = parts[4]
       const node = model.nodes.find((n) => n.id === id)

@@ -84,7 +84,7 @@ function reprovedWithoutLaterRepair(dir, cutLine) {
 }
 
 const mod = await import('../bin/graph-watch.mjs').catch((e) => ({ __importError: e }))
-const { buildModel, normalizeNodes, estimateAgents, applyRails, GraphWatchError } = mod
+const { buildModel, normalizeNodes, estimateAgents, applyRails, GraphWatchError, computeStop, buildNowBlock } = mod
 const { estimateAgents: estimateTarget } = await import('../bin/ui/agent-target.mjs')
 const { runWorkflow, defaultScript } = await import('./helpers/run-workflow.mjs')
 
@@ -212,6 +212,116 @@ describe('fixtures dedicadas de estado', () => {
     assert.equal(nodeById(model, 'X').state, 'trabalhando')
     assert.notEqual(model.synth, 'pronto')
     assert.equal(model.status, 'parada?')
+  })
+
+  test('wf_long_healthy: agente aberto sem escrita há 4 min segue rodando (N=5); a 12 min, parada só sem ouvinte', async () => {
+    // Copia (o git não preserva mtime) e envelhece journal + agent-*.jsonl separado, como o D1 §5 pede:
+    // "sessão dona ouvindo" triplica o limiar (3·5 = 15 min), e por isso 12 min ainda é saudável com ela.
+    function copyAged(name, journalAgeMin, agentAgeMin) {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `graph-watch-${name}-`))
+      fs.cpSync(fx(name), tmpDir, { recursive: true })
+      const journalOld = new Date(Date.now() - journalAgeMin * 60 * 1000)
+      fs.utimesSync(path.join(tmpDir, 'journal.jsonl'), journalOld, journalOld)
+      for (const f of fs.readdirSync(tmpDir)) {
+        if (!f.startsWith('agent-')) continue
+        const agentOld = new Date(Date.now() - agentAgeMin * 60 * 1000)
+        fs.utimesSync(path.join(tmpDir, f), agentOld, agentOld)
+      }
+      return tmpDir
+    }
+    const fresh = copyAged('wf_long_healthy', 40, 4)
+    const m1 = await buildModel({ runDir: fresh })
+    assert.equal(m1.status, 'rodando')
+    assert.equal(m1.stop, null)
+
+    const stale = copyAged('wf_long_healthy', 40, 12)
+    const m2 = await buildModel({ runDir: stale, ownerListening: true })
+    assert.equal(m2.status, 'rodando', 'com a dona ouvindo, o limiar vira 3·N = 15 min')
+    assert.equal(m2.stop, null)
+
+    const m3 = await buildModel({ runDir: stale })
+    assert.equal(m3.status, 'parada?')
+    assert.equal(m3.stop.reason, 'sem-atividade')
+    assert.equal(m3.stop.text, 'sem atividade há 12 min')
+    assert.equal(nodeById(m3, 'X').stop.reason, 'sem-atividade')
+  })
+
+  test('wf_dead: agente sem escrita há 20 min é sempre parada; motivo depende de ownerGone', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-wf-dead-'))
+    fs.cpSync(fx('wf_dead'), tmpDir, { recursive: true })
+    const old = new Date(Date.now() - 20 * 60 * 1000)
+    for (const f of fs.readdirSync(tmpDir)) fs.utimesSync(path.join(tmpDir, f), old, old)
+
+    const gone = await buildModel({ runDir: tmpDir, ownerGone: true })
+    assert.equal(gone.status, 'parada?')
+    assert.equal(gone.stop.reason, 'sessao-encerrada')
+    assert.equal(gone.stop.text, 'sessão encerrada')
+
+    const noProof = await buildModel({ runDir: tmpDir })
+    assert.equal(noProof.status, 'parada?')
+    assert.equal(noProof.stop.reason, 'sem-atividade')
+    assert.equal(noProof.stop.text, 'sem atividade há 20 min')
+  })
+
+  test('wf_quota: erro de cota/gasto dá parada na hora, sem esperar N', async () => {
+    const m = await buildModel({ runDir: fx('wf_quota') })
+    assert.equal(m.status, 'parada?')
+    assert.equal(m.stop.reason, 'orcamento')
+    assert.equal(m.stop.text, 'orçamento esgotado')
+  })
+
+  test('wf_interrupted_marker: "[Request interrupted by user]" dá parada na hora, motivo interrompida', async () => {
+    const m = await buildModel({ runDir: fx('wf_interrupted_marker') })
+    assert.equal(m.status, 'parada?')
+    assert.equal(m.stop.reason, 'interrompida')
+    assert.equal(m.stop.text, 'interrompida')
+  })
+
+  test('wf_parallel_one_alive: um agente vivo basta para a run seguir rodando; o nó velho ganha n.stop', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-parallel-'))
+    fs.cpSync(fx('wf_parallel_one_alive'), tmpDir, { recursive: true })
+    const old = new Date(Date.now() - 20 * 60 * 1000)
+    fs.utimesSync(path.join(tmpDir, 'agent-p0002paroldaaaaaaa.jsonl'), old, old)
+    const m = await buildModel({ runDir: tmpDir })
+    assert.equal(m.status, 'rodando')
+    assert.equal(m.stop, null)
+    assert.equal(nodeById(m, 'A').stop.reason, 'sem-atividade')
+    assert.equal(nodeById(m, 'B').stop, undefined)
+  })
+
+  test('wf_planonly: nunca é parada, mesmo com mtime de 3 dias; status terminado, planOnly true', async () => {
+    // Removido no fim: um dir "só plano" esquecido em os.tmpdir() é achado por findSiblingPlanOnly
+    // (varre o pai de qualquer runDir novo criado ali) e contaminaria outro teste com mkdtemp solto.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-planonly-'))
+    try {
+      fs.cpSync(fx('wf_planonly'), tmpDir, { recursive: true })
+      const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+      fs.utimesSync(path.join(tmpDir, 'journal.jsonl'), old, old)
+      const m = await buildModel({ runDir: tmpDir })
+      assert.equal(m.status, 'terminado')
+      assert.equal(m.planOnly, true)
+      assert.equal(m.stop, null)
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  test('linha "agora": critic:r1 e synth abertos aparecem (D1 §3.8, buildNowBlock hoje só olhava os nós)', async () => {
+    const critic = await buildModel({ runDir: fx('wf_critic_running') })
+    assert.deepEqual(critic.activePseudo, [{ label: 'critic:r1', agentId: 'c0004criticaaaaaaa' }])
+    assert.match(buildNowBlock(critic, fx('wf_critic_running')), /^agora: critic:r1 · agente c0004cri… · última tool call Read há \d+s$/)
+
+    const synth = await buildModel({ runDir: fx('wf_synth_running') })
+    assert.deepEqual(synth.activePseudo, [{ label: 'synth', agentId: 's0005synthaaaaaaaa' }])
+    assert.match(buildNowBlock(synth, fx('wf_synth_running')), /^agora: synth · agente s0005syn… · última tool call Write há \d+s$/)
+  })
+
+  test('computeStop: terminated ou planOnly nunca param; sem agente aberto usa o agent-*.jsonl mais novo', () => {
+    assert.equal(computeStop({ runDir: fx('wf_long_healthy'), openAgentIds: ['x'], terminated: true }), null)
+    assert.equal(computeStop({ runDir: fx('wf_long_healthy'), openAgentIds: ['x'], planOnly: true }), null)
+    // sem agente aberto e sem nenhum arquivo agent-*.jsonl: cai no journal, "vivo" -> só passa de L
+    const s = computeStop({ runDir: fx('wf_planonly'), openAgentIds: [], now: Date.now() + 61 * 60 * 1000, stallMinutes: 5 })
+    assert.equal(s.reason, 'sem-atividade')
   })
 
   test('happy completo: synth pronto, todos os nós fecham', async () => {

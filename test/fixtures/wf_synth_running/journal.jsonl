@@ -1,0 +1,10 @@
+{"type": "launched"}
+{"type": "started", "key": "v2:1111111111111111111111111111111111111111111111111111111111111111", "agentId": "s0001synthaaaaaaaa", "label": "plan", "phase": "Plan"}
+{"type": "result", "key": "v2:1111111111111111111111111111111111111111111111111111111111111111", "agentId": "s0001synthaaaaaaaa", "result": {"goal": "Exemplo de run para teste de detecção de parada.", "complexity": "simple", "doneWhen": ["critério de exemplo"], "assumptions": [], "nodes": [{"id": "X", "title": "Nó de exemplo X", "kind": "implement", "brief": "Fazer exemplo X.", "deps": [], "risk": "medium", "acceptance": ["critério de exemplo"]}], "questions": []}}
+{"type": "started", "key": "v2:1212121212121212121212121212121212121212121212121212121212121212", "agentId": "s0002synthaaaaaaaa", "label": "work:X", "phase": "Execute"}
+{"type": "result", "key": "v2:1212121212121212121212121212121212121212121212121212121212121212", "agentId": "s0002synthaaaaaaaa", "result": {"status": "done", "summary": "feito", "confidence": "high", "artifact": "<run dir>/X.md", "evidence": ["ev"], "checks": []}}
+{"type": "started", "key": "v2:1313131313131313131313131313131313131313131313131313131313131313", "agentId": "s0003synthaaaaaaaa", "label": "verify:X", "phase": "Verify"}
+{"type": "result", "key": "v2:1313131313131313131313131313131313131313131313131313131313131313", "agentId": "s0003synthaaaaaaaa", "result": {"pass": true, "confidence": "high", "blocking": []}}
+{"type": "started", "key": "v2:1414141414141414141414141414141414141414141414141414141414141414", "agentId": "s0004synthaaaaaaaa", "label": "critic:r1", "phase": "Critic"}
+{"type": "result", "key": "v2:1414141414141414141414141414141414141414141414141414141414141414", "agentId": "s0004synthaaaaaaaa", "result": {"done": true, "gaps": []}}
+{"type": "started", "key": "v2:1515151515151515151515151515151515151515151515151515151515151515", "agentId": "s0005synthaaaaaaaa", "label": "synth", "phase": "Synthesize"}

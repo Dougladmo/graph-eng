@@ -28,6 +28,160 @@ const PRESETS = {
 const LABEL_RE = /^(plan|work|verify|escalate|repair|draft-[ab]|judge|critic|synth|design-review|design-repair|polish)(:|$)/
 // `id` depois de ':' não é nó real para estes rótulos: fica fora de `per` (D3 §3.1).
 const PSEUDO_LABELS = new Set(['critic', 'design-review', 'polish'])
+
+// ── Detecção de parada (spec docs/specs/2026-09-28-acoes-no-painel.md C6, D1 §3.3) ──
+// Rótulos pseudo-agente que a linha "agora" (buildNowBlock) e `model.activePseudo` também contam,
+// além de plan e synth (o pedido cita só critic e synth; os outros têm o mesmo defeito e custam zero).
+const STOP_PSEUDO_KINDS = new Set(['plan', 'critic', 'synth', 'design-review', 'polish'])
+
+const STOP_REASON_TEXT = {
+  orcamento: 'orçamento esgotado',
+  interrompida: 'interrompida',
+  'sessao-encerrada': 'sessão encerrada',
+}
+
+function stopReasonText(reason, idleSec) {
+  return STOP_REASON_TEXT[reason] || `sem atividade há ${Math.max(1, Math.floor(idleSec / 60))} min`
+}
+
+// Última linha JSON válida de um texto com uma tentativa por linha (linhas truncadas ou vazias no
+// meio da cauda lida são ignoradas: a última válida é a que importa).
+function lastValidJsonLine(text) {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i].trim()
+    if (!l) continue
+    try {
+      return JSON.parse(l)
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+// Lê só os últimos 64 KB de `agent-<id>.jsonl` (D1 §3.3 passo 3, §4 "custo de leitura"): a run some
+// tem só agentes já terminados quando `openAgentIds` está vazio.
+function readAgentTail(runDir, agentId, maxBytes = 65536) {
+  const file = path.join(runDir, `agent-${agentId}.jsonl`)
+  let st
+  try {
+    st = fs.statSync(file)
+  } catch {
+    return { mtimeMs: null, tail: null }
+  }
+  const start = Math.max(0, st.size - maxBytes)
+  const len = st.size - start
+  let text = ''
+  if (len > 0) {
+    const fd = fs.openSync(file, 'r')
+    try {
+      const buf = Buffer.alloc(len)
+      fs.readSync(fd, buf, 0, len, start)
+      text = buf.toString('utf8')
+    } finally {
+      fs.closeSync(fd)
+    }
+  }
+  return { mtimeMs: st.mtimeMs, tail: lastValidJsonLine(text) }
+}
+
+function newestAgentFile(runDir) {
+  let files
+  try {
+    files = fs.readdirSync(runDir)
+  } catch {
+    return null
+  }
+  let best = null
+  for (const f of files) {
+    const m = /^agent-(.+)\.jsonl$/.exec(f)
+    if (!m) continue
+    let st
+    try {
+      st = fs.statSync(path.join(runDir, f))
+    } catch {
+      continue
+    }
+    if (!best || st.mtimeMs > best.mtimeMs) best = { agentId: m[1], mtimeMs: st.mtimeMs }
+  }
+  return best
+}
+
+// `orcamento` (cota/gasto esgotado) e `interrompida` ([Request interrupted by user…], Esc ou Parar)
+// valem na hora, sem esperar o limiar de silêncio; qualquer outra última linha é `vivo`.
+export function classifyTail(tail) {
+  if (!tail) return 'vivo'
+  if (tail.isApiErrorMessage === true) {
+    const q = tail.quotaLimits
+    if (tail.error === 'rate_limit' || tail.apiErrorStatus === 429 || (q && q.status === 'rejected')) return 'orcamento'
+  }
+  if (tail.type === 'user') {
+    const content = tail.message && tail.message.content
+    const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
+    if (blocks.some((b) => b && b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('[Request interrupted by user'))) {
+      return 'interrompida'
+    }
+  }
+  return 'vivo'
+}
+
+// Avalia um agente aberto (started sem result/failed): parado?, motivo, idleSec. Sem `agent-<id>.jsonl`
+// (agente ainda não escreveu nada), usa o mtime do journal como aproximação (D1 §3.3 passo 3).
+function evalOpenAgent(runDir, agentId, journalMtimeMs, now, L, ownerGone, ownerListening) {
+  const { mtimeMs, tail } = readAgentTail(runDir, agentId)
+  const effectiveMtime = mtimeMs === null ? journalMtimeMs : mtimeMs
+  const kind = classifyTail(tail)
+  const idleSec = Math.max(0, Math.round((now - effectiveMtime) / 1000))
+  const stopped = kind !== 'vivo' || idleSec > L
+  if (!stopped) return { stopped, idleSec }
+  const reason = kind === 'orcamento' || kind === 'interrompida' ? kind : !ownerListening && ownerGone ? 'sessao-encerrada' : 'sem-atividade'
+  return { stopped, idleSec, reason }
+}
+
+// Regra única de parada (D1 §3.3, spec C6), usada por `buildModel` e pela lista de runs do servidor
+// (`bin/ui-server.mjs`): nenhum dos dois calcula isso à parte mais.
+export function computeStop({
+  runDir,
+  openAgentIds = [],
+  terminated = false,
+  planOnly = false,
+  now = Date.now(),
+  stallMinutes = 5,
+  ownerListening = false,
+  ownerGone = false,
+} = {}) {
+  if (terminated || planOnly) return null
+  const L = stallMinutes * 60 * (ownerListening ? 3 : 1)
+  let journalMtimeMs = now
+  try {
+    journalMtimeMs = fs.statSync(path.join(runDir, 'journal.jsonl')).mtimeMs
+  } catch {
+    /* sem journal legível: now é o melhor palpite */
+  }
+
+  if (openAgentIds.length) {
+    const evals = openAgentIds.map((id) => evalOpenAgent(runDir, id, journalMtimeMs, now, L, ownerGone, ownerListening))
+    // Numa fase paralela, um agente ainda vivo basta para a run seguir viva (D1 §3.3 passo 5).
+    if (evals.some((e) => !e.stopped)) return null
+    const idleSec = Math.max(...evals.map((e) => e.idleSec))
+    const priority = ['orcamento', 'interrompida', 'sessao-encerrada', 'sem-atividade']
+    const reason = priority.find((r) => evals.some((e) => e.reason === r)) || 'sem-atividade'
+    return { reason, text: stopReasonText(reason, idleSec), idleSec }
+  }
+
+  // Sem agente aberto: entre agentes, ou o workflow morreu entre um e outro (D1 §3.3 passo 6).
+  const newest = newestAgentFile(runDir)
+  const mtime = newest ? newest.mtimeMs : journalMtimeMs
+  const idleSec = Math.max(0, Math.round((now - mtime) / 1000))
+  const tail = newest ? readAgentTail(runDir, newest.agentId).tail : null
+  const kind = classifyTail(tail)
+  const stopped = (kind !== 'vivo' && idleSec > 60) || idleSec > L
+  if (!stopped) return null
+  const reason = kind === 'orcamento' || kind === 'interrompida' ? kind : !ownerListening && ownerGone ? 'sessao-encerrada' : 'sem-atividade'
+  return { reason, text: stopReasonText(reason, idleSec), idleSec }
+}
+
 // Ids reservados pelo motor para os nós injetados pelos trilhos (D1 §5, D3 §3.3).
 const RESERVED_NODE_IDS = ['research-base', 'design-base']
 
@@ -251,7 +405,19 @@ function findSiblingPlanOnly(runDir) {
 
 // ── Modelo (§6.1) a partir de um journal já achado ──
 export async function buildModel(opts = {}) {
-  const { runDir, siblingPlanOnlyDir, economy, mode, cutLine, effort, ceiling } = opts
+  const {
+    runDir,
+    siblingPlanOnlyDir,
+    economy,
+    mode,
+    cutLine,
+    effort,
+    ceiling,
+    now = Date.now(),
+    stallMinutes = 5,
+    ownerListening = false,
+    ownerGone = false,
+  } = opts
   const journalPath = path.join(runDir, 'journal.jsonl')
   let stat
   try {
@@ -580,8 +746,33 @@ export async function buildModel(opts = {}) {
     return out
   })
 
-  const idleSec = Math.max(0, Math.round((Date.now() - stat.mtimeMs) / 1000))
-  const status = synth === 'pronto' ? 'terminado' : idleSec > 600 ? 'parada?' : 'rodando'
+  const idleSec = Math.max(0, Math.round((now - stat.mtimeMs) / 1000))
+  const synthDone = synth === 'pronto'
+
+  // `openAgentIds`: agentId de todo `started` ainda sem `result`/`failed`, nós e pseudo (C6/D1 §3.3).
+  const openAgentIds = [...byKey.values()].filter((s) => !s.done && s.agentId).map((s) => s.agentId)
+  // planOnly (D1 §3.5): só houve `plan`, com resultado, e nenhum agente segue aberto.
+  const attemptLabels = [...byKey.values()].map((s) => s.label)
+  const planOnly = attemptLabels.length > 0 && attemptLabels.every((l) => l === 'plan') && openAgentIds.length === 0
+
+  const stop = computeStop({ runDir, openAgentIds, terminated: synthDone, planOnly, now, stallMinutes, ownerListening, ownerGone })
+  const status = synthDone || planOnly ? 'terminado' : stop ? 'parada?' : 'rodando'
+
+  // Nó parado (D1 §3.3 "Nó parado"): mesmo que a run siga viva por outro nó paralelo, o nó cujo
+  // agente está parado ganha `n.stop`, com o mesmo motivo/idleSec do agente dele.
+  if (!synthDone && !planOnly) {
+    const L = stallMinutes * 60 * (ownerListening ? 3 : 1)
+    for (const n of nodes) {
+      if (!n.running || !n.running.agentId) continue
+      const ev = evalOpenAgent(runDir, n.running.agentId, stat.mtimeMs, now, L, ownerGone, ownerListening)
+      if (ev.stopped) n.stop = { reason: ev.reason, text: stopReasonText(ev.reason, ev.idleSec), idleSec: ev.idleSec }
+    }
+  }
+
+  // Linha "agora" (D1 §3.8): pseudo-agentes ainda abertos (plan, critic, synth, design-review, polish).
+  const activePseudo = [...byKey.values()]
+    .filter((s) => !s.done && s.agentId && STOP_PSEUDO_KINDS.has((s.label || '').split(':')[0]))
+    .map((s) => ({ label: s.label, agentId: s.agentId }))
 
   const model = {
     wf: path.basename(runDir),
@@ -593,6 +784,10 @@ export async function buildModel(opts = {}) {
     critic,
     synth: synth || 'aguardando',
     spent,
+    stop,
+    planOnly,
+    activePseudo,
+    openAgentIds,
   }
 
   if (NEW) {
@@ -1012,17 +1207,19 @@ function lastToolUse(runDir, agentId) {
 // ── Bloco "agora" (§5 de render-design.md; só o `snapshot` acrescenta, não faz parte do golden) ──
 export function buildNowBlock(model, runDir, opts = {}) {
   const now = opts.now || Date.now()
-  const active = model.nodes.filter((n) => n.running)
+  // D1 §3.8: além dos nós rodando, conta todo pseudo-agente aberto (plan, critic, synth,
+  // design-review, polish) — hoje o bloco só olhava `model.nodes`, e critic/synth ficavam de fora.
+  const active = [...model.nodes.filter((n) => n.running).map((n) => n.running), ...(model.activePseudo || [])]
   if (active.length) {
     return active
-      .map((n) => {
-        const shortId = String(n.running.agentId).slice(0, 8) + '…'
-        const call = lastToolUse(runDir, n.running.agentId)
+      .map((r) => {
+        const shortId = String(r.agentId).slice(0, 8) + '…'
+        const call = lastToolUse(runDir, r.agentId)
         if (call && call.ts) {
           const ageSec = Math.max(0, Math.round((now - Date.parse(call.ts)) / 1000))
-          return `agora: ${n.running.label} · agente ${shortId} · última tool call ${call.name} há ${ageSec}s`
+          return `agora: ${r.label} · agente ${shortId} · última tool call ${call.name} há ${ageSec}s`
         }
-        return `agora: ${n.running.label} · agente ${shortId} · sem tool call ainda`
+        return `agora: ${r.label} · agente ${shortId} · sem tool call ainda`
       })
       .join('\n')
   }

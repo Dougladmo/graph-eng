@@ -1,0 +1,5 @@
+{"type": "launched"}
+{"type": "started", "key": "v2:9999999999999999999999999999999999999999999999999999999999999999", "agentId": "p0001paraaaaaaaaaa", "label": "plan", "phase": "Plan"}
+{"type": "result", "key": "v2:9999999999999999999999999999999999999999999999999999999999999999", "agentId": "p0001paraaaaaaaaaa", "result": {"goal": "Exemplo de run para teste de detecção de parada.", "complexity": "simple", "doneWhen": ["critério de exemplo"], "assumptions": [], "nodes": [{"id": "A", "title": "Nó de exemplo A", "kind": "implement", "brief": "Fazer exemplo A.", "deps": [], "risk": "medium", "acceptance": ["critério de exemplo"]}, {"id": "B", "title": "Nó de exemplo B", "kind": "implement", "brief": "Fazer exemplo B.", "deps": [], "risk": "medium", "acceptance": ["critério de exemplo"]}], "questions": []}}
+{"type": "started", "key": "v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "agentId": "p0002paroldaaaaaaa", "label": "work:A", "phase": "Execute"}
+{"type": "started", "key": "v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "agentId": "p0003parfreshaaaaa", "label": "work:B", "phase": "Execute"}
