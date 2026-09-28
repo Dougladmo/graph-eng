@@ -146,11 +146,27 @@ O retorno da chamada traz o id da run (`wf_…`, na linha antes de `Script file:
 `--run-id <runId>` no lugar de `--run <wf>`. Nunca rode o graph-watch sem um dos dois.
 `<preset>` e `<mode>` são os mesmos `args.economy` e `args.mode` passados ao Workflow.
 
-1. Responda em até 4 linhas, começando por `⏳ RODANDO — graph-eng <runId>`: estimativa, teto,
-   paper trail e o comando para ver o grafo ao vivo **num terminal à parte** (aba ou split na
-   CLI; "Terminal: Split" no VSCode):
+0. Suba o painel web em background, **idempotente** (uma instância só por máquina; se já houver
+   uma no ar na porta padrão, o comando sai na hora reaproveitando ela em vez de abrir outra):
+   ```
+   Bash({ run_in_background: true,
+          command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" ui --no-open' })
+   ```
+   Leia a porta real na linha `graph-eng: painel: http://127.0.0.1:<porta>` da saída — **nunca
+   chute a porta**: o padrão é 4477, mas o usuário pode ter trocado com `GRAPH_ENG_PORT` (o comando
+   já respeita a variável). Se a saída disser que a porta está ocupada por outro programa, avise o
+   usuário em uma linha que dá para fixar outra com `"env": {"GRAPH_ENG_PORT": "<N>"}` no
+   `~/.claude/settings.json` e siga sem painel. Essa é a
+   base da URL que entra em todo marco `⏳ RODANDO`/`✅ TERMINADO` a seguir. Se o comando falhar
+   ou não imprimir a linha, siga sem painel e sem o trecho "· veja ao vivo em ..." nos marcos: a
+   run continua normalmente, o painel é só conveniência.
+1. Responda em até 4 linhas, começando por
+   `⏳ RODANDO — graph-eng <runId> · k/N prontos · veja ao vivo em http://127.0.0.1:<porta>/?run=<wf>`
+   (troque `<porta>` e `<wf>` pelos valores reais; omita o trecho "· veja ao vivo..." só se o
+   painel não subiu no item 0): estimativa, teto, paper trail e, se preferir o grafo em texto
+   **num terminal à parte** (aba ou split na CLI; "Terminal: Split" no VSCode), o comando
    `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" live --run <wf> --economy <preset> --mode <mode>`
-   (acrescente `--svg` para a visão no browser, se o `d2` estiver instalado).
+   (`live --svg` é um alias que garante o painel subindo e imprime o mesmo link).
 2. Arme o Monitor com este comando literal:
    ```
    Monitor({ description: "graph-eng <runId>", timeout_ms: 1800000,
@@ -158,7 +174,9 @@ O retorno da chamada traz o id da run (`wf_…`, na linha antes de `Script file:
    ```
    Se ele expirar antes de `TERMINADO`, rearme com o **mesmo** comando.
 3. **Enquanto não chegar `TERMINADO` ou a notificação de conclusão do workflow, toda resposta
-   começa com `⏳ RODANDO — graph-eng <runId> · k/N prontos`.** Não escreva "pronto", "terminei"
+   começa com
+   `⏳ RODANDO — graph-eng <runId> · k/N prontos · veja ao vivo em http://127.0.0.1:<porta>/?run=<wf>`
+   (omita o trecho do painel se ele não subiu).** Não escreva "pronto", "terminei"
    nem "concluído" sobre a tarefa, e não resuma resultado de nó como se fosse final. Um
    `erro: nenhuma run do graph-eng` do Monitor **não** é fim da run: siga como no item 6.
 4. "Como está?": rode via Bash
@@ -176,7 +194,9 @@ O retorno da chamada traz o id da run (`wf_…`, na linha antes de `Script file:
 ## 6. Entregar (gate humano)
 
 1. Leia `<runDir>/REPORT.md`.
-2. Abra a resposta com `✅ TERMINADO — graph-eng <runId> · <status>`. Siga curto: o que mudou ou
+2. Abra a resposta com
+   `✅ TERMINADO — graph-eng <runId> · <status> · veja ao vivo em http://127.0.0.1:<porta>/?run=<wf>`
+   (omita o trecho do painel se ele não subiu no item 0). Siga curto: o que mudou ou
    o que achou · decisões · o que falhou ou ficou aberto (`openGaps` e nós `failed` com os
    `blocking`) · custo (`stats.agents` contra a estimativa) · o grafo final (a saída de
    `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" snapshot --run <wf> --economy <preset> --mode <mode> --no-color`

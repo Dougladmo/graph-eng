@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graph-eng ao vivo</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <button id="sidebar-toggle" type="button" aria-expanded="false" aria-controls="sidebar">suas runs</button>
+  <nav id="sidebar" aria-label="suas runs"></nav>
+  <main id="board">
+    <header id="run-header"></header>
+    <p id="conn" role="alert"></p>
+    <p id="empty-msg" role="status">Procurando runs do graph-eng…</p>
+    <div id="map-scroll">
+      <div id="graph">
+        <div id="edges" aria-hidden="true"></div>
+        <div id="nodes"></div>
+      </div>
+    </div>
+    <ul id="legend">
+      <li><span class="dot" data-variant="empty" aria-hidden="true"></span> ainda não rodou</li>
+      <li><span class="dot" data-variant="running" aria-hidden="true"></span> rodando agora</li>
+      <li><span class="dot" data-variant="done" aria-hidden="true"></span> já rodou</li>
+      <li><span class="dot" data-variant="fail" aria-hidden="true"></span> falhou</li>
+      <li><span class="dot" data-variant="skipped" aria-hidden="true"></span> pulado</li>
+    </ul>
+  </main>
+  <aside id="drawer" hidden aria-label="detalhe do nó">
+    <button id="drawer-close" type="button" aria-label="Fechar detalhe">×</button>
+    <div id="drawer-body"></div>
+  </aside>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

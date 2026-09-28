@@ -80,4 +80,27 @@ describe('modo live (§6.6, §8.2 item 10)', () => {
     const frames = stdout.chunks.filter((c) => c.includes('\x1b[?2026h')).length
     assert.ok(frames >= 2, `esperava redesenho extra por causa do resize, veio ${frames}`)
   })
+
+  test('"atualizado HH:MM:SS" usa a hora local, não UTC (TZ fixado)', async () => {
+    const prev = process.env.TZ
+    // +05:30: os minutos locais nunca coincidem com os de UTC
+    process.env.TZ = 'Asia/Kolkata'
+    try {
+      const pad = (x) => String(x).padStart(2, '0')
+      const local = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+      const before = new Date()
+      const stdout = fakeTTY({ isTTY: false })
+      await runLive(fx('happy'), { stdout, stdin: { isTTY: false }, maxTicks: 1, intervalMs: 5 })
+      const after = new Date()
+      const m = stdout.chunks.join('').match(/atualizado (\d\d:\d\d:\d\d)/)
+      assert.ok(m, 'esperava a linha de status')
+      const ok = new Set()
+      for (let t = before.getTime() - 1000; t <= after.getTime() + 1000; t += 500) ok.add(local(new Date(t)))
+      assert.ok(ok.has(m[1]), `esperava hora local (${[...ok].join(', ')}), veio ${m[1]}`)
+      assert.notEqual(m[1].slice(0, 5), before.toISOString().slice(11, 16))
+    } finally {
+      if (prev === undefined) delete process.env.TZ
+      else process.env.TZ = prev
+    }
+  })
 })

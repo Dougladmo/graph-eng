@@ -1,0 +1,4 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0011cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0011ccccccccccccc","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:0011cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0011ccccccccccccc","result":{"goal":"Objetivo inventado do projeto beta.","complexity":"simple","nodes":[{"id":"B1","title":"Nó inventado beta","kind":"research","deps":[],"risk":"low"}],"questions":[]}}
+{"type":"started","key":"v2:0012cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0012ccccccccccccc","label":"work:B1","phase":"Execute"}

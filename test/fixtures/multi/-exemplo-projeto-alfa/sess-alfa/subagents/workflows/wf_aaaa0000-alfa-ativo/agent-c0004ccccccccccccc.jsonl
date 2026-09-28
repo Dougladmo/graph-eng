@@ -1,0 +1,3 @@
+{"type":"user","cwd":"/exemplo/projeto-alfa","timestamp":"2026-01-01T10:03:00.000Z","message":{"role":"user","content":"Prompt inventado do nó A2."}}
+{"type":"assistant","cwd":"/exemplo/projeto-alfa","timestamp":"2026-01-01T10:03:10.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"tool_use","id":"u2","name":"Bash","input":{"command":"echo inventado","description":"Roda comando inventado"}}]}}
+{"type":"assistant","cwd":"/exemplo/projeto-alfa","timestamp":"2026-01-01T10:03:20.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Texto livre inventado."}]}}

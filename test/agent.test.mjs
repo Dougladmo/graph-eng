@@ -81,4 +81,19 @@ describe('buildAgentView (§6.7)', () => {
     assert.doesNotMatch(view.text, /cmd0/)
     assert.match(view.text, /cmd4/)
   })
+
+  test('horário das tool calls sai na hora local, não em UTC (TZ fixado)', () => {
+    const prev = process.env.TZ
+    process.env.TZ = 'America/Sao_Paulo'
+    try {
+      const dir = makeFixture()
+      const view = buildAgentView(dir, 'verify:X', 8)
+      // 10:00:00Z é 07:00:00 em São Paulo (UTC-3, sem horário de verão desde 2019)
+      assert.match(view.text, /^ {2}07:00:00 Bash {2}roda exemplo$/m)
+      assert.doesNotMatch(view.text, /10:00:00 Bash/)
+    } finally {
+      if (prev === undefined) delete process.env.TZ
+      else process.env.TZ = prev
+    }
+  })
 })

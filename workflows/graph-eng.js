@@ -193,6 +193,7 @@ const SHARED = [
   `# Graph run ${RUN_ID}`,
   `Task: ${TASK}`,
   `Mode: ${MODE}${READ_ONLY ? ' (read-only: no code edits)' : ''}`,
+  `Economy: ${ECONOMY}`,
   `Run dir (paper trail): ${RUN_DIR}`,
   SPEC && `Spec (source of truth for WHAT; the graph owns HOW): ${SPEC}. Read the parts your node needs.`,
   CONTEXT && `Scouted context:\n${CONTEXT}`,

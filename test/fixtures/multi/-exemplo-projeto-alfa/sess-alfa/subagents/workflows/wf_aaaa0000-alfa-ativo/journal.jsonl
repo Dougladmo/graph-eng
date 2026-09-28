@@ -1,0 +1,8 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0001cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0001ccccccccccccc","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:0001cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0001ccccccccccccc","result":{"goal":"Objetivo inventado da run ativa do projeto alfa.","complexity":"moderate","doneWhen":["critério inventado"],"nodes":[{"id":"A1","title":"Nó inventado um","kind":"research","deps":[],"risk":"medium"},{"id":"A2","title":"Nó inventado dois","kind":"implement","deps":["A1"],"risk":"high"},{"id":"A3","title":"Nó inventado três","kind":"implement","deps":["A2"],"risk":"low"}],"questions":[]}}
+{"type":"started","key":"v2:0002cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0002ccccccccccccc","label":"work:A1","phase":"Execute"}
+{"type":"result","key":"v2:0002cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0002ccccccccccccc","result":{"status":"done","summary":"Resumo inventado de A1.","confidence":"high","checks":[{"cmd":"comando inventado","ok":true,"output":"saída inventada"}]}}
+{"type":"started","key":"v2:0003cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0003ccccccccccccc","label":"verify:A1","phase":"Verify"}
+{"type":"result","key":"v2:0003cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0003ccccccccccccc","result":{"pass":true,"confidence":"high","blocking":[]}}
+{"type":"started","key":"v2:0004cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","agentId":"c0004ccccccccccccc","label":"work:A2","phase":"Execute"}

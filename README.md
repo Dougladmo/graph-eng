@@ -50,11 +50,15 @@ O workflow nunca faz commit, push, deploy nem migration remota. Isso fica no gat
 
 ## Acompanhar uma run
 
-A skill sempre imprime o id da run (`wf_…`) e os comandos prontos, mas dá para chamar o
-`graph-watch` (`bin/graph-watch.mjs`, só leitura) na mão a qualquer momento:
+A skill sempre sobe o painel web e imprime o id da run (`wf_…`) e o link ao vivo, mas dá para
+chamar o `graph-watch` (`bin/graph-watch.mjs`, só leitura) na mão a qualquer momento:
 
 ```bash
-# grafo ao vivo, redesenhado sozinho, num terminal à parte
+# painel web: todas as runs da máquina e o grafo ao vivo de cada uma (instância única, só localhost)
+node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" ui
+# imprime "graph-eng: painel: http://127.0.0.1:<porta>"; abra "<url>/?run=<wf>" para uma run
+
+# grafo ao vivo em texto, redesenhado sozinho, num terminal à parte
 node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" live --run <wf>
 
 # uma foto do estado atual, para colar na conversa
@@ -64,9 +68,20 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" snapshot --run <wf> --no-color
 node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" agent <id> --run <wf> --no-color
 ```
 
-Sem `d2` instalado, o `live` e o `snapshot` desenham caixas e setas com caracteres puros no
-próprio terminal. Com `which d2` encontrando o binário, acrescente `--svg` no `live` para abrir a
-mesma visão como SVG no browser.
+O `ui` roda em `127.0.0.1`, é só leitura (clicar num nó abre o detalhe) e mantém **uma instância
+por máquina**: se a porta já tem um `graph-watch ui` no ar, o comando novo sai na hora
+reaproveitando ele.
+
+A porta padrão é 4477. Se ela estiver ocupada por outro programa, troque com `--port <N>` ou com a
+variável `GRAPH_ENG_PORT` (a flag vence a variável). Para a skill usar outra porta sempre, fixe no
+`~/.claude/settings.json`:
+
+```json
+{ "env": { "GRAPH_ENG_PORT": "5177" } }
+```
+ Cada nó mostra uma bolinha — piscando quando está rodando agora,
+preenchida quando já rodou (vermelha se falhou) e vazia quando ainda não rodou. `live --svg` é um
+alias que garante o painel subindo e imprime o mesmo link.
 
 ## Estrutura
 
@@ -79,6 +94,11 @@ skills/graph-eng/
   DESIGN.md            decisão → evidência, com fontes
 workflows/
   graph-eng.js         o grafo: plan → DAG → verify/repair → critic → synth
+bin/
+  graph-watch.mjs      CLI só leitura: live, snapshot, agent, events, ui
+  ui-server.mjs        servidor do painel web (Node puro, 0 deps)
+  ui/                  página do painel: graph-layout.mjs (modelo → layout, puro e testado),
+                       app.js (DOM ao vivo), style.css (visual trocável), index.html
 ```
 
 ## Desenvolvimento

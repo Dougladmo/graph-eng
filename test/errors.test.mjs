@@ -163,3 +163,18 @@ describe('modo events (§5.1, §8.2 item 7)', () => {
     assert.equal(matches.length, 1)
   })
 })
+
+describe('porta do painel: --port > GRAPH_ENG_PORT > padrão (spec painel-web item 1b)', async () => {
+  const { parsePort } = await import('../bin/graph-watch.mjs')
+  test('precedência', () => {
+    assert.equal(parsePort(undefined, 4477, undefined), 4477)
+    assert.equal(parsePort(undefined, 4477, ''), 4477)
+    assert.equal(parsePort(undefined, 4477, '5001'), 5001)
+    assert.equal(parsePort('5002', 4477, '5001'), 5002)
+    assert.equal(parsePort('0', 4477, undefined), 0)
+  })
+  test('valor inválido diz de onde veio', () => {
+    assert.throws(() => parsePort('abc', 4477, undefined), /--port inválida: abc/)
+    assert.throws(() => parsePort(undefined, 4477, '70000'), /GRAPH_ENG_PORT inválida: 70000/)
+  })
+})

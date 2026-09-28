@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 // graph-watch: visualizador só-leitura do journal do workflow graph-eng.
 // Node puro, sem dependências. Contrato completo em test/model.test.mjs (topo do arquivo) e
-// docs/specs/2026-09-27-visualizacao-design.md. Modos `live` e `events` (e `--svg`) ficam como
-// stubs aqui: são implementados no próximo nó (I3). Este arquivo cobre `snapshot` e `agent`, mais
-// o núcleo (buildModel/normalizeNodes/estimateAgents/findRun) usado por todos os modos.
+// docs/specs/2026-09-27-visualizacao-design.md. Modos: `snapshot`, `agent`, `events`, `live` e `ui`
+// (painel web ao vivo, servido por bin/ui-server.mjs — docs/specs/2026-09-27-painel-web.md). O núcleo
+// (buildModel/normalizeNodes/estimateAgents/findRun) é usado por todos os modos.
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { spawn, spawnSync } from 'node:child_process'
 
 // ── Erros ──
 export class GraphWatchError extends Error {
@@ -415,7 +414,7 @@ function listWfDirsUnderSlugDir(slugDir) {
   return out
 }
 
-function listAllWfDirs(projectsDir) {
+export function listAllWfDirs(projectsDir) {
   const out = []
   let slugs
   try {
@@ -430,13 +429,13 @@ function listAllWfDirs(projectsDir) {
   return out
 }
 
-function isGraphEngRun(dir) {
+export function isGraphEngRun(dir) {
   const { events } = readJournalTolerant(path.join(dir, 'journal.jsonl'))
   const labels = events.filter((e) => e.type === 'started' && e.label).map((e) => e.label)
   return labels.length > 0 && labels.some((l) => LABEL_RE.test(l))
 }
 
-function isTerminatedRun(dir) {
+export function isTerminatedRun(dir) {
   const { events } = readJournalTolerant(path.join(dir, 'journal.jsonl'))
   const st = events.find((e) => e.type === 'started' && e.label === 'synth')
   if (!st) return false
@@ -772,21 +771,23 @@ export function buildNowBlock(model, runDir, opts = {}) {
   return next.length ? `agora: nada rodando · próximos: ${next.map((n) => n.id).join(', ')}` : 'agora: nada rodando'
 }
 
-// ── Modo `agent <nó>` (§6.7) ──
-export function buildAgentView(runDir, arg, n = 8) {
-  const { events } = readJournalTolerant(path.join(runDir, 'journal.jsonl'))
-  const started = events.filter((e) => e.type === 'started' && e.label)
-  const st = [...started].reverse().find((e) => e.label === arg || e.label.endsWith(':' + arg))
-  if (!st) return { text: `nó ${arg} ainda não começou`, notStarted: true }
-  const res = events.find((e) => e.key === st.key && e.type !== 'started')
-  const transcriptPath = path.join(runDir, `agent-${st.agentId}.jsonl`)
+// ── Hora local (spec painel-web item 14): getters locais do Date, que respeitam TZ ──
+export function localHMS(d) {
+  if (d === undefined || d === null || d === '') return ''
+  const dt = d instanceof Date ? d : new Date(d)
+  if (Number.isNaN(dt.getTime())) return ''
+  const pad = (x) => String(x).padStart(2, '0')
+  return `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`
+}
+
+function readTranscript(runDir, agentId) {
   let raw
   try {
-    raw = fs.readFileSync(transcriptPath, 'utf8')
+    raw = fs.readFileSync(path.join(runDir, `agent-${agentId}.jsonl`), 'utf8')
   } catch {
-    throw new GraphWatchError(4, `sem transcrição para ${st.label}`)
+    return null
   }
-  const lines = raw
+  return raw
     .trim()
     .split('\n')
     .filter(Boolean)
@@ -798,16 +799,32 @@ export function buildAgentView(runDir, arg, n = 8) {
       }
     })
     .filter(Boolean)
+}
+
+function promptOf(lines) {
+  const first = lines.find((o) => o.type === 'user' || (o.message && o.message.role === 'user'))
+  if (!first || !first.message) return ''
+  const c = first.message.content
+  const text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b && b.type === 'text' && b.text).map((b) => b.text).join('\n') : ''
+  return text.trim().slice(0, 600)
+}
+
+// Dados estruturados de um agente (um evento `started` do journal): o que o modo `agent` imprime e o
+// que o painel mostra no detalhe do nó. `toolCalls[].ts` é o timestamp ISO cru da transcrição (UTC);
+// `toolCalls[].time` é a hora local (HH:MM:SS) de quem chamou.
+function agentData(runDir, st, events, n) {
+  const res = events.find((e) => e.key === st.key && e.type !== 'started')
+  const lines = readTranscript(runDir, st.agentId)
   const calls = []
   const texts = []
   let think = 0
   let thinkEmpty = 0
-  for (const o of lines) {
+  for (const o of lines || []) {
     const content = Array.isArray(o.message && o.message.content) ? o.message.content : []
     for (const b of content) {
       if (b.type === 'tool_use') {
         const desc = (b.input && (b.input.description || b.input.command || b.input.file_path)) || JSON.stringify(b.input || {})
-        calls.push(`${(o.timestamp || '').slice(11, 19)} ${b.name}  ${String(desc).replace(/\s+/g, ' ').slice(0, 80)}`)
+        calls.push({ ts: o.timestamp || null, time: localHMS(o.timestamp), name: b.name, desc: String(desc).replace(/\s+/g, ' ').slice(0, 200) })
       }
       if (b.type === 'text' && b.text && b.text.trim()) texts.push(b.text.trim())
       if (b.type === 'thinking') {
@@ -816,23 +833,64 @@ export function buildAgentView(runDir, arg, n = 8) {
       }
     }
   }
+  const r = (res && res.result) || null
+  const verdict = r && typeof r.pass === 'boolean' ? { pass: r.pass, confidence: r.confidence, blocking: r.blocking || [] } : null
+  return {
+    label: st.label,
+    agentId: st.agentId,
+    status: res ? (res.type === 'failed' ? 'erro' : 'terminou') : 'rodando',
+    transcript: lines !== null,
+    prompt: lines ? promptOf(lines) : '',
+    totalCalls: calls.length,
+    toolCalls: calls.slice(-n),
+    lastText: texts.length ? texts[texts.length - 1] : null,
+    think,
+    thinkEmpty,
+    verdict,
+    result: r,
+    checks: (r && Array.isArray(r.checks) && r.checks) || [],
+  }
+}
+
+const PSEUDO_KINDS = new Set(['plan', 'critic', 'synth'])
+
+// Todos os agentes de um nó, na ordem do journal. `id` é o id do nó (`I2`, `r2-G1`) ou um pseudo-nó
+// (`plan`, `critic` — todas as rodadas —, `synth`).
+export function agentsOfNode(runDir, id, n = 20) {
+  const { events } = readJournalTolerant(path.join(runDir, 'journal.jsonl'))
+  const started = events.filter((e) => e.type === 'started' && e.label)
+  const mine = started.filter((e) => {
+    const [k, rest] = e.label.split(':')
+    return PSEUDO_KINDS.has(id) ? k === id : rest === id
+  })
+  return mine.map((st) => agentData(runDir, st, events, n))
+}
+
+// ── Modo `agent <nó>` (§6.7) ──
+export function buildAgentView(runDir, arg, n = 8) {
+  const { events } = readJournalTolerant(path.join(runDir, 'journal.jsonl'))
+  const started = events.filter((e) => e.type === 'started' && e.label)
+  const st = [...started].reverse().find((e) => e.label === arg || e.label.endsWith(':' + arg))
+  if (!st) return { text: `nó ${arg} ainda não começou`, notStarted: true }
+  const d = agentData(runDir, st, events, n)
+  if (!d.transcript) throw new GraphWatchError(4, `sem transcrição para ${st.label}`)
   const out = []
-  out.push(`${st.label} · agente ${st.agentId} · ${res ? (res.type === 'failed' ? 'ERRO' : 'terminou') : 'rodando'} · ${calls.length} tool calls`)
+  out.push(`${d.label} · agente ${d.agentId} · ${d.status === 'erro' ? 'ERRO' : d.status} · ${d.totalCalls} tool calls`)
   out.push('')
-  out.push(`últimas ${Math.min(n, calls.length)} tool calls:`)
-  for (const c of calls.slice(-n)) out.push('  ' + c)
+  out.push(`últimas ${d.toolCalls.length} tool calls:`)
+  for (const c of d.toolCalls) out.push(`  ${c.time} ${c.name}  ${c.desc.slice(0, 80)}`)
   out.push('')
-  out.push('último texto: ' + (texts.length ? texts[texts.length - 1].replace(/\s+/g, ' ').slice(0, 160) : '(nenhum texto livre; saída só estruturada)'))
-  const r = res && res.result
-  if (r && typeof r.pass === 'boolean') {
-    out.push(`veredito: ${r.pass ? 'PASSOU' : 'REPROVOU'} (confiança ${r.confidence}) · ${(r.blocking || []).length} bloqueio(s)`)
-    for (const b of r.blocking || []) out.push('  - ' + String(b.issue).slice(0, 110))
+  out.push('último texto: ' + (d.lastText ? d.lastText.replace(/\s+/g, ' ').slice(0, 160) : '(nenhum texto livre; saída só estruturada)'))
+  const r = d.result
+  if (d.verdict) {
+    out.push(`veredito: ${d.verdict.pass ? 'PASSOU' : 'REPROVOU'} (confiança ${d.verdict.confidence}) · ${d.verdict.blocking.length} bloqueio(s)`)
+    for (const b of d.verdict.blocking) out.push('  - ' + String(b.issue).slice(0, 110))
   } else if (r) {
     out.push(`resultado: ${r.status || ''} · ${String(r.summary || r.assessment || '').slice(0, 140)}`)
   }
   out.push('')
-  out.push(`raciocínio: ${think} bloco(s) de thinking, ${thinkEmpty} gravado(s) vazio(s) — não há o que mostrar`)
-  return { text: out.join('\n'), notStarted: false }
+  out.push(`raciocínio: ${d.think} bloco(s) de thinking, ${d.thinkEmpty} gravado(s) vazio(s) — não há o que mostrar`)
+  return { text: out.join('\n'), notStarted: false, data: d }
 }
 
 export { codePointLength }
@@ -965,7 +1023,7 @@ export async function runEventsMode(runDir, opts = {}) {
 
 // ── Modo `live` (§6.6) ──
 export async function runLive(runDir, opts = {}) {
-  const { economy, modeFlag, stdout = process.stdout, stdin = process.stdin, intervalMs = 500, maxTicks, signal, colsFixed, rowsFixed, onModel } = opts
+  const { economy, modeFlag, stdout = process.stdout, stdin = process.stdin, intervalMs = 500, maxTicks, signal, colsFixed, rowsFixed, onModel, footer } = opts
   const isTTY = !!stdout.isTTY
   let lastText = null
   let stopped = false
@@ -1036,8 +1094,8 @@ export async function runLive(runDir, opts = {}) {
       } catch (e) {
         body = e instanceof GraphWatchError ? `graph-eng: erro: ${e.message}` : `graph-eng: erro inesperado: ${String((e && e.message) || e)}`
       }
-      const statusLine = `atualizado ${new Date().toISOString().slice(11, 19)} · último evento há ${idleSec}s · q sai`
-      const text = body + '\n' + statusLine
+      const statusLine = `atualizado ${localHMS(new Date())} · último evento há ${idleSec}s · q sai`
+      const text = body + '\n' + statusLine + (footer ? '\n' + footer : '')
       if (text !== lastText) {
         lastText = text
         if (isTTY) {
@@ -1057,67 +1115,8 @@ export async function runLive(runDir, opts = {}) {
   }
 }
 
-// ── `--svg`: D2 opcional (§4.2, §6.5, §7) ──
-function detectD2() {
-  const r = spawnSync('which', ['d2'], { stdio: ['ignore', 'pipe', 'ignore'] })
-  if (!r || r.error || r.status !== 0) return false
-  return !!(r.stdout && r.stdout.toString().trim())
-}
-
-export function buildD2Source(model) {
-  const esc = (s) => String(s).replace(/"/g, '\\"').replace(/\n/g, '\\n')
-  const ids = new Set(model.nodes.map((n) => n.id))
-  const lines = []
-  for (const n of model.nodes) {
-    const [label] = stateLabel(n)
-    lines.push(`${n.id}: "${esc(n.id)} · ${esc(n.kind)}\\n[${esc(label)}]\\n${esc(cutCols(n.title || '', 40))}"`)
-  }
-  for (const n of model.nodes) {
-    for (const d of n.deps || []) {
-      if (ids.has(d)) lines.push(`${d} -> ${n.id}`)
-    }
-  }
-  return lines.join('\n') + '\n'
-}
-
-// Detecta `d2` (`which d2`); ausente → avisa e segue como `live` puro (§7). Presente → escreve
-// graph.d2 sob os.tmpdir()/graph-watch/ (§7: "nenhum modo escreve fora de") e roda
-// `d2 --watch --browser=0 --layout=elk` para servir o SVG com live reload.
-export function ensureSvgPipeline(model, runDir) {
-  if (!detectD2()) {
-    console.error('graph-eng: aviso: d2 não encontrado: visão no browser indisponível, seguindo no terminal (opcional: https://d2lang.com/tour/install)')
-    return null
-  }
-  const dir = path.join(os.tmpdir(), 'graph-watch', path.basename(runDir))
-  fs.mkdirSync(dir, { recursive: true })
-  const d2Path = path.join(dir, 'graph.d2')
-  const svgPath = path.join(dir, 'graph.svg')
-  fs.writeFileSync(d2Path, buildD2Source(model))
-  const child = spawn('d2', ['--watch', '--browser=0', '--layout=elk', d2Path, svgPath], { stdio: ['ignore', 'pipe', 'pipe'] })
-  child.stdout.on('data', (d) => {
-    const m = d.toString().match(/listening on (\S+)/)
-    if (m) console.error(`graph-eng: browser: ${m[1]}`)
-  })
-  child.on('exit', (code) => {
-    if (code !== 0 && code !== null) console.error(`graph-eng: browser: d2 saiu (código ${code})`)
-  })
-  return {
-    dir,
-    d2Path,
-    svgPath,
-    child,
-    rewrite(m) {
-      try {
-        fs.writeFileSync(d2Path, buildD2Source(m))
-      } catch {
-        /* diretório removido ou processo saindo: ignora */
-      }
-    },
-  }
-}
-
 // ── CLI ──
-const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n'])
+const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n', '--port'])
 
 function parseArgs(rest) {
   const opts = {}
@@ -1132,6 +1131,15 @@ function parseArgs(rest) {
   return { opts, positional }
 }
 
+// Precedência: --port > GRAPH_ENG_PORT > padrão (spec painel-web item 1b).
+export function parsePort(v, fallback, env = process.env.GRAPH_ENG_PORT) {
+  const [raw, from] = v !== undefined && v !== true ? [v, '--port'] : env !== undefined && env !== '' ? [env, 'GRAPH_ENG_PORT'] : [undefined]
+  if (raw === undefined) return fallback
+  const n = Number(raw)
+  if (!/^\d+$/.test(String(raw)) || n > 65535) throw new GraphWatchError(1, `${from} inválida: ${raw} (use 0 a 65535; 0 = porta livre qualquer)`)
+  return n
+}
+
 async function main() {
   const argv = process.argv.slice(2)
   const mode = argv[0]
@@ -1144,6 +1152,22 @@ async function main() {
   const modeFlag = opts['--mode']
   const cols = Number(opts['--cols'] || process.stdout.columns || 100)
   const rows = Number(opts['--rows'] || process.stdout.rows || 40)
+
+  if (mode === 'ui') {
+    // Painel web (docs/specs/2026-09-27-painel-web.md): sobe ou reaproveita o servidor e fica de pé.
+    const { ensurePanel, openBrowser, DEFAULT_PORT } = await import('./ui-server.mjs')
+    const panel = await ensurePanel({ port: parsePort(opts['--port'], DEFAULT_PORT), projectsDir })
+    console.log(`graph-eng: painel: ${panel.url}`)
+    if (opts['--open'] || (process.stdout.isTTY && !opts['--no-open'])) openBrowser(panel.url)
+    if (panel.reused) process.exit(0)
+    for (const sig of ['SIGINT', 'SIGTERM']) {
+      process.once(sig, () => {
+        panel.close().then(() => process.exit(0))
+        setTimeout(() => process.exit(0), 1000).unref()
+      })
+    }
+    return
+  }
 
   let runDir
   let terminated = false
@@ -1182,10 +1206,19 @@ async function main() {
     const code = await runEventsMode(runDir, { economy, modeFlag, explicitRun: !!opts['--run'] })
     process.exit(code)
   } else if (mode === 'live') {
-    let svgPipeline = null
+    // `--svg` virou alias do painel web: garante o painel (instância única) e segue como `live`.
+    // O painel sobe neste processo se ainda não houver um; ele cai junto quando o `live` sai.
+    let footer
     if (opts['--svg']) {
-      const initialModel = await buildModel({ runDir, economy, mode: modeFlag }).catch(() => null)
-      if (initialModel) svgPipeline = ensureSvgPipeline(initialModel, runDir)
+      try {
+        const { ensurePanel, DEFAULT_PORT } = await import('./ui-server.mjs')
+        const panel = await ensurePanel({ port: parsePort(opts['--port'], DEFAULT_PORT), projectsDir })
+        const link = `${panel.url}/?run=${path.basename(runDir)}`
+        console.error(`graph-eng: painel: ${link}`)
+        footer = `painel: ${link}`
+      } catch (e) {
+        console.error(`graph-eng: aviso: painel indisponível (${(e && e.message) || e}), seguindo no terminal`)
+      }
     }
     const controller = new AbortController()
     for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => controller.abort())
@@ -1195,7 +1228,7 @@ async function main() {
       colsFixed: opts['--cols'] ? cols : undefined,
       rowsFixed: opts['--rows'] ? rows : undefined,
       signal: controller.signal,
-      onModel: svgPipeline ? (m) => svgPipeline.rewrite(m) : undefined,
+      footer,
     })
     process.exit(0)
   } else {
