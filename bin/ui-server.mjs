@@ -546,9 +546,13 @@ function inferHeader(dir) {
       // O `# Graph run` pode abrir o prompt, logo depois da aspa da string JSON.
       const r = text.match(/(?:^|\\n|\n|")[ \t]*# Graph run ([A-Za-z0-9._-]{1,96})/)
       const d = text.match(/(?:^|\\n|\n)[ \t]*Run dir \(paper trail\): ([^\\"\n]{1,1024})/)
+      // I8: `Resume: <rs>` (workflows/graph-eng.js buildShared) — id da retomada que originou este wf, se
+      // ele veio de uma (bin/graph-resume.mjs). Sem a linha, o wf foi disparado do zero.
+      const rs = text.match(/(?:^|\\n|\n)[ \t]*Resume: (rs-\d{8}-\d{6}(?:-\d+)?)/)
       return {
         runId: r ? r[1] : undefined,
         runDirRaw: d ? d[1].trim() || undefined : undefined,
+        resume: rs ? rs[1] : undefined,
         mode: m[1],
         economy: e && ECONOMIES.has(e[1]) ? e[1] : undefined,
         effort: ef ? ef[1] : undefined,

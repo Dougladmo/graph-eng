@@ -220,6 +220,52 @@ export function readJournalTolerant(journalPath) {
   return { events, illegible, missing: false }
 }
 
+// ── Retomada (I8, spec C8/D2 §5.3.9 "loadResume"): leitura tolerante de <runDir>/resume/<rs>.json,
+// gravado por bin/graph-resume.mjs de forma atômica (tmp wx 0600 + rename). Usada pelo CLI e pelo
+// fallback de buildModel abaixo (`readWfPrefixInfo`), para não criar ciclo de import com graph-resume.mjs.
+export function loadResume(runDir, rs) {
+  if (typeof runDir !== 'string' || !runDir || typeof rs !== 'string' || !/^rs-\d{8}-\d{6}(-\d+)?$/.test(rs)) return null
+  try {
+    const text = fs.readFileSync(path.join(runDir, 'resume', `${rs}.json`), 'utf8')
+    const data = JSON.parse(text)
+    return data && typeof data === 'object' ? data : null
+  } catch {
+    return null
+  }
+}
+
+// Lê só `Run dir (paper trail): <dir>` e `Resume: <rs>` do início do prompt do próprio wf (mesmas linhas
+// do SHARED de workflows/graph-eng.js), sem repetir o `inferHeader` inteiro de bin/ui-server.mjs (que fica
+// do lado do servidor, e importaria este módulo, criando ciclo).
+function readWfPrefixInfo(dir) {
+  let files
+  try {
+    files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith('agent-') && f.endsWith('.jsonl'))
+      .sort()
+  } catch {
+    return {}
+  }
+  for (const f of files.slice(0, 3)) {
+    let fd
+    try {
+      fd = fs.openSync(path.join(dir, f), 'r')
+      const buf = Buffer.alloc(65536)
+      const n = fs.readSync(fd, buf, 0, buf.length, 0)
+      const text = buf.toString('utf8', 0, n)
+      const d = text.match(/(?:^|\\n|\n)[ \t]*Run dir \(paper trail\): ([^\\"\n]{1,1024})/)
+      const rs = text.match(/(?:^|\\n|\n)[ \t]*Resume: (rs-\d{8}-\d{6}(?:-\d+)?)/)
+      if (d || rs) return { runDirRaw: d ? d[1].trim() || undefined : undefined, resumeId: rs ? rs[1] : undefined }
+    } catch {
+      /* transcrição ausente ou ilegível: tenta a próxima */
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd)
+    }
+  }
+  return {}
+}
+
 // ── normalize() (graph-eng.js:314-349), como função pura e testável ──
 export function normalizeNodes(list, opts = {}) {
   const { prefix = '', round = 1, existingIds = new Set(), readOnly = false, reserved = [] } = opts
@@ -499,6 +545,8 @@ export async function buildModel(opts = {}) {
   const planStarted = events.some((e) => e.type === 'started' && e.label === 'plan')
   let planRes = null
   const orphans = []
+  let resumeMeta = null // { id, from } (C11/I8): wf retomado sem `plan` no journal
+  const resumeSynthEvents = [] // eventos sintéticos p/ desenhar resume.done como pronto (I8, D2 §8)
 
   if (!planStarted) {
     const sibDir = siblingPlanOnlyDir || findSiblingPlanOnly(runDir)
@@ -513,6 +561,44 @@ export async function buildModel(opts = {}) {
         const first = doNormalize(planRes.nodes, { round: 1 })
         applyRoundOneRails(first)
         warns.push(`plano lido da run planOnly ${path.basename(sibDir)}`)
+      }
+    }
+  }
+
+  // Fallback de uma run retomada (I8, D2 §8): o wf retomado não chama o planner de novo (o motor recebe
+  // args.plan) nem tem irmã planOnly (a retomada pode vir de outra sessão). O prefixo do próprio wf traz
+  // `Resume: <rs>`, e o plano e o estado prontos saem de `<runDir do header>/resume/<rs>.json`.
+  if (!planStarted && !planRes) {
+    const { runDirRaw, resumeId } = readWfPrefixInfo(runDir)
+    if (runDirRaw && resumeId) {
+      const rd = loadResume(runDirRaw, resumeId)
+      if (rd && rd.plan && Array.isArray(rd.plan.nodes)) {
+        planRes = rd.plan
+        applyPlanEffortAndMode(planRes)
+        const first = doNormalize(planRes.nodes, { round: 1 })
+        applyRoundOneRails(first)
+        const doneMap = (rd.resume && rd.resume.done) || {}
+        const rerunSet = new Set((rd.resume && rd.resume.rerun) || [])
+        resumeMeta = { id: resumeId, from: Array.isArray(rd.resume && rd.resume.from) ? rd.resume.from : [] }
+        let n = 0
+        for (const id of Object.keys(doneMap)) {
+          if (rerunSet.has(id)) continue
+          const node = NODES.get(id)
+          if (!node) continue
+          node.resumed = true
+          const entry = doneMap[id] || {}
+          const key = `resume:${++n}:${id}`
+          resumeSynthEvents.push({ type: 'started', key, agentId: null, label: `work:${id}`, phase: 'Execute', synthetic: true })
+          resumeSynthEvents.push({ type: 'result', key, result: { status: 'done', summary: entry.summary || '', artifact: entry.artifact || '', filesChanged: entry.filesChanged || [] } })
+          if (node.kind === 'implement') {
+            const vkey = `resume:${++n}:v:${id}`
+            resumeSynthEvents.push({ type: 'started', key: vkey, agentId: null, label: `verify:${id}`, phase: 'Verify', synthetic: true })
+            resumeSynthEvents.push({ type: 'result', key: vkey, result: { pass: true, confidence: 'high', blocking: [] } })
+          }
+        }
+        warns.push(`plano e estado prontos lidos de resume/${resumeId} (sem plan neste journal)`)
+      } else {
+        warns.push(`Resume: ${resumeId} sem resume/${resumeId}.json legível`)
       }
     }
   }
@@ -542,9 +628,9 @@ export async function buildModel(opts = {}) {
   let drLastFailed = false
   const polishState = new Map() // k -> { state }
 
-  for (const e of events.slice(cut)) {
+  for (const e of [...events.slice(cut), ...resumeSynthEvents]) {
     if (e.type === 'started') {
-      spent++
+      if (!e.synthetic) spent++
       const s = { label: e.label, done: false, seq: spent, agentId: e.agentId }
       byKey.set(e.key, s)
       const label = e.label || ''
@@ -745,6 +831,7 @@ export async function buildModel(opts = {}) {
     }
     const out = { id: n.id, kind: n.kind, risk: n.risk, round: n.round || 1, title: n.title, deps: n.deps || [], explore: !!n.explore, state: st, reps, closed: closed(n.id) }
     if (n.orphan) out.orphan = true
+    if (n.resumed) out.resumed = true
     if (n.injected) {
       out.injected = true
       out.reason = n.reason || ''
@@ -799,6 +886,7 @@ export async function buildModel(opts = {}) {
     planOnly,
     activePseudo,
     openAgentIds,
+    resume: resumeMeta,
   }
 
   if (NEW) {
