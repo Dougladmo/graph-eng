@@ -106,6 +106,22 @@ describe('exit codes e erros (§7, §8.2 item 6)', () => {
     assert.match((stdout + stderr), /nenhuma run/)
   })
 
+  test('snapshot de run terminada: "sem --run" só sai quando a run foi escolhida sozinha', async () => {
+    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-terminada-'))
+    try {
+      const dest = path.join(projectsDir, ROOT.replace(/[^A-Za-z0-9]/g, '-'), 'sess', 'subagents', 'workflows', 'wf_hhhh0000-hhh')
+      fs.cpSync(fx('happy'), dest, { recursive: true })
+      const auto = await run(['snapshot', '--projects-dir', projectsDir, '--no-color'])
+      assert.equal(auto.code, 0)
+      assert.match(auto.stdout, /aviso: sem --run, usando wf_hhhh0000-hhh \(terminada\)/)
+      const explicit = await run(['snapshot', '--projects-dir', projectsDir, '--run', 'wf_hhhh0000-hhh', '--no-color'])
+      assert.equal(explicit.code, 0)
+      assert.doesNotMatch(explicit.stdout, /sem --run/)
+    } finally {
+      fs.rmSync(projectsDir, { recursive: true, force: true })
+    }
+  })
+
   test('linha JSON parcial/cortada: fica pendurada até completar, sem crash', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-partial-'))
     const full = fs.readFileSync(path.join(fx('happy'), 'journal.jsonl'), 'utf8')

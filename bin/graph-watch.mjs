@@ -2042,7 +2042,8 @@ async function main() {
   if (mode === 'snapshot') {
     const model = await buildModel({ runDir, economy, mode: modeFlag, effort: effortFlag, ceiling: ceilingFlag })
     const lines = [graphText(model, { cols, rows, color }), buildNowBlock(model, runDir)]
-    if (terminated) lines.push(`aviso: sem --run, usando ${model.wf} (terminada)`)
+    // `terminated` vem do findRun também com --run/--run-id; o aviso é só para a run escolhida sozinha.
+    if (terminated && !opts['--run'] && !opts['--run-id']) lines.push(`aviso: sem --run, usando ${model.wf} (terminada)`)
     console.log(lines.join('\n'))
     process.exit(0)
   } else if (mode === 'agent') {
