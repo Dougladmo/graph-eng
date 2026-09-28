@@ -49,7 +49,7 @@ PLAN ─▶ PESQUISA ─▶ DESIGN ─▶ REVISÃO DO DESIGN ─▶ [ DAG: work 
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/painel-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/painel-light.png">
-    <img src="docs/assets/painel-light.png" width="860" alt="Painel do graph-eng com uma run de exemplo: lista lateral com Fixadas, um grupo e Em andamento, e o grafo de fases em colunas com uma bolinha por nó">
+    <img src="docs/assets/painel-light.png" width="860" alt="Painel do graph-eng com uma run fictícia rodando: na lateral, as runs em Fixadas, num grupo, Em andamento, Paradas e Finalizadas recolhida; no centro, o grafo em sete colunas de fase, com nós prontos, rodando, bloqueado, falho e pulado">
   </picture>
 </p>
 
@@ -87,8 +87,6 @@ O workflow **nunca** faz commit, push, deploy nem migration remota. Isso fica no
 - `node` no `PATH`. O painel e a config rodam em Node puro, sem `npm install`. Testado no Node 22.
 
 ## Instalação
-
-Só Claude Code — sem seção para Codex, Gemini ou outro agente.
 
 ### Numa sessão do Claude Code
 
@@ -205,6 +203,14 @@ executa a ação direto: ele **pede**, e a sessão do Claude que está ouvindo *
 ação depende de haver uma sessão ouvindo (ver abaixo); sem ela, sobra o botão **Copiar comando**, que
 funciona sempre.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/acoes-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/acoes-light.png">
+    <img src="docs/assets/acoes-light.png" width="860" alt="Run parada no painel: Retomar habilitado, Parar desabilitado porque a sessão dona não está ouvindo, e a gaveta de um nó falho com o motivo, o botão Refazer nó e o histórico de verificações e reparos">
+  </picture>
+</p>
+
 ### Como o pedido chega até a sessão
 
 1. O painel grava o pedido — `resume`, `stop` ou `rerun-node` — numa fila em arquivo
@@ -281,9 +287,9 @@ A lateral organiza as runs como no Claude Code:
 - A organização (fixada, grupo, arquivada) é gravada ao lado da config, pela **chave da run**: o
   `runId`, não o `wf`. Uma run retomada nasce com outro `wf`, e é por isso que ela continua fixada ou no
   mesmo grupo depois de retomada.
-- **Resumo compacto das bolinhas**: até `X` nós (padrão 10, `bin/ui/sidebar.mjs`'s `STRIP_MAX`), a linha
+- **Resumo compacto das bolinhas**: até `X` nós (padrão 10, `STRIP_MAX` em `bin/ui/sidebar.mjs`), a linha
   da run mostra uma bolinha por nó, igual ao grafo. Acima de `X`, a fileira quebrava em 2-3 linhas e
-  desalinhava a lista (print `ref-bolinhas-lista.png`), então a linha passa a mostrar um **resumo por
+  desalinhava a lista, então a linha passa a mostrar um **resumo por
   estado** — uma bolinha com a contagem de nós com erro, rodando e concluídos, em vez de uma por nó. O
   texto por extenso (quantos de cada estado) vai no `title` e no `aria-label`, nunca só no visual.
 

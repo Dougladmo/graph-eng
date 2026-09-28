@@ -356,9 +356,8 @@ não existe um `.ico` de verdade, mas todo navegador que bate nesse caminho acei
 ### Resumo compacto das bolinhas na lista, acima de X nós
 
 A linha de cada run na lateral mostrava uma bolinha por nó do grafo, igual ao grafo grande — e numa run
-com muitos nós (o teto de hoje chega a 50) a fileira quebrava em 2 ou 3 linhas, desalinhando a lista
-inteira (print `ref-bolinhas-lista.png`, no run dir desta run). Acima de `STRIP_MAX` nós (`bin/ui/
-sidebar.mjs`, hoje 10 — escolhido por ser a maior contagem que ainda cabe numa linha sem quebrar nas
+com muitos nós a fileira quebrava em 2 ou 3 linhas, desalinhando a lista inteira. Acima de `STRIP_MAX`
+nós (`bin/ui/sidebar.mjs`, hoje 10 — escolhido por ser a maior contagem que ainda cabe numa linha sem quebrar nas
 larguras testadas), a linha troca a fileira de bolinhas por um resumo por estado: uma bolinha com a
 contagem de nós com erro, rodando e concluídos. O texto por extenso continua indo para `title` e
 `aria-label`, porque o resumo visual comprime a informação, não a esconde de quem usa leitor de tela ou
