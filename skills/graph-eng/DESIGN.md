@@ -43,6 +43,185 @@ afirmação. O `graph-eng` faz planejamento, execução, verificação, reparo e
 | Plan gate opcional + gate humano no fim                             | O grafo não decide por você; ele produz evidência. Gate mais rígido para deploy, dados de produção e texto público (Greg Eisenberg).                                                                                                                                      |
 | Nó de risco alto sempre no modelo da sessão                         | O teto de qualidade é o do nó principal ([cog2], "smart friend"). Opus como líder com Sonnet nos workers deu +90,2% sobre Opus sozinho em pesquisa ([ma]).                                                                                                               |
 
+## Esqueleto de fases, esforço/teto, revisão do design, síntese — por quê
+
+Rodada de 2026-09-28 (spec `docs/specs/2026-09-28-esforco-e-teto-de-agentes.md`), decidida com plan gate do
+próprio graph-eng (run `20260928-0213-fases-esforco-teto`, `DR.md` na pasta da run). Cada subseção é uma
+decisão do código, com o porquê.
+
+### Esqueleto de fases obrigatório por modo, fim do atalho trivial
+
+O planner escolhia livremente quantos nós usar, inclusive 1 nó para tarefa trivial. Isso deixava a
+qualidade do grafo do tamanho do julgamento do planner naquela chamada — a mesma falha que a DESIGN.md já
+registra em outro contexto ("unaware of termination", MAST). A correção é um **trilho no código**: cada
+modo tem uma sequência de fases fixa (`implement`: Plano → Pesquisa → Design → Revisão do design →
+Implementação → Revisão da implementação (verify por nó + crítica) → Síntese; `architecture` para antes da
+Implementação; `research`/`review`: Plano → Pesquisa → Crítica → Síntese), e o motor normaliza o plano para
+essa forma antes de rodar — não é uma sugestão que o planner pode ignorar. O piso de agentes por modo (ver
+abaixo) é 1 agente por fase desse esqueleto, então mesmo o teto mais baixo aceito ainda cobre a sequência
+inteira. Isso também fecha o atalho de 1 nó: não existe mais tarefa pequena o bastante para pular fase.
+
+### `effort` × `ceiling`: fórmula, piso e por que arredondar
+
+A pergunta "quantos agentes usar" tinha duas respostas incompatíveis: um preset fixo (`lean`/`balanced`/
+`max`) e o julgamento do planner. Nenhuma delas dava ao usuário um dial simples. A fórmula
+`alvo = max(piso(modo), round(pct(esforço) × teto))`, com `pct` 20/40/70/100% para `low/medium/high/max`,
+dá um controle direto: o teto (`ceiling`, padrão de fábrica 24) é o gasto máximo aceitável, e o esforço é
+"quanto desse máximo eu quero para esta run". O arredondamento é `Math.floor((pct·ceiling + 50) / 100)`
+(inteiro, não `Math.round` de ponto flutuante) porque `0.7 × 24` em IEEE 754 dá `16.799999...`, e
+`Math.round` nesse caso ainda funciona, mas a soma de meio ponto antes do `floor` deixa o comportamento
+explícito e testável sem depender de arredondamento bancário do runtime. O piso por modo (`implement` 8,
+`architecture` 6, `research`/`review` 4) é o mínimo do esqueleto de fases da seção anterior — um teto
+menor que o piso do modo é inválido, não "vira o piso silenciosamente": a validação recusa (ver `validateCeiling`
+abaixo), porque aceitar em silêncio esconderia do usuário que o teto pedido não cobre nem uma run vazia.
+`economy` continua existindo, mas muda só o **modelo** de cada papel (Sonnet vs. sessão) — o teto de
+agentes é assunto do `ceiling`, não do preset, para não haver dois controles competindo pelo mesmo efeito.
+
+### `effort: 'manual'` sem humano → `auto`, com registro
+
+A spec pede que o manual pergunte o nível a cada disparo. Mas a skill também pode ser chamada por outro
+agente (subagente, workflow orquestrador), sem ninguém para responder um `AskUserQuestion`. Bloquear o
+workflow esperando entrada que nunca chega é pior que decidir: a skill trata `manual` sem humano como
+`auto` e grava `effortSource: 'manual-fallback'`, e o relatório final diz explicitamente que foi o Claude
+quem decidiu o nível sozinho. Isso é decisão de skill (que sabe se há humano do outro lado), não do motor.
+
+### `auto`: o planner escolhe e justifica, visível no plan gate
+
+`effort: 'auto'` não é "usa o padrão calado": o planner recebe o alvo calculado a partir do teto e da
+dificuldade percebida da tarefa, e grava a justificativa no plano (`plan.effort.why`). O plan gate
+mostra essa linha antes do usuário aprovar — decisão de dimensionamento também é decisão que se aprova, não
+só a lista de nós.
+
+### Plano acima do máximo de nós: no `auto` o nível sobe, com nível fixo o corte preserva o esqueleto
+
+O schema do planner usa o máximo de nós do pior caso (`max`) quando o esforço é `auto`, porque o nível só
+existe depois do plano. Então o plano pode vir maior que o máximo do nível que o próprio planner escolheu.
+Cortar aí tira quase sempre implementação, que é folha do grafo: a run pesquisaria, desenharia e não
+entregaria. No `auto`, quem dimensiona é o planner, e um plano grande diz que a tarefa é maior do que o
+nível declarado. Por isso o motor sobe o nível até o plano caber, nunca acima do teto, e registra a subida
+no trilho `effort` e na justificativa. O corte fica para quando o usuário fixou o nível (a escolha dele
+manda) ou quando nem o `max` comporta o plano. Nesse caso, ele nunca esvazia um tipo obrigatório do
+esqueleto (pesquisa sempre, design em `implement`/`architecture`, implementação em `implement`) e reaplica
+os trilhos depois de cortar.
+
+### `maxAgents` como sinônimo de `ceiling`, `economy` só de modelo
+
+Dois nomes para o mesmo campo (`ceiling`/`maxAgents`) evitam que quem já conhecia a API antiga (`maxAgents`)
+precise migrar; o CLI (`bin/graph-config.mjs`) resolve o conflito com `--ceiling` vencendo se os dois vierem
+juntos, e avisa em `warnings`. `economy` perde o papel de teto que tinha nos presets antigos e passa a
+escolher só o modelo de cada papel — dois campos, uma responsabilidade cada.
+
+### Config em arquivo, CLI separado do graph-watch, PUT que substitui
+
+A config mora em `~/.claude/graph-eng/config.json` porque é preferência de máquina, não de run: sobrevive
+entre invocações da skill e entre plugins. `bin/config.mjs` faz leitura tolerante (arquivo ilegível ou
+campo inválido nunca derruba a skill nem o painel — vira aviso e o campo volta ao padrão) e gravação atômica
+(`tmp` com `wx`+`0o600`, depois `rename`, para que uma leitura concorrente nunca veja um arquivo pela
+metade). A skill lê a config por um binário próprio, `bin/graph-config.mjs --json`, e não por
+`bin/graph-watch.mjs`, porque o workflow não tem acesso a disco (não importa Node API) — é a skill, do lado
+de fora, que resolve a config e passa os valores como argumentos. Manter isso fora de `graph-watch.mjs` evita
+que o CLI de visualização (que já cresce a cada fase nova) dispute responsabilidade com o de config. O
+`PUT /api/config` **substitui** o arquivo inteiro (chave ausente no corpo volta ao padrão) em vez de fazer
+merge parcial, porque um merge implícito escondida do usuário do modal qual campo realmente mudou depois de
+uma edição anterior malformada.
+
+### `Origin` obrigatório na escrita, sem CORS
+
+A única rota de escrita do painel (`PUT /api/config`) exige `Origin: http://<Host>` e recusa `Origin`
+ausente ou `null`. Não há cabeçalho `Access-Control-Allow-*`: o painel é servido e consumido do mesmo
+`127.0.0.1:<porta>`, então CORS cross-origin não é um caso de uso, e adicioná-lo só abriria a rota de
+escrita a outra origem sem necessidade. Sem CORS, um `PUT` cross-origin com `application/json` dispara
+preflight `OPTIONS`, que o servidor responde 405 — a exigência de `Origin` é a segunda barreira, para o caso
+de o cliente não seguir o preflight.
+
+### Teto abaixo do piso do modo: recusado com "mínimo N", sem salvar
+
+Resposta do plan gate desta run: pedir um `ceiling` menor que o piso é erro de validação, não "arredonda
+para o piso". `validateCeiling` devolve `{ ok: false, error: 'mínimo N' }`, o modal mostra a mensagem no
+campo e **não grava**. Silenciosamente subir o valor escondia do usuário que o número que ele digitou não
+fazia sentido para aquele modo; recusar com a mensagem exata deixa claro por quê. O N depende de onde se
+valida: o CLI com `--mode` e o motor usam o piso do modo; o modal e o arquivo, que não sabem o modo da
+próxima run, usam 8 (ver "Piso global 8" abaixo).
+
+### Revisão do design como fase do motor, não nó do planner
+
+O planner podia, em tese, decidir não revisar o design. A spec pede o oposto: revisão do design é
+obrigatória antes de implementar, e design reprovado bloqueia a implementação. Por isso a revisão do
+design é uma **fase do motor** (como o plan gate e o critic), com reparo (até `maxRepairs`, escalando de
+modelo no último) e reprovação que marca os nós de implementação como `skipped`/`blocked` — o motor decide
+isso, o planner só fornece os nós de design a revisar. Tratar como fase, e não como nó comum do DAG,
+também é o que permite ao motor reservar `canSpend` para a revisão e o reparo antes do fan-out de
+implementação (senão um nó `work` concorrente podia gastar o orçamento que a revisão precisava).
+
+### Ids reservados (`research-base`, `design-base`, `design-review:rN`, `polish:<k>`) em vez de `kind` novo
+
+Nó injetado pelo motor (pesquisa de base que faltou, polidor da síntese) não é um `kind` novo no vocabulário
+do planner: é um id com prefixo reservado, marcado com `injected: true` e o motivo (`reason`) gravado no
+plano. Isso mantém o conjunto de `kind`s pequeno (research/design/implement) e deixa o graph-watch
+reconhecer o nó pela forma do id, sem precisar de outro caminho de renderização por `kind`.
+
+### Verificação cruzada + lente de boas práticas
+
+Toda implementação é verificada por **outro** agente — nunca quem escreveu, pela mesma razão de
+self-preference bias já documentada na tabela acima (Panickssery 2024). A novidade desta rodada é a
+**lente de boas práticas**, aplicada tanto no verify quanto na crítica do round: além de "resolve o
+`doneWhen`?", o revisor também confere padrões do repo (convenções, testes não apagados, escopo). Isso
+absorve parte do que antes só o critic pegava no fim do round, encurtando o ciclo de reparo.
+
+### Implementação em paralelo por arquivos disjuntos
+
+Nós `implement` cujos arquivos não se sobrepõem (`n.files` do plano, ou o escopo que a revisão do design
+autorizar) rodam em paralelo — a regra "escrita em raia única" da tabela de evidências continua valendo
+por arquivo, não por run inteira: dois agentes escrevendo arquivos diferentes não competem por lock de
+verify, e o motor reserva o slot de verify de cada um antes de liberar o `work` concorrente (para o
+orçamento de um não roubar o do outro).
+
+### Síntese: `ceil(2/3 × implement)` polidores + 1 consolidador
+
+Vários nós `implement` em paralelo podem gerar inconsistência de estilo/interface entre arquivos que não
+se viam uns aos outros durante a escrita. Em vez de 1 polidor por implementação (caro) ou nenhum (risco de costura visível), o
+número de polidores é proporcional — dois terços do número de implementações, arredondado para cima, mínimo
+1 — e cada polidor cobre uma **área** (grupo de arquivos por proximidade, via union-find, não 1 arquivo por
+polidor). O consolidador é sempre 1, mesmo com 1 só implementação ou em `research`/`review` (que não têm
+polidor, porque não há código para polir): alguém precisa fechar o `REPORT.md` e decidir se reverter uma
+mudança de um polidor que quebrou um check.
+
+### Piso global 8 no config e no modal, sem depender do modo
+
+`bin/config.mjs` valida `ceiling` contra um piso fixo de 8 (`ceiling: { min: floorOf() }`, sem argumento),
+não contra o piso do modo daquela run (`floorOf('implement')` = 8, `floorOf('architecture')` = 6,
+`floorOf('research'|'review')` = 4). O arquivo de config e o modal são de máquina, não de run: eles não
+sabem em que modo a próxima invocação vai rodar, e `implement` é o maior piso dos quatro — validar contra
+o menor piso possível deixaria passar um `ceiling` que travaria de cara numa run `implement`. Quem valida
+contra o piso exato do modo é o CLI (`bin/graph-config.mjs --mode <mode>`) e o motor, no momento em que o
+modo já é conhecido; o config genérico só recusa o que seria inválido em qualquer modo.
+
+### `polish-<k>` na API e na URL, com hífen em vez de `:`
+
+O polidor da síntese é `polish:<k>` no vocabulário interno do motor (mesmo padrão de `design-review:rN`),
+mas a API do painel (`/agent/<id>` e a URL do link do nó) usa `polish-<k>`, com hífen. O motivo é
+`NODE_RE`/o roteamento de path do `ui-server.mjs`, que não aceita `:` num segmento de path sem escapar —
+manter `:` na API forçaria URL-encoding em todo lugar que monta o link. `POLISH_API_RE` (`bin/ui-server.mjs`)
+faz a tradução hífen→`:` só na borda HTTP; o resto do motor e do journal continua usando `:`.
+
+### `graph-watch` reaplica os trilhos, não confia só no plano gravado
+
+`bin/graph-watch.mjs` roda `applyRails()` (cópia pura das mesmas regras R1-R6 do motor) sobre os nós que lê
+do journal, em vez de desenhar as fases só a partir do que o plano gravou. Isso importa porque o
+`graph-watch` também precisa renderizar runs em progresso, cujo journal ainda não tem todos os nós
+injetados (revisão do design, polidores) que o motor só grava conforme o round avança — sem reaplicar os
+trilhos, o painel mostraria uma run parcial como se o esqueleto de fases dela fosse diferente do que vai
+ser no final. Reaplicar é também o que deixa o `graph-watch` continuar funcionando como ferramenta só de
+leitura: ele nunca precisa reabrir o plano bruto para saber em que fase um nó está.
+
+### `architecture` sem implementação
+
+A spec e a `DR.md` corrigiram um bug de fronteira: um nó `implement` do planner, em modo `architecture`,
+rodaria de qualquer forma, porque o motor só convertia `implement→design` em modo `research`/`review`
+(`READ_ONLY`). A correção calcula o modo real (`RMODE`) sobre o plano cru, antes de normalizar, e o
+`normalize` converte `implement→design` sempre que `RMODE !== 'implement'` — architecture produz decisão
+(ADR), nunca código.
+
 ## Spec: quanto escrever antes do grafo
 
 A pergunta é sobre quem é dono do quê, e não "spec ou não spec". **O humano é dono do "o quê"** (objetivo,
