@@ -333,6 +333,7 @@ function buildShared() {
     'Rules for every node:',
     '- You are ONE node of a graph. Do only your job; other nodes cover the rest. Do not spawn subagents.',
     '- Never commit, push, deploy, open PRs, touch remote databases or send messages. Code edits only in implement nodes.',
+    '- The working tree is shared with the nodes running in parallel, and nothing in this run is committed. Never use git\'s stash, reset, checkout, restore or clean commands: they discard the other nodes\' work, and the stash stack is shared by every worktree of the repo, so this holds inside a worktree too. For a baseline, run the checks in a throwaway `git worktree add --detach <tmp> HEAD` (no stash there either) and remove it after.',
     '- Every claim needs evidence (file:line, URL, or command + result). Without evidence, label it "unverified".',
     '- Be terse. Full output goes to files; the structured return is a short summary.',
   ].filter(Boolean).join('\n') + '\n'

@@ -176,6 +176,15 @@ por arquivo, não por run inteira: dois agentes escrevendo arquivos diferentes n
 verify, e o motor reserva o slot de verify de cada um antes de liberar o `work` concorrente (para o
 orçamento de um não roubar o do outro).
 
+Arquivos disjuntos não bastam: a árvore é uma só e nada da run está commitado. Por isso todo agente
+recebe no prefixo a proibição de `stash`, `reset`, `checkout`, `restore` e `clean`, e a linha de base
+se mede num `git worktree add --detach <tmp> HEAD`. A pilha de stash também é uma só, compartilhada por
+todos os worktrees do repo, então usar stash dentro do worktree descartável também não é seguro. Foi
+o que aconteceu na run `20260928-1146-acoes-no-painel`. Um executor fez stash e pop no repo para medir
+a linha de base, e o verificador de outro nó fez o mesmo no worktree dele. Os dois pops trocaram as
+entradas da pilha: o trabalho de 3 nós foi parar no worktree do verificador, e o repo ficou só com
+os 3 arquivos do outro nó.
+
 ### Síntese: `ceil(2/3 × implement)` polidores + 1 consolidador
 
 Vários nós `implement` em paralelo podem gerar inconsistência de estilo/interface entre arquivos que não

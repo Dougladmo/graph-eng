@@ -365,3 +365,29 @@ test('nível fixado pelo usuário não sobe: o plano grande é cortado, mantendo
   assert.ok(result.rails.some((r) => r.rule === 'maxNodes'))
   assert.equal(result.plan.nodes.length, 3)
 })
+
+// Os nós de uma run dividem a árvore de trabalho, e nada da run está commitado. Um `git stash` de um
+// nó (para medir a linha de base) leva junto o trabalho dos outros, e a pilha de stash é uma só para
+// todos os worktrees do repo. Aconteceu na run 20260928-1146-acoes-no-painel: um executor e um
+// verificador fizeram stash e pop ao mesmo tempo, e um levou o trabalho do outro. A regra vai no
+// prefixo que todo agente recebe.
+test('todo agente recebe a regra de não usar stash, reset, checkout, restore nem clean', async () => {
+  const plan = planWith([
+    { id: 'R1', kind: 'research', title: 'r', brief: 'b', deps: [], risk: 'low', acceptance: ['a'] },
+    { id: 'D1', kind: 'design', title: 'd', brief: 'b', deps: ['R1'], risk: 'low', acceptance: ['a'] },
+    { id: 'I1', kind: 'implement', title: 'i', brief: 'b', deps: ['D1'], risk: 'high', acceptance: ['a'], files: ['x.js'] },
+  ])
+  const prompts = new Map()
+  const base = defaultScript()
+  const script = (label, prompt, opts) => {
+    prompts.set(label, prompt)
+    return base(label, prompt, opts)
+  }
+  await runWorkflow({ ...BASE, mode: 'implement', effort: 'high', ceiling: 24, plan }, script)
+  const kinds = new Set([...prompts.keys()].map((l) => l.split(':')[0]))
+  for (const k of ['work', 'verify', 'design-review', 'critic', 'synth']) assert.ok(kinds.has(k), `nenhum agente ${k} rodou`)
+  for (const [label, prompt] of prompts) {
+    assert.match(prompt, /Never use git's stash, reset, checkout, restore or clean commands/, `${label} sem a regra`)
+    assert.match(prompt, /git worktree add --detach <tmp> HEAD/, `${label} sem a saída pela linha de base`)
+  }
+})
