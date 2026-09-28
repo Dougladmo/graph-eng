@@ -26,7 +26,7 @@
 //   #empty-msg                 estado vazio.
 // A geometria vem de graph-layout.mjs (LAYOUT, placeGraph).
 
-import { STATE_TEXT, variantOf, hasRun, buildGraph, layoutGraph, placeGraph, laneTitle, LAYOUT } from './graph-layout.mjs'
+import { STATE_TEXT, variantOf, hasRun, buildGraph, layoutGraph, placeGraph, laneTitle, nodeLabel, LAYOUT } from './graph-layout.mjs'
 
 // ── DOM ──
 const $ = (id) => document.getElementById(id)
@@ -193,10 +193,10 @@ function renderGraph(model) {
       const p = place.pos.get(v.id)
       setStyle(b, { left: `${p.x}px`, top: `${p.y}px` })
       b.style.setProperty('--i', p.col)
-      const label = v.kind === 'node' ? `${v.id} · ${v.title}` : v.title
-      setText(b.lastChild, label)
-      b.title = label
-      b.setAttribute('aria-label', `${label}, ${STATE_TEXT[v.state] || v.state}`)
+      const full = v.kind === 'node' ? `${v.id} · ${v.title}` : v.title
+      setText(b.lastChild, nodeLabel(v))
+      b.title = full
+      b.setAttribute('aria-label', `${full}, ${STATE_TEXT[v.state] || v.state}`)
       setData(b, { id: v.id, kind: v.kind, variant: variantOf(v.state), state: v.state, round: v.round, tone: toneOf(v.round), selected: v.id === openNodeId })
     },
   )

@@ -31,6 +31,17 @@ export function laneTitle(lane, kinds, maxRound) {
   return names.length ? names.join(' + ') : 'Etapa'
 }
 
+// Rótulo do nó sem o nome da fase na frente: a coluna já diz "Implementação", então
+// "Implementação: config e API" vira "I2 · config e API" e sobra espaço para o que importa. O título
+// inteiro continua no tooltip e na gaveta.
+export function nodeLabel(v) {
+  if (v.kind !== 'node') return v.title
+  const kind = v.node && v.node.kind
+  const names = [KIND_TEXT[kind], kind].filter(Boolean).map((s) => s.toLowerCase())
+  const m = /^\s*([^:—–]+?)\s*[:—–]\s*(\S.*)$/.exec(v.title)
+  return `${v.id} · ${m && names.includes(m[1].toLowerCase()) ? m[2] : v.title}`
+}
+
 // ── Estado do nó → variante visual ──
 export const VARIANT = {
   trabalhando: 'running',

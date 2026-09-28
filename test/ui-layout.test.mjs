@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { buildGraph, layoutGraph, placeGraph, laneTitle, LAYOUT, variantOf } from '../bin/ui/graph-layout.mjs'
+import { buildGraph, layoutGraph, placeGraph, laneTitle, nodeLabel, LAYOUT, variantOf } from '../bin/ui/graph-layout.mjs'
 import { buildModel } from '../bin/graph-watch.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -244,6 +244,17 @@ describe('layoutGraph: invariantes', () => {
     const V = new Map(g.V.map((v) => [v.id, v]))
     const names = L.lanes.map((l) => laneTitle(l, l.ids.map((id) => V.get(id).node && V.get(id).node.kind).filter(Boolean), 1))
     assert.deepEqual(names, ['Plano', 'Pesquisa', 'Design', 'Implementação + Pesquisa', 'Crítica', 'Síntese'])
+  })
+
+  test('rótulo do nó não repete o nome da fase, que já está na coluna', () => {
+    const v = (id, kind, title) => ({ id, kind: 'node', title, node: { kind } })
+    assert.equal(nodeLabel(v('I2', 'implement', 'Implementação: config, CLI e /api/config')), 'I2 · config, CLI e /api/config')
+    assert.equal(nodeLabel(v('R1', 'research', 'Pesquisa: motor do workflow')), 'R1 · motor do workflow')
+    assert.equal(nodeLabel(v('D1', 'design', 'design — contratos')), 'D1 · contratos')
+    // prefixo de outra fase, ou sem prefixo: fica como está
+    assert.equal(nodeLabel(v('DR', 'design', 'Revisão do design')), 'DR · Revisão do design')
+    assert.equal(nodeLabel(v('I1', 'implement', 'Design: contratos')), 'I1 · Design: contratos')
+    assert.equal(nodeLabel({ id: 'plan', kind: 'plan', title: 'plano' }), 'plano')
   })
 
   test('todas as fixtures do repo', async () => {
