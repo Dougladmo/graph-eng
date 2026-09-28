@@ -2151,6 +2151,17 @@ button {
 .btn-ghost:hover {
   background: var(--surface);
 }
+.btn-ghost:disabled,
+.btn-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn-ghost:disabled:hover {
+  background: none;
+}
+.btn-link:disabled:hover {
+  text-decoration: none;
+}
 
 /* ── Celular ── */
 @media (max-width: 720px) {
@@ -2390,6 +2401,9 @@ button {
 }
 .btn-ghost.danger:hover {
   background: var(--red-soft);
+}
+.btn-ghost.danger:disabled:hover {
+  background: none;
 }
 #act-why {
   margin: 6px 36px 0 312px;

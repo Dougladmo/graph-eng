@@ -440,3 +440,15 @@ test('E2: histórico dos 5 últimos pedidos na gaveta em modo run', () => {
   assert.match(actionsMod, /renderRequestsSection\(model\)/) // render() chama a cada refresh
   assert.match(actionsMod, /renderRequestsSection\(lastModel\)/) // renderArtifactsBody também chama, na abertura
 })
+
+test('style.css: .btn-ghost e .btn-link ficam esmaecidos quando disabled, sem hover ativo (r2-G1)', () => {
+  for (const target of [css, builtCss]) {
+    assert.match(target, /\.btn-ghost:disabled,\s*\n?\s*\.btn-link:disabled\s*\{[^}]*opacity:\s*0?\.5[^}]*cursor:\s*default/)
+    assert.match(target, /\.btn-ghost:disabled:hover\s*\{[^}]*background:\s*none/)
+    assert.match(target, /\.btn-link:disabled:hover\s*\{[^}]*text-decoration:\s*none/)
+    assert.match(target, /\.btn-ghost\.danger:disabled:hover\s*\{[^}]*background:\s*none/)
+  }
+  // o hover do 'Parar…' desabilitado não pode manter o fundo vermelho
+  const dangerDisabledHover = css.slice(css.indexOf('.btn-ghost.danger:disabled:hover'))
+  assert.doesNotMatch(dangerDisabledHover.slice(0, dangerDisabledHover.indexOf('}')), /red-soft/)
+})
