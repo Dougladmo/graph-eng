@@ -19,16 +19,29 @@
       <button id="sidebar-toggle" type="button" aria-expanded="false" aria-controls="sidebar"><span class="menu-icon" aria-hidden="true"></span>suas runs</button>
     </div>
     <nav id="sidebar" aria-label="suas runs">
-      <div id="run-lists">
-        <section class="run-group" id="group-active" hidden>
-          <h2>Em andamento</h2>
-          <div class="run-list"></div>
-        </section>
-        <section class="run-group" id="group-done" hidden>
-          <h2>Finalizadas</h2>
-          <div class="run-list"></div>
-        </section>
+      <div id="runs-head">
+        <span class="runs-head-label">Suas runs</span>
+        <div class="runs-head-actions">
+          <button id="runs-search-btn" class="icon-btn" type="button" aria-label="Buscar runs" aria-pressed="false">
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <button id="runs-filter-btn" class="icon-btn" type="button" aria-label="Filtrar runs" aria-haspopup="menu" aria-expanded="false">
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18M6.5 12h11M10 19h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span id="filter-dot" class="filter-dot" hidden aria-hidden="true"></span>
+          </button>
+          <button id="runs-new-group-btn" class="icon-btn" type="button" aria-label="Novo grupo">
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div id="runs-filter-menu" class="menu" role="menu" hidden>
+          <button type="button" class="menu-item" role="menuitemcheckbox" id="filter-archived" aria-checked="false">Mostrar arquivadas<span id="filter-archived-n" class="menu-item-n"></span></button>
+        </div>
       </div>
+      <div id="runs-search-row" hidden>
+        <input id="runs-q" type="search" placeholder="Buscar por nome, projeto ou objetivo" autocomplete="off" aria-label="Buscar runs">
+      </div>
+      <div id="run-lists" role="list"></div>
+      <p id="org-msg" role="status"></p>
       <div id="sidebar-foot">
         <button id="settings-open" class="foot-btn" type="button" aria-haspopup="dialog" aria-controls="settings">
           <svg class="gear" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 3.6v1.9M12 18.5v1.9M20.4 12h-1.9M5.5 12H3.6M17.66 6.34l-1.34 1.34M7.68 16.32l-1.34 1.34M17.66 17.66l-1.34-1.34M7.68 7.68 6.34 6.34" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
@@ -69,6 +82,8 @@
     </div>
     <div id="drawer-body"></div>
   </aside>
+  <div id="row-menu" class="menu" role="menu" hidden></div>
+  <template id="icon-trash"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></template>
 </div>
 <dialog id="settings" aria-labelledby="settings-title" aria-describedby="settings-desc" data-state="closed">
   <form id="settings-form" class="settings-card" novalidate>
@@ -131,6 +146,27 @@
       <p id="settings-status" role="status" aria-live="polite"></p>
       <button id="settings-reset" class="btn-ghost" type="button">Restaurar padrões</button>
       <button id="settings-save" class="btn-primary" type="submit">Salvar</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="confirm" aria-labelledby="confirm-title" data-state="closed">
+  <form id="confirm-form" class="confirm-card" novalidate>
+    <div class="drawer-head">
+      <div class="drawer-head-row">
+        <h2 id="confirm-title"></h2>
+        <button id="confirm-close" type="button" aria-label="Fechar"><span class="x" aria-hidden="true"></span></button>
+      </div>
+    </div>
+    <div class="confirm-body">
+      <p id="confirm-body-text"></p>
+      <div id="confirm-extra"></div>
+      <label id="confirm-typed-label" for="confirm-typed" hidden></label>
+      <input id="confirm-typed" type="text" autocomplete="off" spellcheck="false" hidden>
+      <p id="confirm-field-err" class="field-err" role="alert" hidden></p>
+    </div>
+    <div class="confirm-foot">
+      <button id="confirm-cancel" type="button" class="btn-ghost">Cancelar</button>
+      <button id="confirm-ok" type="submit" class="btn-primary"></button>
     </div>
   </form>
 </dialog>

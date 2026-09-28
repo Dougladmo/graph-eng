@@ -22,11 +22,17 @@ const theme = fs.readFileSync(path.join(UI_DIR, 'theme.js'), 'utf8')
 const configModal = fs.readFileSync(path.join(UI_DIR, 'config-modal.mjs'), 'utf8')
 const agentTarget = fs.readFileSync(path.join(UI_DIR, 'agent-target.mjs'), 'utf8')
 const favicon = fs.readFileSync(path.join(UI_DIR, 'favicon.svg'), 'utf8')
+const sidebar = fs.readFileSync(path.join(UI_DIR, 'sidebar.mjs'), 'utf8')
+const confirmMod = fs.readFileSync(path.join(UI_DIR, 'confirm.mjs'), 'utf8')
 const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'bin', 'ui-server.mjs'), 'utf8')
 const graphHtml = html.slice(html.indexOf('<div id="graph">'), html.indexOf('<ul id="legend">'))
 
-test('app.js, graph-layout.mjs, theme.js e config-modal.mjs não usam innerHTML (sem innerHTML nenhum)', () => {
-  assert.equal(/innerHTML/.test(js + layout + theme + configModal), false)
+test('app.js, graph-layout.mjs, theme.js, config-modal.mjs, sidebar.mjs e confirm.mjs não usam innerHTML (sem innerHTML nenhum)', () => {
+  assert.equal(/innerHTML/.test(js + layout + theme + configModal + sidebar + confirmMod), false)
+})
+
+test('sidebar.mjs e confirm.mjs: sem createElementNS/getContext (SVG só no logo e no ícone estático)', () => {
+  assert.equal(/createElementNS|getContext\(/.test(sidebar + confirmMod), false)
 })
 
 test('index.html referencia só arquivos locais: theme.js antes do CSS, app.js como módulo', () => {
@@ -42,7 +48,7 @@ test('index.html referencia só arquivos locais: theme.js antes do CSS, app.js c
 test('nenhuma URL externa (CDN) em bin/ui; fontes servidas pelo próprio painel', () => {
   // O namespace XML do SVG (`http://www.w3.org/2000/svg`) não é uma busca de rede e fica de fora.
   // comentário (o cabeçalho de licença do Tailwind cita o site) não é busca de rede e fica de fora
-  for (const src of [html, js, css, builtCss, layout, theme, configModal, agentTarget, favicon]) {
+  for (const src of [html, js, css, builtCss, layout, theme, configModal, agentTarget, favicon, sidebar, confirmMod]) {
     const withoutSvgNs = src.replaceAll('http://www.w3.org/2000/svg', '').replace(/\/\*[\s\S]*?\*\//g, '')
     assert.equal(/https?:\/\//.test(withoutSvgNs), false)
   }
@@ -54,7 +60,7 @@ test('nenhuma URL externa (CDN) em bin/ui; fontes servidas pelo próprio painel'
 })
 
 test('sem caminho absoluto da máquina em bin/ui', () => {
-  for (const src of [html, js, css, layout, theme, configModal, agentTarget]) {
+  for (const src of [html, js, css, layout, theme, configModal, agentTarget, sidebar, confirmMod]) {
     assert.equal(/\/Users\/|\/Volumes\//.test(src), false)
   }
 })
@@ -214,4 +220,79 @@ test('tokens do painel viram utilitários do Tailwind e dark: segue o switch de 
   assert.match(css, /@import 'tailwindcss'/)
   assert.match(css, /@custom-variant dark \(&:where\(\[data-theme='dark'\]/)
   for (const t of ['bg', 'fg', 'fg3', 'surface', 'line', 'accent', 'red']) assert.match(css, new RegExp(`--color-${t}: var\\(--${t}\\)`))
+})
+
+// ── I6: lista lateral organizada (sidebar.mjs, confirm.mjs) — docs/specs/2026-09-28-acoes-no-painel.md C13 ──
+
+test('sidebar.mjs e confirm.mjs existem em bin/ui/ e são servidos pela regra fechada dos módulos da UI (C10)', () => {
+  assert.ok(fs.existsSync(path.join(UI_DIR, 'sidebar.mjs')))
+  assert.ok(fs.existsSync(path.join(UI_DIR, 'confirm.mjs')))
+  assert.match(serverSrc, /UI_MODULE_RE\s*=\s*\/\^\\\/\(\[a-z0-9-\]\+\\\.mjs\)\$\//)
+})
+
+test('app.js importa sidebar.mjs e confirm.mjs, e não reimplementa a lógica de seção/ordenação', () => {
+  assert.match(js, /from '\.\/sidebar\.mjs'/)
+  assert.match(js, /from '\.\/confirm\.mjs'/)
+  assert.match(js, /buildSections\(/)
+  assert.match(js, /openConfirm\(/)
+})
+
+test('index.html tem o cabeçalho da lista (busca, filtro, novo grupo), #run-lists e o dialog#confirm', () => {
+  assert.match(html, /id="runs-search-btn"[^>]*aria-label="Buscar runs"/)
+  assert.match(html, /id="runs-filter-btn"[^>]*aria-haspopup="menu"/)
+  assert.match(html, /id="runs-new-group-btn"[^>]*aria-label="Novo grupo"/)
+  assert.match(html, /id="run-lists"/)
+  assert.match(html, /<dialog id="confirm"/)
+  assert.match(html, /id="confirm-typed"/)
+  assert.equal(/id="group-active"|id="group-done"/.test(html), false, 'as seções fixas antigas saíram; sidebar.mjs monta as seções dinamicamente')
+})
+
+test('sidebar.mjs exporta o contrato de C13/D4 §4.12', () => {
+  assert.match(sidebar, /export const PAGE = 10/)
+  assert.match(sidebar, /export const STEP = 20/)
+  assert.match(sidebar, /export const STRIP_MAX = 10/)
+  assert.match(sidebar, /export const DEFAULT_OPEN = /)
+  assert.match(sidebar, /export function sectionOf\(/)
+  assert.match(sidebar, /export function titleOf\(/)
+  assert.match(sidebar, /export function metaOf\(/)
+  assert.match(sidebar, /export function stripOf\(/)
+  assert.match(sidebar, /export function buildSections\(/)
+})
+
+test('confirm.mjs exporta openConfirm no formato de C13/D4 §4.8', () => {
+  assert.match(confirmMod, /export function openConfirm\(\{\s*title,\s*body,\s*typed = null,\s*check = null,\s*confirmText/)
+})
+
+test('accordion: seta com aria-expanded, giro em CSS e memória no localStorage (D4 §4.2)', () => {
+  assert.match(js, /aria-expanded/)
+  assert.match(js, /graph-eng-sections/)
+  assert.match(css, /\.sec-toggle\[aria-expanded='true'\] \.chev/)
+  assert.match(css, /\.chev\s*\{[^}]*transition: transform/)
+})
+
+test('run-row: bolinha + título + fileira, ⋯ no hover/foco, sem botão dentro de botão (D4 §4.4)', () => {
+  assert.match(js, /class="run-row"|'run-row'/)
+  assert.match(js, /row-dot/)
+  assert.match(css, /\.run-row:hover \.run-more,\s*\n\s*\.run-row:focus-within \.run-more/)
+  // .run-more nunca fica aninhado dentro de .run-btn (button dentro de button é inválido)
+  const rowRowBlock = js.slice(js.indexOf("el('div', 'run-row')"), js.indexOf('function updateRunRow'))
+  assert.doesNotMatch(rowRowBlock, /btn\.append\([^)]*more/)
+})
+
+test('drag and drop: dataTransfer com o mimetype do contrato (D4 §4.6)', () => {
+  assert.match(js, /application\/x-graph-eng-run/)
+})
+
+test('updateSectionEl grava s.kind: sem isso onSectionDrop nunca reconhece uma seção de grupo (arrastar para grupo desagrupa/desfixa em vez de mover)', () => {
+  const updateBlock = js.slice(js.indexOf('function updateSectionEl'), js.indexOf('function renderSectionActions'))
+  assert.match(updateBlock, /s\.kind\s*=\s*sec\.kind/)
+  const dropBlock = js.slice(js.indexOf('function onSectionDrop'), js.indexOf('function onSectionDrop') + 800)
+  assert.match(dropBlock, /s\.kind === 'group'/)
+})
+
+test('organização chama as rotas POST /api/org/\\* (C10 O1-O9), nunca PUT nem GET para escrever', () => {
+  for (const op of ['pin', '/api/org/groups', 'move', 'archive', 'delete', 'delete-finished']) {
+    assert.ok(js.includes(op), `rota/operação ${op} não encontrada em app.js`)
+  }
+  assert.match(js, /method: 'POST'/)
 })
