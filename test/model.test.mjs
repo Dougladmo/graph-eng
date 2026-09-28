@@ -390,3 +390,30 @@ test('run retomada desenha só a última tentativa e soma o custo das duas (fixt
   assert.equal(model.spent, 8, 'custo conta os agentes das duas tentativas (4 + 4)')
   assert.ok(model.warns.some((w) => w.includes('retomada')))
 })
+
+// Run retomada com o plano passado por args: não há `started plan` para marcar o resume, só os mesmos
+// rótulos iniciados de novo. As tentativas interrompidas (sem resultado) não podem deixar o nó "trabalhando".
+test('resume sem started plan ignora as tentativas interrompidas e soma o custo delas', async () => {
+  const ev = (type, key, label, result) => JSON.stringify({ type, key, label, agentId: `a-${key}`, result })
+  const done = { status: 'done', summary: 'ok', confidence: 'high' }
+  const pass = { pass: true, confidence: 'high', blocking: [] }
+  const tail = [
+    ev('started', 'k3', 'work:A'),
+    ev('started', 'k4', 'work:B'),
+    ev('result', 'k3', undefined, done),
+    ev('started', 'k5', 'verify:A'),
+    ev('result', 'k5', undefined, pass),
+  ]
+  const write = (lines) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-resume-'))
+    fs.writeFileSync(path.join(dir, 'journal.jsonl'), [JSON.stringify({ type: 'launched' }), ...lines].join('\n') + '\n')
+    return dir
+  }
+  const resumed = await buildModel({ runDir: write([ev('started', 'k1', 'work:A'), ev('started', 'k2', 'work:B'), ...tail]), economy: 'balanced', mode: 'implement' })
+  const clean = await buildModel({ runDir: write(tail), economy: 'balanced', mode: 'implement' })
+  const states = (m) => Object.fromEntries(m.nodes.map((n) => [n.id, n.state]))
+  assert.deepEqual(states(resumed), { A: 'pronto', B: 'trabalhando' })
+  assert.deepEqual(states(resumed), states(clean), 'mesmo estado da run que não foi interrompida')
+  assert.equal(resumed.spent, clean.spent + 2, 'os 2 agentes interrompidos contam no custo')
+  assert.ok(resumed.warns.some((w) => w.includes('interrompido')))
+})

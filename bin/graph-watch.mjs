@@ -201,6 +201,8 @@ export async function buildModel(opts = {}) {
 
   const byKey = new Map()
   const per = new Map()
+  const openByLabel = new Map() // rótulo → tentativa ainda sem resultado
+  let abandoned = 0
   let spent = events.slice(0, cut).filter((e) => e.type === 'started').length
   let critic = null
   let synth = null
@@ -213,6 +215,17 @@ export async function buildModel(opts = {}) {
       byKey.set(e.key, s)
       const label = e.label || ''
       const [k, id] = label.split(':')
+      // Resume sem novo `started plan` (plano passado por args): o runtime roda de novo, com o mesmo rótulo,
+      // toda chamada que não terminou. A tentativa anterior, sem resultado, foi abandonada: sai do estado do
+      // nó (senão ele fica "trabalhando" para sempre), mas segue no custo.
+      const prev = label && openByLabel.get(label)
+      if (prev) {
+        abandoned++
+        const xs = id ? per.get(id) : null
+        const i = xs ? xs.indexOf(prev) : -1
+        if (i >= 0) xs.splice(i, 1)
+      }
+      if (label) openByLabel.set(label, s)
       if (!planStarted && !planRes && id && /^(work|draft-a)$/.test(k) && !NODES.has(id)) {
         NODES.set(id, { id, kind: '?', rawKind: '?', risk: 'medium', round: 1, title: '(sem plano no journal)', deps: [], explore: false, orphan: true })
         orphans.push(id)
@@ -226,6 +239,7 @@ export async function buildModel(opts = {}) {
     } else if (e.type === 'result' || e.type === 'failed') {
       const s = byKey.get(e.key)
       if (!s) continue
+      if (openByLabel.get(s.label) === s) openByLabel.delete(s.label)
       s.done = true
       s.failed = e.type === 'failed'
       s.result = e.result
@@ -246,6 +260,7 @@ export async function buildModel(opts = {}) {
     }
   }
 
+  if (abandoned) warns.push(`run retomada: ${abandoned} agente(s) interrompido(s) antes do resume, desenhando a nova tentativa`)
   if (orphans.length) warns.push(`${orphans.length} nó(s) sem plano (${orphans.join(', ')}): desenhados sem deps, em modo compacto`)
   if (!planStarted && !planRes && NODES.size === 0) warns.push('sem plano no journal nem run planOnly irmã')
 
