@@ -263,6 +263,218 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
   })
 })
 
+// Requisição com método, cabeçalhos e corpo livres (Host vai certo, a menos que o teste o troque). Uma
+// conexão por requisição (agent: false): o servidor HTTP do Node fecha o socket depois de um DELETE com
+// corpo, e o keep-alive do cliente reaproveitaria o socket fechado (ECONNRESET), o que também acontece
+// no painel sem /api/config.
+function request(port, method, p, headers = {}, body) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers, agent: false }, (res) => {
+      let text = ''
+      res.setEncoding('utf8')
+      res.on('data', (d) => (text += d))
+      res.on('end', () => {
+        let json = null
+        try {
+          json = text ? JSON.parse(text) : null
+        } catch {
+          /* corpo que não é JSON (estático) */
+        }
+        resolve({ status: res.statusCode, headers: res.headers, body: text, json })
+      })
+    })
+    req.on('error', reject)
+    req.end(body)
+  })
+}
+
+describe('painel web: /api/config (GET/PUT, única escrita)', () => {
+  let projectsDir
+  let cfgDir
+  let configPath
+  let panel
+  let port
+  let origin
+  const put = (body, headers = {}) =>
+    request(port, 'PUT', '/api/config', { Origin: origin, 'Content-Type': 'application/json', ...headers }, typeof body === 'string' ? body : JSON.stringify(body))
+  // conteúdo + mtime + lista do diretório: prova que um PUT recusado não tocou o arquivo
+  const snapshot = () => {
+    try {
+      return [fs.readFileSync(configPath, 'utf8'), fs.statSync(configPath).mtimeMs, fs.readdirSync(cfgDir).join(',')]
+    } catch {
+      return ['(ausente)', 0, fs.readdirSync(cfgDir).join(',')]
+    }
+  }
+
+  before(async () => {
+    projectsDir = copyMulti()
+    cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-eng-ui-config-'))
+    configPath = path.join(cfgDir, 'config.json') // nunca o ~/.claude real
+    panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath })
+    port = panel.port
+    origin = `http://127.0.0.1:${port}`
+  })
+  after(async () => {
+    await panel.close()
+  })
+
+  test('GET sem arquivo: config efetiva de fábrica (24/auto), limites e origem default', async () => {
+    const r = await request(port, 'GET', '/api/config')
+    assert.equal(r.status, 200)
+    assert.match(r.headers['content-type'], /application\/json/)
+    assert.equal(r.headers['access-control-allow-origin'], undefined)
+    assert.equal(r.json.config.ceiling, 24)
+    assert.equal(r.json.config.effort, 'auto')
+    assert.equal(r.json.source.ceiling, 'default')
+    assert.equal(r.json.limits.ceiling.min, 8)
+    assert.equal(r.json.limits.ceiling.max, 100)
+    assert.deepEqual(r.json.defaults, { effort: 'auto', ceiling: 24, economy: 'balanced', planGate: false, maxRounds: 3, maxRepairs: 2 })
+    assert.deepEqual(r.json.warnings, [])
+    assert.equal(fs.existsSync(configPath), false, 'GET não grava nada')
+  })
+
+  test('PUT válido grava o arquivo (atômico, sem sobra de tmp) e o GET seguinte mostra origem config', async () => {
+    const r = await put({ ceiling: 30, effort: 'high' })
+    assert.equal(r.status, 200, r.body)
+    assert.equal(r.json.config.ceiling, 30)
+    assert.equal(r.json.config.effort, 'high')
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { effort: 'high', ceiling: 30 })
+    assert.deepEqual(fs.readdirSync(cfgDir), ['config.json'])
+    const g = await request(port, 'GET', '/api/config')
+    assert.equal(g.json.source.ceiling, 'config')
+    assert.equal(g.json.source.economy, 'default')
+    // localhost também é origem do painel; charset no Content-Type é aceito; PUT substitui (effort volta ao padrão)
+    const l = await request(port, 'PUT', '/api/config', { Host: `localhost:${port}`, Origin: `http://localhost:${port}`, 'Content-Type': 'application/json; charset=utf-8' }, '{"ceiling":40}')
+    assert.equal(l.status, 200, l.body)
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { ceiling: 40 })
+    assert.equal(l.json.source.effort, 'default')
+  })
+
+  test('PUT com Origin ausente, null, de fora ou de outra porta → 403 e o arquivo fica igual', async () => {
+    const before = snapshot()
+    for (const o of [undefined, 'null', 'http://evil.example', 'http://127.0.0.1:1', `https://127.0.0.1:${port}`]) {
+      const headers = { 'Content-Type': 'application/json' }
+      if (o !== undefined) headers.Origin = o
+      const r = await request(port, 'PUT', '/api/config', headers, '{"ceiling":50}')
+      assert.equal(r.status, 403, `esperava 403 para Origin ${o}`)
+      assert.equal(r.json.error, 'Origin não permitido')
+    }
+    assert.deepEqual(snapshot(), before)
+  })
+
+  test('PUT com Host de fora → 403 (antes de tudo), mesmo com corpo e Origin válidos', async () => {
+    const before = snapshot()
+    const r = await put({ ceiling: 50 }, { Host: 'evil.example' })
+    assert.equal(r.status, 403)
+    assert.equal(r.json.error, 'Host não permitido')
+    assert.deepEqual(snapshot(), before)
+  })
+
+  test('PUT com Content-Type que não é JSON → 415', async () => {
+    const before = snapshot()
+    for (const ct of ['text/plain', 'application/x-www-form-urlencoded', undefined]) {
+      const headers = { Origin: origin }
+      if (ct) headers['Content-Type'] = ct
+      const r = await request(port, 'PUT', '/api/config', headers, '{"ceiling":50}')
+      assert.equal(r.status, 415, `esperava 415 para ${ct}`)
+    }
+    assert.deepEqual(snapshot(), before)
+  })
+
+  test('PUT com JSON inválido, corpo que não é objeto, campo desconhecido ou inválido → 400 com os campos', async () => {
+    const before = snapshot()
+    const bad = await put('{')
+    assert.equal(bad.status, 400)
+    assert.equal(bad.json.error, 'JSON inválido')
+    for (const body of ['[]', 'null', '3', '"x"']) {
+      const r = await put(body)
+      assert.equal(r.status, 400, body)
+      assert.equal(r.json.error, 'o corpo deve ser um objeto')
+    }
+    const low = await put({ ceiling: 7 })
+    assert.equal(low.status, 400)
+    assert.equal(low.json.error, 'config inválida')
+    assert.equal(low.json.fields.ceiling, 'mínimo 8')
+    assert.equal((await put({ ceiling: 101 })).json.fields.ceiling, 'máximo 100')
+    assert.equal((await put({ ceiling: '24' })).json.fields.ceiling, 'use um número inteiro')
+    const unknown = await put({ foo: 1, ceiling: 30 })
+    assert.equal(unknown.status, 400)
+    assert.deepEqual(unknown.json.fields, { foo: 'campo desconhecido' })
+    const many = await put({ effort: 'xhigh', maxRounds: 9, planGate: 'sim' })
+    assert.deepEqual(Object.keys(many.json.fields).sort(), ['effort', 'maxRounds', 'planGate'])
+    assert.deepEqual(snapshot(), before, 'nada gravado em caminho de erro')
+  })
+
+  test('PUT com corpo acima de 4096 bytes → 413 (declarado ou em chunks) e o arquivo fica igual', async () => {
+    const before = snapshot()
+    const big = JSON.stringify({ ceiling: 30, pad: 'x'.repeat(5000) })
+    assert.equal((await put(big)).status, 413)
+    // sem Content-Length (chunked): o limite vale na leitura
+    const chunked = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/api/config', method: 'PUT', agent: false, headers: { Origin: origin, 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked' } }, (res) => {
+        res.resume()
+        res.on('end', () => resolve(res.statusCode))
+      })
+      req.on('error', reject)
+      for (let i = 0; i < 5; i++) req.write('x'.repeat(1000))
+      req.end()
+    })
+    assert.equal(chunked, 413)
+    assert.deepEqual(snapshot(), before)
+  })
+
+  test('métodos: POST/DELETE/OPTIONS em /api/config → 405 com Allow GET, PUT; PUT em outra rota → 405 com Allow GET', async () => {
+    const before = snapshot()
+    for (const m of ['POST', 'DELETE', 'PATCH', 'OPTIONS']) {
+      const r = await request(port, m, '/api/config', { Origin: origin, 'Content-Type': 'application/json' }, '{"ceiling":50}')
+      assert.equal(r.status, 405, m)
+      assert.equal(r.headers.allow, 'GET, PUT')
+      assert.equal(r.headers['access-control-allow-origin'], undefined)
+    }
+    for (const p of ['/api/runs', '/api/config/x', '/', '/api/health']) {
+      const r = await request(port, 'PUT', p, { Origin: origin, 'Content-Type': 'application/json' }, '{"ceiling":50}')
+      assert.equal(r.status, 405, `PUT ${p}`)
+      assert.equal(r.headers.allow, 'GET')
+    }
+    assert.deepEqual(snapshot(), before)
+  })
+
+  test('rotas desconhecidas → 404 (inclusive GET /api/config/x)', async () => {
+    for (const p of ['/api/config/x', '/api/configs', '/api/nada', '/config.json']) {
+      assert.equal((await request(port, 'GET', p)).status, 404, p)
+    }
+  })
+
+  test('GET com arquivo inválido no disco: 200 com o padrão e o aviso', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ ceiling: 5, economy: 'lean' }))
+    const r = await request(port, 'GET', '/api/config')
+    assert.equal(r.status, 200)
+    assert.equal(r.json.config.ceiling, 24)
+    assert.equal(r.json.config.economy, 'lean')
+    assert.deepEqual(r.json.warnings, ['ceiling: mínimo 8 (ignorado)'])
+  })
+
+  test('estático /agent-target.mjs sai do painel como JavaScript', async () => {
+    const r = await request(port, 'GET', '/agent-target.mjs')
+    assert.equal(r.status, 200)
+    assert.match(r.headers['content-type'], /javascript/)
+    assert.match(r.body, /export function targetFor/)
+  })
+
+  test('pseudo-nós novos: design-review e polish-<k> respondem 200 (sem agentes nesta run antiga)', async () => {
+    const dr = await request(port, 'GET', '/api/runs/wf_aaaa0000-alfa-ativo/nodes/design-review')
+    assert.equal(dr.status, 200)
+    assert.equal(dr.json.pseudo, true)
+    const p2 = await request(port, 'GET', '/api/runs/wf_aaaa0000-alfa-ativo/nodes/polish-2')
+    assert.equal(p2.status, 200)
+    assert.equal(p2.json.pseudo, true)
+    assert.equal(p2.json.id, 'polish-2')
+    assert.equal(p2.json.title, 'polimento 2')
+    assert.equal((await request(port, 'GET', '/api/runs/wf_aaaa0000-alfa-ativo/nodes/polish-x')).status, 404)
+    assert.equal((await request(port, 'GET', '/api/runs/wf_aaaa0000-alfa-ativo/nodes/polish:2')).status, 400)
+  })
+})
+
 describe('painel web: SSE /api/events (item 6)', () => {
   test('emite `runs` ao conectar e `run` com o wf depois de um append no journal', async () => {
     const projectsDir = copyMulti()

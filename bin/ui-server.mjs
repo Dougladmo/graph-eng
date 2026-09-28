@@ -1,11 +1,35 @@
 // Painel web ao vivo do graph-watch (`graph-watch ui`) — docs/specs/2026-09-27-painel-web.md.
-// Node puro (node:http), sem dependências. Só leitura: nenhum endpoint escreve em disco.
+// Node puro (node:http), sem dependências. Uma única rota de escrita: PUT /api/config (grava
+// ~/.claude/graph-eng/config.json, via bin/config.mjs). Nenhum outro endpoint escreve em disco.
 //
 // ── Contrato HTTP (consumido pela página em bin/ui/) ──
-// Todas as respostas: só GET (outro método → 405). `Host` precisa ser `127.0.0.1:<porta>` ou
-// `localhost:<porta>` (senão 403, contra DNS rebinding). Erros vêm como JSON `{ "error": "<texto pt-BR>" }`.
+// Todas as respostas: só GET (outro método → 405 com `Allow: GET`), exceto /api/config, que aceita GET e
+// PUT (outro método → 405 com `Allow: GET, PUT`). `Host` precisa ser `127.0.0.1:<porta>` ou
+// `localhost:<porta>` (senão 403, contra DNS rebinding), em toda rota e todo método. Sem CORS: nenhuma
+// resposta leva `Access-Control-Allow-*`, e o preflight `OPTIONS` recebe 405. Erros vêm como JSON
+// `{ "error": "<texto pt-BR>" }`.
 //
 // GET /api/health → 200 `{ "app": "graph-watch", "version": 1 }`
+//
+// GET /api/config → 200 ConfigPublica, sempre (arquivo ausente = padrões; campo inválido no arquivo volta
+//   ao padrão e vira `warnings`) | 500 (erro de E/S na leitura que não seja arquivo ausente).
+//   ConfigPublica = {
+//     config:   { effort, ceiling, economy, planGate, maxRounds, maxRepairs },   // efetiva
+//     source:   { <mesmos campos>: "config" | "default" },
+//     defaults: { <mesmos campos> },                                           // fábrica: 24/auto
+//     limits:   { ceiling: { min: 8, max: 100 }, maxRounds: { min: 1, max: 5 }, maxRepairs: { min: 1, max: 3 },
+//                 effort: ["manual","auto","low","medium","high","max"], economy: ["lean","balanced","max"] },
+//     file: "~/.claude/graph-eng/config.json",                                 // home trocado por ~
+//     warnings: string[],
+//   }
+//   A tabela de alvos não vem daqui: a página a calcula com /agent-target.mjs.
+//
+// PUT /api/config → 200 ConfigPublica (depois de gravar). Checagens em ordem, parando no primeiro erro:
+//   403 `Origin` ausente, "null" ou ≠ `http://<Host>` · 415 Content-Type ≠ application/json (charset pode vir)
+//   · 413 corpo > 4096 bytes · 400 JSON inválido / corpo que não é objeto / `{ error: "config inválida",
+//   fields: { <campo>: "<motivo>" } }` (campo desconhecido, tipo, faixa, teto < 8 ou > 100) · 500 falha ao
+//   gravar. O PUT substitui o arquivo: chave ausente volta ao padrão, e chave desconhecida posta à mão no
+//   arquivo some. Gravação atômica (tmp no mesmo diretório + rename). Nada é gravado em caminho de erro.
 //
 // GET /api/runs → 200 `{ "runs": RunResumo[] }`, no máximo 50, `rodando` primeiro e depois `mtime` desc.
 //   RunResumo = {
@@ -35,7 +59,9 @@
 //     aguardando (ainda não rodou); pulado.
 //
 // GET /api/runs/:wf/nodes/:id → 200 Detalhe | 400 (id fora de /^[A-Za-z0-9_-]{1,64}$/) | 404
-//   :id é um nó do modelo ou um pseudo-nó `plan` | `critic` (todas as rodadas) | `synth`.
+//   :id é um nó do modelo ou um pseudo-nó `plan` | `critic` (todas as rodadas) | `design-review` (todas as
+//   tentativas) | `polish-<k>` (o polidor `polish:<k>`; a URL usa hífen porque `:` não passa na regex) |
+//   `synth`. O nó do plano vence o pseudo-nó de mesmo id.
 //   Detalhe = { wf, id, pseudo: bool, title, kind?, risk?, round?, deps?, state, reps?, closed?,
 //     agents: Agente[] }   // agents vazio = nó ainda não começou
 //   Agente = { label: "work:I2", agentId, status: "rodando" | "terminou" | "erro",
@@ -53,7 +79,8 @@
 //   último cliente desconecta.
 //
 // Estáticos (lista fixa, qualquer outro caminho → 404): `/` e `/index.html` (text/html), `/app.js`
-// (text/javascript), `/graph-layout.mjs` (módulo importado pelo app.js), `/theme.js` (aplica o tema antes
+// (text/javascript), `/graph-layout.mjs` (módulo importado pelo app.js), `/agent-target.mjs` (fórmula de
+// alvos, importada pelo modal), `/config-modal.mjs` (modal de engrenagem), `/theme.js` (aplica o tema antes
 // da pintura), `/style.css`, `/favicon.svg` e as fontes Geist em `/fonts/*.woff2` (SIL OFL, fonts/OFL.txt),
 // lidos de bin/ui/. Nada vem de fora: CSP com script, estilo, fonte e conexão só 'self'.
 
@@ -65,6 +92,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { buildModel, listAllWfDirs, isGraphEngRun, isTerminatedRun, agentsOfNode, readJournalTolerant, GraphWatchError } from './graph-watch.mjs'
+import { MAX_BODY, defaultConfigPath, isPlainObject, publicConfig, validateConfig, writeConfig } from './config.mjs'
 
 export const DEFAULT_PORT = 4477
 const HOST = '127.0.0.1'
@@ -72,7 +100,8 @@ const RUNS_LIMIT = 50
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000
 const WF_RE = /^wf_[A-Za-z0-9_-]+$/
 const NODE_RE = /^[A-Za-z0-9_-]{1,64}$/
-const PSEUDO = new Set(['plan', 'critic', 'synth'])
+const PSEUDO = new Set(['plan', 'critic', 'design-review', 'synth'])
+const POLISH_API_RE = /^polish-(\d{1,3})$/ // subconjunto do NODE_RE: o polidor `polish:<k>` na URL
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ui')
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -80,6 +109,8 @@ const STATIC = {
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/graph-layout.mjs': ['graph-layout.mjs', 'text/javascript; charset=utf-8'],
+  '/agent-target.mjs': ['agent-target.mjs', 'text/javascript; charset=utf-8'],
+  '/config-modal.mjs': ['config-modal.mjs', 'text/javascript; charset=utf-8'],
   '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
   '/fonts/geist-latin.woff2': ['fonts/geist-latin.woff2', 'font/woff2'],
@@ -148,7 +179,8 @@ function projectOf(projectsDir, dir) {
 }
 
 // Todo prompt do graph-eng abre com o mesmo prefixo (`SHARED` em workflows/graph-eng.js), com as linhas
-// `Mode: <modo>` e `Economy: <preset>` (esta, só em runs a partir da 0.3.0). Lê o começo da transcrição do
+// `Mode: <modo>` e `Economy: <preset>` (esta, só em runs a partir da 0.3.0) e, em runs com esforço e teto,
+// `Effort: <nível>`, `Ceiling: <int>` e `Target: <int> | auto <min>-<max>`. Lê o começo da transcrição do
 // `plan` e, sem ela (plano vindo de run planOnly irmã), de outro agente. Sem economy o modelo não sabe se
 // um nó recém-terminado ainda vai ser verificado, e a bolinha pisca "já rodou" antes do verify.
 const ECONOMIES = new Set(['lean', 'balanced', 'max'])
@@ -174,7 +206,17 @@ function inferHeader(dir) {
       const m = text.match(/(?:^|\\n|\n)[ \t]*Mode: ([a-z]+)/)
       if (!m) continue
       const e = text.match(/(?:^|\\n|\n)[ \t]*Economy: ([a-z]+)/)
-      return { mode: m[1], economy: e && ECONOMIES.has(e[1]) ? e[1] : undefined }
+      const ef = text.match(/(?:^|\\n|\n)[ \t]*Effort: (auto|low|medium|high|max)/)
+      const c = text.match(/(?:^|\\n|\n)[ \t]*Ceiling: (\d+)/)
+      const t = text.match(/(?:^|\\n|\n)[ \t]*Target: (?:(\d+)|auto (\d+)-(\d+))/)
+      return {
+        mode: m[1],
+        economy: e && ECONOMIES.has(e[1]) ? e[1] : undefined,
+        effort: ef ? ef[1] : undefined,
+        ceiling: c ? Number(c[1]) : undefined,
+        target: t && t[1] ? Number(t[1]) : undefined,
+        targetRange: t && t[2] ? { min: Number(t[2]), max: Number(t[3]) } : undefined,
+      }
     } catch {
       /* transcrição ausente ou ilegível: tenta a próxima */
     } finally {
@@ -208,10 +250,10 @@ export function createRunIndex(projectsDir) {
     if (hit && hit.sig === sig) return hit.info
     let info = null
     if (isGraphEngRun(c.dir)) {
-      const { mode, economy } = inferHeader(c.dir)
+      const { mode, economy, effort, ceiling } = inferHeader(c.dir)
       let model = null
       try {
-        model = await buildModel({ runDir: c.dir, mode, economy })
+        model = await buildModel({ runDir: c.dir, mode, economy, effort, ceiling })
       } catch {
         /* journal de formato estranho: entra na lista sem nós */
       }
@@ -221,6 +263,8 @@ export function createRunIndex(projectsDir) {
         goal: planGoal(c.dir),
         mode,
         economy,
+        effort,
+        ceiling,
         done: nodes.filter((n) => n.state.startsWith('pronto')).length,
         total: nodes.length,
         round: model ? model.round : 1,
@@ -258,6 +302,8 @@ export function createRunIndex(projectsDir) {
         dir: c.dir,
         mode: info.mode,
         economy: info.economy,
+        effort: info.effort,
+        ceiling: info.ceiling,
         sig: `${cache.get(c.dir).sig}:${agents}`,
       })
     }
@@ -269,7 +315,7 @@ export function createRunIndex(projectsDir) {
   return { scan }
 }
 
-const publicRun = ({ dir, sig, mode, economy, ...r }) => r
+const publicRun = ({ dir, sig, mode, economy, effort, ceiling, ...r }) => r
 
 // ── Servidor ──
 
@@ -295,7 +341,24 @@ function pseudoState(agents) {
   return last.status === 'erro' ? 'erro' : 'pronto'
 }
 
-export function createPanelServer({ projectsDir, pollMs = 1000, heartbeatMs = 15000 } = {}) {
+// Lê o corpo com limite de MAX_BODY bytes. Acima disso, descarta o resto (sem acumular) e resolve
+// { tooBig: true } no fim; nunca guarda mais que o limite na memória.
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    let tooBig = false
+    req.on('data', (d) => {
+      size += d.length
+      if (size > MAX_BODY) tooBig = true
+      else chunks.push(d)
+    })
+    req.on('end', () => resolve(tooBig ? { tooBig } : { text: Buffer.concat(chunks).toString('utf8') }))
+    req.on('error', reject)
+  })
+}
+
+export function createPanelServer({ projectsDir, pollMs = 1000, heartbeatMs = 15000, configPath = defaultConfigPath() } = {}) {
   const index = createRunIndex(projectsDir)
   const clients = new Set()
   let pollTimer = null
@@ -377,17 +440,65 @@ export function createPanelServer({ projectsDir, pollMs = 1000, heartbeatMs = 15
     return runs.find((r) => r.wf === wf) || null
   }
 
+  function getConfig(res) {
+    let body
+    try {
+      body = publicConfig(configPath)
+    } catch (e) {
+      return sendError(res, 500, `não consegui ler a config: ${e.message}`)
+    }
+    return send(res, 200, body)
+  }
+
+  // Única escrita do painel. Ordem de D2 §4.2 (Host e método já conferidos em handle()).
+  async function putConfig(req, res, host) {
+    // recusa antes de ler o corpo: descarta o que vier sem guardar (req.resume) e responde
+    const refuse = (status, msg) => {
+      req.resume()
+      return sendError(res, status, msg)
+    }
+    const origin = req.headers.origin
+    if (typeof origin !== 'string' || origin.toLowerCase() !== `http://${host}`) return refuse(403, 'Origin não permitido')
+    const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase()
+    if (type !== 'application/json') return refuse(415, 'use Content-Type: application/json')
+    const tooBig = `corpo acima de ${MAX_BODY} bytes`
+    const declared = Number(req.headers['content-length'])
+    if (Number.isFinite(declared) && declared > MAX_BODY) return refuse(413, tooBig)
+    const body = await readBody(req)
+    if (body.tooBig) return sendError(res, 413, tooBig)
+    let parsed
+    try {
+      parsed = JSON.parse(body.text)
+    } catch {
+      return sendError(res, 400, 'JSON inválido')
+    }
+    if (!isPlainObject(parsed)) return sendError(res, 400, 'o corpo deve ser um objeto')
+    const checked = validateConfig(parsed)
+    if (!checked.ok) return send(res, 400, { error: 'config inválida', fields: checked.errors })
+    try {
+      writeConfig(configPath, checked.value)
+    } catch (e) {
+      return sendError(res, 500, `não consegui gravar a config: ${e.message}`)
+    }
+    return getConfig(res)
+  }
+
   async function handle(req, res) {
     const port = server.address() && server.address().port
     const host = String(req.headers.host || '').toLowerCase()
     if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) return sendError(res, 403, 'Host não permitido')
-    if (req.method !== 'GET') return sendError(res, 405, 'só leitura: use GET', { Allow: 'GET' })
     let pathname
     try {
       pathname = new URL(req.url, `http://${HOST}`).pathname
     } catch {
       return sendError(res, 400, 'URL inválida')
     }
+    if (pathname === '/api/config') {
+      if (req.method === 'GET') return getConfig(res)
+      if (req.method === 'PUT') return putConfig(req, res, host)
+      return sendError(res, 405, 'use GET ou PUT', { Allow: 'GET, PUT' })
+    }
+    if (req.method !== 'GET') return sendError(res, 405, 'só leitura: use GET', { Allow: 'GET' })
 
     if (Object.hasOwn(STATIC, pathname)) {
       const [file, type] = STATIC[pathname]
@@ -415,7 +526,7 @@ export function createPanelServer({ projectsDir, pollMs = 1000, heartbeatMs = 15
       if (!run) return sendError(res, 404, `run ${wf} não encontrada`)
       let model
       try {
-        model = await buildModel({ runDir: run.dir, mode: run.mode, economy: run.economy })
+        model = await buildModel({ runDir: run.dir, mode: run.mode, economy: run.economy, effort: run.effort, ceiling: run.ceiling })
       } catch (e) {
         if (e instanceof GraphWatchError) return sendError(res, 404, e.message)
         throw e
@@ -425,10 +536,12 @@ export function createPanelServer({ projectsDir, pollMs = 1000, heartbeatMs = 15
       }
       const id = parts[4]
       const node = model.nodes.find((n) => n.id === id)
-      if (!node && !PSEUDO.has(id)) return sendError(res, 404, `nó ${id} não existe em ${wf}`)
-      const agents = agentsOfNode(run.dir, id, 20)
+      const polish = POLISH_API_RE.exec(id)
+      if (!node && !PSEUDO.has(id) && !polish) return sendError(res, 404, `nó ${id} não existe em ${wf}`)
+      const agents = agentsOfNode(run.dir, id, 20) // polish-<k> → rótulo polish:<k> (graph-watch)
       if (node) return send(res, 200, { wf, ...node, pseudo: false, agents })
-      return send(res, 200, { wf, id, pseudo: true, title: id, state: pseudoState(agents), agents })
+      const title = polish ? `polimento ${Number(polish[1])}` : id
+      return send(res, 200, { wf, id, pseudo: true, title, state: pseudoState(agents), agents })
     }
     return sendError(res, 404, 'não encontrado')
   }
@@ -484,7 +597,7 @@ export function probePanel(port, timeoutMs = 1000) {
 // nada). Porta com outro programa → GraphWatchError(5). `port: 0` pula o probe e usa porta efêmera
 // (testes). Devolve { url, port, reused, server?, close() }.
 export async function ensurePanel(opts = {}) {
-  const { port = DEFAULT_PORT, projectsDir = path.join(os.homedir(), '.claude', 'projects'), pollMs, heartbeatMs } = opts
+  const { port = DEFAULT_PORT, projectsDir = path.join(os.homedir(), '.claude', 'projects'), pollMs, heartbeatMs, configPath } = opts
   const reused = (p) => ({ url: `http://${HOST}:${p}`, port: p, reused: true, close: async () => {} })
   const busy = () => new GraphWatchError(5, `porta ${port} ocupada por outro programa; use --port <N> ou GRAPH_ENG_PORT=<N>`)
   if (port !== 0) {
@@ -492,7 +605,7 @@ export async function ensurePanel(opts = {}) {
     if (who === 'graph-watch') return reused(port)
     if (who === 'outro') throw busy()
   }
-  const server = createPanelServer({ projectsDir, pollMs, heartbeatMs })
+  const server = createPanelServer({ projectsDir, pollMs, heartbeatMs, configPath })
   try {
     await new Promise((resolve, reject) => {
       server.once('error', reject)
