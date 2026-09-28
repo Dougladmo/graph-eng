@@ -7,7 +7,18 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { estimateAgents as estimateTarget, targetFor } from './ui/agent-target.mjs'
+import { defaultStateDir, ownerPathInfo, listRequests, isEligible, isPendingExpired, markSeen, requestEventLine, writeHeartbeat, readListeners, ownerPresence, HEARTBEAT_MS, hasTerminatedMarker, markTerminated } from './requests.mjs'
+
+const PLUGIN_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+function pluginVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version || null
+  } catch {
+    return null
+  }
+}
 
 // ── Erros ──
 export class GraphWatchError extends Error {
@@ -1390,7 +1401,92 @@ export async function runEventsMode(runDir, opts = {}) {
   let paradaEmitted = false
   let synthEmitted = false
 
-  const snap = (cutLine) => buildModel({ runDir, economy, mode: modeFlag, effort, ceiling, cutLine })
+  // ── Sinal de vida e fila de pedidos (spec C1-C4). Só existem quando o caminho do wf tem a forma
+  // <slug>/<sessão>/subagents/workflows/<wf> (ownerPathInfo): um watcher sobre um --run-dir solto,
+  // como os testes de hoje, não grava listener nem entra em "listen" (C3).
+  const clock = () => (opts.now ? opts.now() : Date.now())
+  const stateDir = opts.stateDir || defaultStateDir()
+  const owner = ownerPathInfo(runDir)
+  const startedAtIso = new Date(clock()).toISOString()
+  let exitedHeartbeat = false
+  // 'run' até o TERMINADO; vira 'listen' só na fase de escuta pós-TERMINADO (P2, C3). --run
+  // (explicitRun) só escolhe a run a acompanhar num rearme e não tem relação com esta fase.
+  let heartbeatMode = 'run'
+  let listenUntilIso = null
+
+  function beat(exitedAt = null) {
+    if (!owner) return
+    try {
+      writeHeartbeat(stateDir, {
+        session: owner.session,
+        project: owner.project,
+        cwd: opts.cwd ?? process.cwd(),
+        pid: process.pid,
+        wf: owner.wf,
+        runId: opts.runId ?? null,
+        mode: heartbeatMode,
+        startedAt: startedAtIso,
+        beatAt: new Date(clock()).toISOString(),
+        listenUntil: listenUntilIso,
+        exitedAt,
+        plugin: pluginVersion(),
+      })
+    } catch {
+      /* sinal de vida é melhor esforço: nunca derruba o watcher */
+    }
+  }
+
+  function beatExit() {
+    if (exitedHeartbeat || !owner) return
+    exitedHeartbeat = true
+    beat(new Date(clock()).toISOString())
+  }
+
+  let heartbeatTimer = null
+  if (owner) {
+    beat()
+    heartbeatTimer = setInterval(beat, opts.heartbeatMs || HEARTBEAT_MS)
+    if (heartbeatTimer.unref) heartbeatTimer.unref()
+  }
+
+  const seenLocally = new Set()
+  function checkRequests() {
+    if (!owner) return
+    const now = clock()
+    for (const req of listRequests(stateDir)) {
+      if (req.state !== 'pendente' || seenLocally.has(req.id)) continue
+      if (isPendingExpired(req, now)) continue
+      if (!isEligible(req, { session: owner.session, project: owner.project })) continue
+      seenLocally.add(req.id)
+      if (!markSeen(stateDir, req.id, owner.session)) continue
+      console.log(requestEventLine(req, { root: PLUGIN_ROOT, session: owner.session }))
+    }
+  }
+
+  const onSignal = () => {
+    beatExit()
+    if (heartbeatTimer) clearInterval(heartbeatTimer)
+    process.exit(0)
+  }
+  if (owner) {
+    process.once('SIGINT', onSignal)
+    process.once('SIGTERM', onSignal)
+  }
+
+  // Presença da dona (C3, "no I3 o events passa a ler os listeners"): o próprio watcher É a dona
+  // ouvindo (ou rearmando), então sua janela de parada é 3·N (computeStop) em vez de N.
+  function presenceFlags() {
+    if (!owner) return { ownerListening: false, ownerGone: false }
+    const now = clock()
+    let presence
+    try {
+      presence = ownerPresence(readListeners(stateDir, now), owner.session, now)
+    } catch {
+      return { ownerListening: false, ownerGone: false }
+    }
+    return { ownerListening: presence === 'ouvindo', ownerGone: presence === 'encerrada' }
+  }
+  const snap = (cutLine) => buildModel({ runDir, economy, mode: modeFlag, effort, ceiling, cutLine, ...presenceFlags() })
 
   function checkParada(model) {
     if (paradaEmitted || model.status !== 'parada?') return
@@ -1452,9 +1548,59 @@ export async function runEventsMode(runDir, opts = {}) {
     }
   }
 
+  function finish(code) {
+    beatExit()
+    if (heartbeatTimer) clearInterval(heartbeatTimer)
+    process.removeListener('SIGINT', onSignal)
+    process.removeListener('SIGTERM', onSignal)
+    return code
+  }
+
+  function hhmm(ms) {
+    const d = new Date(ms)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+
+  // P2 (spec C3/C4): depois do TERMINADO, com dona e --listen-min > 0 (padrão 120), o watcher
+  // segue ouvindo o painel até terminadoEm + listenMin, em vez de sair na hora. --listen-min 0
+  // (ou sem dona) mantém o comportamento de hoje: sai assim que emite o TERMINADO.
+  //
+  // `terminadoEm` vem de markTerminated (persistido em stateDir/terminated/<wf>.json), não de
+  // `clock()` direto: cada rearme do Monitor (timeout de 30 min, doc da tool) é um *processo novo*
+  // de `graph-watch events --run`, e sem essa persistência `terminatedAt` recomeçava a cada arme,
+  // empurrando `listenUntil` + 2h a cada vez e sem nunca chegar em "escuta do painel encerrada"
+  // (C4). `rearmContinuing` só controla a linha impressa (`ouvindo…` em vez de
+  // `ouvindo o painel até HH:MM`, C4) — a janela em si já é a persistida, rearme ou não.
+  const listenMin = opts.listenMin != null ? Number(opts.listenMin) : 120
+  async function afterTerminated({ rearmContinuing = false } = {}) {
+    if (!owner || !(listenMin > 0)) return finish(0)
+    const terminatedAt = markTerminated(stateDir, owner.wf, clock())
+    const until = terminatedAt + listenMin * 60000
+    listenUntilIso = new Date(until).toISOString()
+    heartbeatMode = 'listen'
+    beat()
+    if (clock() >= until) {
+      // Rearme depois da janela já ter passado: nem entra em listen, só fecha o episódio (C4).
+      console.log(`graph-eng ${owner.wf} · escuta do painel encerrada`)
+      return finish(0)
+    }
+    console.log(rearmContinuing ? `graph-eng ${owner.wf} · ouvindo…` : `graph-eng ${owner.wf} · ouvindo o painel até ${hhmm(until)}`)
+    while (clock() < until) {
+      await sleep(150)
+      try {
+        checkRequests()
+      } catch {
+        /* leitura transitória: tenta de novo no próximo tick */
+      }
+    }
+    console.log(`graph-eng ${owner.wf} · escuta do painel encerrada`)
+    return finish(0)
+  }
+
   let total = countReadyEvents(journalPath)
   const retomandoModel = await snap(total)
   console.log(eventLine(retomandoModel, `retomando: ${summarizeActive(retomandoModel)}`))
+  checkRequests()
 
   let previous = retomandoModel
   if (explicitRun) {
@@ -1462,8 +1608,12 @@ export async function runEventsMode(runDir, opts = {}) {
     // (§5.2). Não repete marco nenhum: só confere se a run já terminou.
     if (retomandoModel.synth === 'pronto') {
       synthEmitted = true
-      console.log(eventLine(retomandoModel, 'TERMINADO'))
-      return 0
+      // Já tem marcador de término (C4): este `--run` é um rearme de um episódio que outro
+      // processo já anunciou. Não repete o `TERMINADO` — só a linha `ouvindo…` (dentro de
+      // afterTerminated).
+      const rearmContinuing = !!owner && listenMin > 0 && hasTerminatedMarker(stateDir, owner.wf)
+      if (!rearmContinuing) console.log(eventLine(retomandoModel, 'TERMINADO'))
+      return afterTerminated({ rearmContinuing })
     }
     checkParada(retomandoModel)
   } else {
@@ -1473,13 +1623,23 @@ export async function runEventsMode(runDir, opts = {}) {
       emitDiff(previous, cur)
       previous = cur
     }
-    if (synthEmitted) return 0
+    if (synthEmitted) return afterTerminated()
     if (!previous) previous = retomandoModel
     checkParada(previous)
   }
 
+  let sinceReqCheck = 0
   for (;;) {
     await sleep(150)
+    sinceReqCheck += 150
+    if (sinceReqCheck >= 1000) {
+      sinceReqCheck = 0
+      try {
+        checkRequests()
+      } catch {
+        /* leitura transitória: tenta de novo no próximo tick */
+      }
+    }
     let now
     try {
       now = countReadyEvents(journalPath)
@@ -1493,7 +1653,7 @@ export async function runEventsMode(runDir, opts = {}) {
         previous = cur
       }
       total = now
-      if (synthEmitted) return 0
+      if (synthEmitted) return afterTerminated()
     } else {
       try {
         checkParada(await snap(total))
@@ -1599,7 +1759,7 @@ export async function runLive(runDir, opts = {}) {
 }
 
 // ── CLI ──
-const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n', '--port', '--ceiling', '--effort'])
+const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n', '--port', '--ceiling', '--effort', '--state-dir', '--listen-min'])
 
 function parseArgs(rest) {
   const opts = {}
@@ -1688,7 +1848,9 @@ async function main() {
     console.log(view.text)
     process.exit(0)
   } else if (mode === 'events') {
-    const code = await runEventsMode(runDir, { economy, modeFlag, effort: effortFlag, ceiling: ceilingFlag, explicitRun: !!opts['--run'] })
+    const stateDir = opts['--state-dir']
+    const listenMin = opts['--listen-min'] != null ? Number(opts['--listen-min']) : undefined
+    const code = await runEventsMode(runDir, { economy, modeFlag, effort: effortFlag, ceiling: ceilingFlag, explicitRun: !!opts['--run'], stateDir, listenMin })
     process.exit(code)
   } else if (mode === 'live') {
     // `--svg` virou alias do painel web: garante o painel (instância única) e segue como `live`.
