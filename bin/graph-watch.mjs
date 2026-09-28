@@ -800,6 +800,11 @@ export async function buildModel(opts = {}) {
     const xs = per.get(id) || []
     const n = NODES.get(id)
     if (!xs.length) {
+      // Revisão do design reprovada: o motor pula toda implementação do round 1 de uma vez, antes de
+      // olhar dependência (graph-eng.js, nota "revisão do design reprovada").
+      if (ended && NEW && HAS_DR && designReviewModel && designReviewModel.state === 'falhou' && n && n.kind === 'implement' && (n.round || 1) === 1) {
+        return { state: 'pulado', reason: 'pulado: a revisão do design reprovou, e a implementação não começa' }
+      }
       // `badDep` usa o mesmo DEAD (bloqueado/pulado) que decide `dead` — uma dependência que só
       // "falhou" não entra aqui (o motor não trata isso como cascata; ela conta como orçamento).
       const badDep = n && n.deps && n.deps.find((d) => DEAD.has(state(d)))
@@ -813,6 +818,12 @@ export async function buildModel(opts = {}) {
             : `pulado: não rodou porque a dependência ${badDep} ficou bloqueada`
         } else if (typeof ceiling === 'number' && Number.isFinite(ceiling) && spent >= ceiling) {
           reason = `pulado: sem orçamento — o teto de ${ceiling} agentes acabou antes deste nó`
+        } else if (NEW) {
+          // Fora os dois casos acima, o motor só termina sem rodar um nó por falta de vaga (canSpend, que
+          // mede contra o alvo do nível e guarda vagas para as fases finais, então pula antes do teto) ou
+          // porque o cortou do plano por tamanho (applyMaxNodes). Nenhum dos dois chega ao journal, e o
+          // alvo pode ter subido depois do plano: o motivo cita as duas causas em vez de escolher uma.
+          reason = 'pulado: não rodou — sem vaga no orçamento de agentes, ou cortado do plano por tamanho'
         } else {
           reason = 'pulado: não rodou: a run terminou antes'
         }
@@ -845,12 +856,13 @@ export async function buildModel(opts = {}) {
     let verdict = null
     let pendingAfter = null
     let verifiedEver = false
+    let countBeforeRepair = null
     for (const x of xs) {
       if (x.failed) continue
       const k = kindOf(x.label)
       const r = x.result || {}
       if (k === 'verify' || k === 'escalate') {
-        verdict = { pass: !!r.pass && !(r.blocking || []).length, via: 'verify', blocking: r.blocking || [] }
+        verdict = { pass: !!r.pass && !(r.blocking || []).length, via: 'verify', blocking: r.blocking || [], count: (r.blocking || []).length }
         pendingAfter = null
         verifiedEver = true
         continue
@@ -862,6 +874,8 @@ export async function buildModel(opts = {}) {
         continue
       }
       if (!asWork && k !== 'repair' && k !== 'design-repair') continue
+      // Bloqueios do veredito que disparou este reparo: o motor para quando o seguinte não tem menos.
+      if ((k === 'repair' || k === 'design-repair') && verdict) countBeforeRepair = verdict.count
       if (asWork && r.status === 'blocked') {
         const msg = firstLine(r.summary || r.assessment || '', 200)
         return { state: 'bloqueado', reason: `bloqueado: ${msg || 'o worker sinalizou bloqueio, sem detalhe no resultado'}` }
@@ -870,7 +884,7 @@ export async function buildModel(opts = {}) {
       const red = !!failedCheck
       const gated = k === 'repair' || k === 'design-repair' || (NEW && LEVEL ? !deferred : P ? !deferred : x !== last)
       if (red && gated) {
-        verdict = { pass: false, via: 'check', check: failedCheck }
+        verdict = { pass: false, via: 'check', check: failedCheck, count: (r.checks || []).filter((c) => c && c.ok === false).length }
         pendingAfter = null
         verifiedEver = true
         continue
@@ -896,7 +910,13 @@ export async function buildModel(opts = {}) {
       const items = (verdict.blocking || []).map((b) => firstLine(String((b && b.issue) || b), 220)).filter(Boolean)
       const first = items[0] || '(sem detalhe de bloqueio no resultado)'
       const lines = [`falhou: reprovado na verificação — ${first}`, ...items.slice(1).map((i) => `- ${i}`)]
-      if (reps > 0) lines.push(ended ? 'reparo sem progresso' : 'reparo tentado, segue sem verificação aprovada')
+      // Com reparo, o motor para por três causas: sem progresso (o veredito seguinte não tem menos
+      // bloqueios, conta que o journal mostra), ou, com progresso, reparos esgotados ou sem vaga para o
+      // próximo, que o journal não separa. Sem reparo nenhum numa run que chegou à síntese, só falta de vaga.
+      if (reps > 0 && !ended) lines.push('reparo tentado, segue sem verificação aprovada')
+      else if (reps > 0 && countBeforeRepair != null && verdict.count < countBeforeRepair) {
+        lines.push(`o último reparo baixou os bloqueios de ${countBeforeRepair} para ${verdict.count}, mas acabaram os reparos permitidos ou o orçamento`)
+      } else if (reps > 0) lines.push('reparo sem progresso')
       else if (ended) lines.push('sem orçamento para reparar')
       return { state: 'falhou', reason: lines.join('\n') }
     }

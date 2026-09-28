@@ -343,6 +343,16 @@ linha de marco final do `graph-watch events` e o bloco `motivos:` do `graph-watc
 as quatro formas de olhar a run (painel, terminal ao vivo, terminal em foto) e nenhuma delas devia exigir
 abrir o journal a mão para saber por que um nó não passou.
 
+Quando o journal não separa duas causas, o motivo cita as duas em vez de escolher uma. O journal só
+guarda `started`/`result` de agente: o `log()` do motor e os trilhos não chegam nele. Um nó que o motor
+terminou sem rodar, com as dependências prontas, ficou sem vaga (`canSpend` mede contra o alvo do nível,
+que pode ter subido depois do plano, e guarda vagas para as fases finais, então pula antes do teto) ou foi
+cortado do plano por tamanho (`applyMaxNodes`), e os dois ficam iguais nos arquivos. O teto só é citado
+quando o gasto chegou nele. Já a revisão do design reprovada tem prova no journal, e o motor pula toda
+implementação do round 1 por ela antes de olhar dependência, então esse motivo vem primeiro. No reparo,
+"sem progresso" é conta do journal (o veredito seguinte não tem menos bloqueios, a mesma regra do
+motor). Com progresso, reparos esgotados e falta de vaga ficam iguais, e o motivo diz as duas coisas.
+
 ### Favicon com PNG, porque SVG não roda em todo navegador
 
 O painel tinha só `favicon.svg`, e o Safari (desktop e iOS) não renderiza favicon SVG — a aba fica sem

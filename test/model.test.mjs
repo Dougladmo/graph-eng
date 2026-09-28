@@ -429,7 +429,9 @@ describe('motivo do nó (n.reason)', () => {
       assert.equal(i3.state, 'falhou')
       assert.equal(i6.state, 'falhou')
       assert.match(i3.reason.split('\n')[0], /^falhou: reprovado na verificação — A janela de escuta/)
-      assert.equal(i3.reason.trim().split('\n').pop(), 'reparo sem progresso') // repair:I3 rodou, verify falhou de novo
+      // repair:I3 baixou os bloqueios de 5 para 1 (houve progresso) e o motor parou porque o teto de 50 esgotou:
+      // "reparo sem progresso" seria falso. O journal não separa reparos esgotados de falta de vaga.
+      assert.equal(i3.reason.trim().split('\n').pop(), 'o último reparo baixou os bloqueios de 5 para 1, mas acabaram os reparos permitidos ou o orçamento')
       assert.match(i6.reason.split('\n')[0], /^falhou: reprovado na verificação — Não dá para fechar a seção/)
       assert.equal(i6.reason.trim().split('\n').pop(), 'sem orçamento para reparar') // nunca chegou a reparar
     })
@@ -862,5 +864,92 @@ describe('run retomada com irmã planOnly do plan gate', () => {
     assert.equal(st.R1, 'pronto')
     assert.equal(st.R2, 'pronto-sem-verif', 'o que não foi verificado antes continua sem verificação')
     assert.equal(model.designReview, null)
+  })
+})
+
+// Motivos que saem das regras do motor (workflows/graph-eng.js), com journal sintético do formato novo.
+describe('motivo do nó: regras do motor para pulado e para o destino do reparo', () => {
+  const line = (o) => JSON.stringify(o)
+  const ok = { status: 'done', summary: 'ok', confidence: 'high', checks: [] }
+  const pass = { pass: true, confidence: 'high', blocking: [] }
+  const fail = (...issues) => ({ pass: false, confidence: 'high', blocking: issues.map((issue) => ({ issue, where: 'x', fix: 'y' })) })
+  const effort = { level: 'high', why: 'teste' }
+
+  // Cada wf numa pasta só dele: findSiblingPlanOnly varre a pasta mãe.
+  async function modelOf(plan, steps, opts = {}) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-motivos-'))
+    const wf = path.join(root, 'workflows', 'wf_motivos01')
+    fs.mkdirSync(wf, { recursive: true })
+    const ev = [line({ type: 'launched' }), line({ type: 'started', key: 'p', agentId: 'ap', label: 'plan' }), line({ type: 'result', key: 'p', agentId: 'ap', result: plan })]
+    steps.forEach(([label, result], i) => {
+      ev.push(line({ type: 'started', key: `k${i}`, agentId: `a${i}`, label }))
+      if (result !== undefined) ev.push(line({ type: 'result', key: `k${i}`, agentId: `a${i}`, result }))
+    })
+    fs.writeFileSync(path.join(wf, 'journal.jsonl'), ev.join('\n') + '\n')
+    try {
+      return await buildModel({ runDir: wf, mode: 'implement', ...opts })
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }
+  const reasonOf = (model, id) => model.nodes.find((n) => n.id === id).reason
+
+  test('revisão do design reprovada: toda implementação do round 1 sai com esse motivo, inclusive a que depende de outra', async () => {
+    const plan = {
+      goal: 'g', mode: 'implement', effort,
+      nodes: [
+        { id: 'R1', title: 'Pesquisa', kind: 'research', deps: [] },
+        { id: 'D1', title: 'Design', kind: 'design', deps: ['R1'] },
+        { id: 'I1', title: 'Parte um', kind: 'implement', deps: ['D1'], files: ['a.js'] },
+        { id: 'I2', title: 'Parte dois', kind: 'implement', deps: ['I1'], files: ['b.js'] },
+      ],
+    }
+    const drFail = { pass: false, confidence: 'high', blocking: [{ issue: 'contrato incompleto', where: 'D1.md', fix: 'z', node: 'D1' }], checked: ['D1'] }
+    const model = await modelOf(plan, [
+      ['work:R1', ok], ['verify:R1', pass], ['work:D1', ok], ['verify:D1', pass],
+      ['design-review:r1', drFail], ['design-repair:D1', ok], ['design-review:r2', drFail],
+      ['synth', { status: 'done', summary: 's', humanGate: [] }],
+    ])
+    for (const id of ['I1', 'I2']) {
+      assert.equal(model.nodes.find((n) => n.id === id).state, 'pulado')
+      assert.equal(reasonOf(model, id), 'pulado: a revisão do design reprovou, e a implementação não começa')
+    }
+  })
+
+  test('nó que o motor não rodou, com deps prontas e gasto abaixo do teto: as duas causas possíveis, não "a run terminou antes"', async () => {
+    const plan = {
+      goal: 'g', mode: 'implement', effort,
+      nodes: [
+        { id: 'R1', title: 'Pesquisa', kind: 'research', deps: [] },
+        { id: 'D1', title: 'Design', kind: 'design', deps: ['R1'] },
+        { id: 'I1', title: 'Parte um', kind: 'implement', deps: ['D1'], files: ['a.js'] },
+        { id: 'I2', title: 'Parte dois', kind: 'implement', deps: ['D1'], files: ['b.js'] },
+      ],
+    }
+    const model = await modelOf(plan, [
+      ['work:R1', ok], ['verify:R1', pass], ['work:D1', ok], ['verify:D1', pass], ['design-review:r1', { ...pass, checked: ['D1'] }],
+      ['work:I1', ok], ['verify:I1', pass],
+      ['critic:r1', { done: true, assessment: 'ok', gaps: [] }], ['synth', { status: 'done', summary: 's', humanGate: [] }],
+    ], { ceiling: 24 })
+    assert.equal(model.nodes.find((n) => n.id === 'I2').state, 'pulado')
+    assert.equal(reasonOf(model, 'I2'), 'pulado: não rodou — sem vaga no orçamento de agentes, ou cortado do plano por tamanho')
+  })
+
+  test('reparo que não baixou os bloqueios: "reparo sem progresso"', async () => {
+    const plan = {
+      goal: 'g', mode: 'implement', effort,
+      nodes: [
+        { id: 'R1', title: 'Pesquisa', kind: 'research', deps: [] },
+        { id: 'D1', title: 'Design', kind: 'design', deps: ['R1'] },
+        { id: 'I1', title: 'Parte um', kind: 'implement', deps: ['D1'], files: ['a.js'] },
+      ],
+    }
+    const model = await modelOf(plan, [
+      ['work:R1', ok], ['verify:R1', pass], ['work:D1', ok], ['verify:D1', pass], ['design-review:r1', { ...pass, checked: ['D1'] }],
+      ['work:I1', ok], ['verify:I1', fail('um', 'dois')], ['repair:I1', ok], ['verify:I1', fail('um', 'três')],
+      ['critic:r1', { done: true, assessment: 'ok', gaps: [] }], ['synth', { status: 'done', summary: 's', humanGate: [] }],
+    ])
+    assert.equal(model.nodes.find((n) => n.id === 'I1').state, 'falhou')
+    assert.equal(reasonOf(model, 'I1').trim().split('\n').pop(), 'reparo sem progresso')
   })
 })

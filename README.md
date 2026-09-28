@@ -186,9 +186,10 @@ num nó abre o detalhe (prompt, ferramentas recentes, resultado). Antes da 0.5.0
 também **age** sobre a run — ver a seção seguinte.
 
 Um nó que não terminou verificado mostra o **motivo**, tirado só dos arquivos da run (journal, veredito
-do verificador, revisão do design) e nunca inventado: `pulado` (sem orçamento, ou a run terminou antes),
-`falhou`, `falhou (check)` (o comando de conferência do nó), `bloqueado` (o worker ou o motor sinalizou
-bloqueio) e `sem reverificação` (reparo sem 2ª verificação). Aparece no `title` e no `aria-label` da
+do verificador, revisão do design) e nunca inventado: `pulado` (revisão do design reprovada, dependência
+sem saída, teto esgotado, ou sem vaga/cortado do plano quando o journal não separa os dois), `falhou`
+(com o destino do reparo), `falhou (check)` (o comando de conferência do nó), `bloqueado` (o worker ou o
+motor sinalizou bloqueio) e `sem reverificação` (reparo sem 2ª verificação). Aparece no `title` e no `aria-label` da
 bolinha (passe o mouse ou navegue por teclado), na gaveta de detalhe do nó, e nas duas saídas em texto do
 `graph-watch` — `events`, na linha de marco final, e `snapshot`, no bloco `motivos:` depois do layout em
 caixas. O favicon do painel usa o mesmo logo do cabeçalho: PNG de 32px e `apple-touch-icon.png` gerados
