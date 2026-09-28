@@ -1,15 +1,17 @@
 // Núcleo puro do painel: modelo → grafo → layout → posição na tela. Sem DOM, testável no Node
 // (test/ui-layout.test.mjs). O app.js importa daqui e só aplica o resultado nos elementos.
 
-// Geometria. O layout trabalha numa grade fixa (colunas a cada COL, nós da mesma etapa a cada ROW) e
-// placeGraph a estica na tela: as colunas crescem até LANE_MAX para ocupar o espaço livre, com GAP entre
-// elas. As arestas vão de centro a centro e a bolinha, opaca, cobre a ponta.
+// Geometria. O layout trabalha numa grade fixa (um passo do grafo a cada COL, nós do mesmo passo a cada ROW)
+// e placeGraph a estica na tela. Cada fase é uma coluna; fase com passos em sequência (implementação em
+// cadeia, por exemplo) é uma coluna larga, um passo ao lado do outro, sem vão entre eles. O passo cresce até
+// LANE_MAX para ocupar o espaço livre, e há GAP entre colunas. As arestas vão de centro a centro e a bolinha,
+// opaca, cobre a ponta.
 export const LAYOUT = {
-  COL: 170, // unidade da grade: distância entre colunas no layout (LANE_W + GAP)
-  LANE_W: 150, // largura mínima da coluna de etapa (a do design; no celular é fixa)
-  LANE_MAX: 260, // largura máxima: coluna mais larga que isso só espalha o grafo
-  GAP: 20, // espaço entre colunas
-  LABEL_PAD: 14, // respiro do rótulo do nó em cada lado, dentro da coluna
+  COL: 170, // unidade da grade: distância entre passos no layout
+  LANE_W: 150, // largura mínima de um passo (a coluna do design; no celular é fixa)
+  LANE_MAX: 260, // largura máxima de um passo: mais largo que isso só espalha o grafo
+  GAP: 20, // espaço entre colunas (fases)
+  LABEL_PAD: 14, // respiro do rótulo do nó em cada lado, dentro do passo
   ROW: 80, // distância vertical entre nós da mesma etapa
   // PAD_X: margem lateral; LANE_TOP/LANE_BOTTOM: do quadro à coluna (no desktop, LANE_BOTTOM deixa a legenda
   // flutuante livre); EXTRA: o que a coluna tem além do vão entre o nó de cima e o de baixo (título + rótulos);
@@ -88,14 +90,35 @@ export function buildGraph(model) {
 
   // Aresta só entre nós do mesmo round: dependência de um round anterior já está garantida pelo critic que
   // abre o round (e, desenhada, jogaria o nó na coluna do critic).
+  const byNode = new Map(nodes.map((n) => [n.id, n]))
   const roundOf = new Map(nodes.map((n) => [n.id, n.round || 1]))
   const sameRoundDeps = (n) => (n.deps || []).filter((d) => ids.has(d) && roundOf.get(d) === (n.round || 1))
   const dependedOn = new Set(nodes.flatMap(sameRoundDeps))
+  // Redução transitiva: I4 depende de D1 e de I3, e I3 já depende de D1 → a aresta D1→I4 não é desenhada (a
+  // ordem já está no caminho D1→I1→I3→I4). Sem isso, cada dependência implícita vira uma linha cruzando o grafo.
+  const ancestors = new Map()
+  const ancestorsOf = (id, visiting = new Set()) => {
+    if (ancestors.has(id)) return ancestors.get(id)
+    if (visiting.has(id)) return new Set() // ciclo (não deveria existir): corta
+    visiting.add(id)
+    const all = new Set()
+    for (const d of sameRoundDeps(byNode.get(id))) {
+      all.add(d)
+      for (const a of ancestorsOf(d, visiting)) all.add(a)
+    }
+    visiting.delete(id)
+    ancestors.set(id, all)
+    return all
+  }
+  const directDeps = (n) => {
+    const deps = sameRoundDeps(n)
+    return deps.filter((d) => !deps.some((o) => o !== d && ancestorsOf(o).has(d)))
+  }
   for (let r = 1; r <= maxRound; r++) {
     const inRound = nodes.filter((n) => (n.round || 1) === r)
     const source = r === 1 ? 'plan' : `critic:r${r - 1}`
     for (const n of inRound) {
-      const deps = sameRoundDeps(n)
+      const deps = directDeps(n)
       if (deps.length) for (const d of deps) E.push({ from: d, to: n.id })
       else E.push({ from: source, to: n.id })
     }
@@ -108,9 +131,11 @@ export function buildGraph(model) {
 }
 
 // ── Layout em camadas (Sugiyama simplificado) ──
-// 1) camada = caminho mais longo desde o plan; 2) aresta que pula camadas ganha vértices fantasma, para a
-// reta nunca atravessar um nó; 3) ordem na camada por baricentro (reduz cruzamentos), em varreduras
-// alternadas; 4) coordenadas: x pela camada, y centrado na camada. Determinístico: mesmo modelo, mesmo desenho.
+// 1) camada (passo) = caminho mais longo desde o plan; 2) aresta que pula camadas ganha vértices fantasma,
+// para a reta nunca atravessar um nó; 3) ordem na camada por baricentro (reduz cruzamentos), em varreduras
+// alternadas; 4) coordenadas: x pela camada; y o mais perto possível da média dos antecessores, sem dois
+// vértices a menos de ROW (cadeia em sequência fica reta); 5) camadas vizinhas da mesma fase viram uma
+// coluna só. Determinístico: mesmo modelo, mesmo desenho.
 export function layoutGraph({ V, E }) {
   const byId = new Map(V.map((v) => [v.id, v]))
   const preds = new Map(V.map((v) => [v.id, []]))
@@ -186,11 +211,16 @@ export function layoutGraph({ V, E }) {
     for (let l = layers.length - 2; l >= 0; l--) if (layers[l]) sortBy(layers[l], down)
   }
 
-  // x pela camada, y centrado em 0 dentro da camada (a etapa fica alinhada ao eixo do grafo)
+  // x pela camada; y alinhado aos antecessores (que estão todos na camada anterior, por causa dos fantasmas).
+  // A primeira camada centra em 0.
   const pos = new Map()
   layers.forEach((ids, l) => {
     if (!ids) return
-    ids.forEach((id, i) => pos.set(id, { x: l * LAYOUT.COL, y: (i - (ids.length - 1) / 2) * LAYOUT.ROW }))
+    const want = ids.map((id) => {
+      const ps = up.get(id) || []
+      return ps.length ? ps.reduce((s, p) => s + pos.get(p).y, 0) / ps.length : 0
+    })
+    spread(want, LAYOUT.ROW).forEach((y, i) => pos.set(ids[i], { x: l * LAYOUT.COL, y }))
   })
 
   const segments = []
@@ -202,15 +232,51 @@ export function layoutGraph({ V, E }) {
     }
   }
 
-  // uma coluna por camada: tipo pelo vértice real que está nela (plan, critic e synth ficam sozinhos na
-  // camada deles; o resto é etapa de nós)
-  const lanes = layers.map((ids, index) => {
+  // Uma coluna por fase: plan, critic e synth ficam sozinhos na camada deles; camadas de nós vizinhas, do
+  // mesmo round e com os mesmos tipos (research/design/implement), viram uma coluna larga com `steps` passos.
+  // Nós em paralelo ficam empilhados no mesmo passo; em sequência, um passo depois do outro.
+  const lanes = []
+  let lastKey = null
+  layers.forEach((ids, l) => {
     const real = (ids || []).filter((id) => byId.has(id)).map((id) => byId.get(id))
     const special = real.find((v) => v.kind !== 'node')
-    return { index, kind: special ? special.kind : 'node', round: special ? special.round : Math.max(1, ...real.map((v) => v.round || 1)), ids: real.map((v) => v.id), count: real.length }
+    const kind = special ? special.kind : 'node'
+    const round = special ? special.round : Math.max(1, ...real.map((v) => v.round || 1))
+    const kinds = [...new Set(real.map((v) => v.node && v.node.kind).filter(Boolean))].sort().join('+')
+    const key = special ? `${kind}:${round}:${l}` : real.length ? `node:${round}:${kinds}` : lastKey
+    const prev = lanes[lanes.length - 1]
+    if (prev && key === lastKey && kind === 'node') {
+      prev.ids.push(...real.map((v) => v.id))
+      prev.count += real.length
+      prev.steps++
+      prev.maxParallel = Math.max(prev.maxParallel, real.length)
+    } else {
+      lanes.push({ index: lanes.length, kind, round, first: l, steps: 1, ids: real.map((v) => v.id), count: real.length, maxParallel: real.length })
+    }
+    lastKey = key
   })
   const ys = [...pos.values()].map((p) => p.y)
   return { pos, segments, lanes, minY: Math.min(0, ...ys), maxY: Math.max(0, ...ys) }
+}
+
+// Posições numa camada, na ordem dada, o mais perto possível de `want` (mínimos quadrados) com pelo menos
+// `gap` entre vizinhos: regressão isotônica (pool adjacent violators) sobre want[i] - i·gap.
+function spread(want, gap) {
+  const blocks = []
+  want.forEach((w, i) => {
+    blocks.push({ sum: w - i * gap, n: 1 })
+    while (blocks.length > 1) {
+      const b = blocks[blocks.length - 1]
+      const a = blocks[blocks.length - 2]
+      if (a.sum / a.n <= b.sum / b.n) break
+      a.sum += b.sum
+      a.n += b.n
+      blocks.pop()
+    }
+  })
+  const out = []
+  for (const b of blocks) for (let k = 0; k < b.n; k++) out.push(b.sum / b.n + out.length * gap)
+  return out
 }
 
 function segment(p, q) {
@@ -221,38 +287,46 @@ function segment(p, q) {
 
 // ── Posição na tela ──
 // Coloca o layout num quadro de `width` × `height` (o viewport do grafo). `reserveLeft`/`reserveRight` são
-// as larguras que os cards flutuantes cobrem (lateral de runs e gaveta de detalhe): as colunas esticam
+// as larguras que os cards flutuantes cobrem (lateral de runs e gaveta de detalhe): os passos esticam
 // (LANE_W..LANE_MAX) e o grafo centra no espaço entre eles. Não coube nem com a largura mínima: começa no
 // PAD_X depois do card e o quadro rola. Devolve as colunas, as posições dos vértices e os segmentos das
-// arestas já em px, a largura da coluna e o tamanho total do quadro.
+// arestas já em px, a largura de um passo (`stepW`; a coluna tem steps × stepW) e o tamanho total do quadro.
 export function placeGraph(layout, { width, height, reserveLeft = 0, reserveRight = 0, mobile = false }) {
   const M = mobile ? LAYOUT.mobile : LAYOUT.desktop
-  const cols = Math.max(1, layout.lanes.length)
+  const lanes = layout.lanes.length ? layout.lanes : [{ index: 0, first: 0, steps: 1 }]
+  const steps = lanes.reduce((s, l) => s + l.steps, 0)
+  const gaps = (lanes.length - 1) * LAYOUT.GAP
   const free = Math.max(0, width - reserveLeft - reserveRight)
-  const fit = Math.floor((free - 2 * M.PAD_X - (cols - 1) * LAYOUT.GAP) / cols)
-  const laneW = mobile ? LAYOUT.LANE_W : Math.min(LAYOUT.LANE_MAX, Math.max(LAYOUT.LANE_W, fit))
-  const col = laneW + LAYOUT.GAP
-  const span = (cols - 1) * col + laneW
+  const fit = Math.floor((free - 2 * M.PAD_X - gaps) / steps)
+  const stepW = mobile ? LAYOUT.LANE_W : Math.min(LAYOUT.LANE_MAX, Math.max(LAYOUT.LANE_W, fit))
+  const span = steps * stepW + gaps
   const left = reserveLeft + Math.max(M.PAD_X, Math.round((free - span) / 2))
   const laneH = Math.max(height - M.LANE_TOP - M.LANE_BOTTOM, layout.maxY - layout.minY + M.EXTRA)
-  const originX = left + laneW / 2
   const originY = Math.round(M.LANE_TOP + laneH / 2 + M.SHIFT - (layout.minY + layout.maxY) / 2)
-  const sx = col / LAYOUT.COL
-  const at = (x, y) => ({ x: originX + x * sx, y: originY + y })
 
-  const pos = new Map([...layout.pos].map(([id, p]) => [id, { ...at(p.x, p.y), col: Math.round(p.x / LAYOUT.COL) }]))
+  // centro de cada passo na tela: contíguos dentro da coluna, GAP entre colunas
+  const stepX = []
+  const placed = lanes.map((l, i) => {
+    const x0 = left + l.first * stepW + i * LAYOUT.GAP
+    for (let k = 0; k < l.steps; k++) stepX[l.first + k] = x0 + k * stepW + stepW / 2
+    return { ...l, left: x0, top: M.LANE_TOP, width: l.steps * stepW, height: laneH }
+  })
+  const stepOf = (x) => Math.round(x / LAYOUT.COL)
+  const at = (x, y) => ({ x: stepX[stepOf(x)], y: originY + y })
+
+  const pos = new Map([...layout.pos].map(([id, p]) => [id, { ...at(p.x, p.y), col: stepOf(p.x) }]))
   const segments = layout.segments.map((s) => {
     const r = (s.angle * Math.PI) / 180
     const a = at(s.x, s.y)
     const b = at(s.x + Math.cos(r) * s.len, s.y + Math.sin(r) * s.len)
-    return { ...s, ...segment(a, b), col: Math.round(s.x / LAYOUT.COL) }
+    return { ...s, ...segment(a, b), col: stepOf(s.x) }
   })
   return {
-    laneW,
-    labelW: laneW - 2 * LAYOUT.LABEL_PAD,
+    stepW,
+    labelW: stepW - 2 * LAYOUT.LABEL_PAD,
     pos,
     segments,
-    lanes: layout.lanes.map((l) => ({ ...l, left: left + l.index * col, top: M.LANE_TOP, width: laneW, height: laneH })),
+    lanes: layout.lanes.length ? placed : [],
     width: Math.max(width, left + span + M.PAD_X + reserveRight),
     height: Math.max(height, M.LANE_TOP + laneH + M.LANE_BOTTOM),
   }

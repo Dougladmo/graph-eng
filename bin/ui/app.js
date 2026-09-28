@@ -8,13 +8,14 @@
 //                              espaço entre os cards abertos; abrir e fechar é só CSS (transição).
 //   #graph                     quadro do grafo; width/height em px vêm de placeGraph. data-status = status da
 //                              run (rodando|parada?|terminado): nó "rodando" de run parada fica congelado.
-//   .lane                      coluna de etapa. left/top/width/height em px. data-kind (plan|node|critic|synth),
+//   .lane                      coluna de fase (Plano, Pesquisa, Implementação…); passos em sequência da mesma fase
+//                              dividem uma coluna larga. left/top/width/height em px. data-kind (plan|node|critic|synth),
 //                              data-active (tem nó rodando numa run viva), data-mood (running|fail|frozen|'').
 //                              Contém .lane-title e .lane-sub.
 //   .node                      button do nó. left/top = CENTRO da bolinha. data-kind, data-variant
 //                              (empty|running|done|fail|skipped), data-state (estado cru), data-round,
 //                              data-tone (1..3, cor do round), data-selected. Contém .dot e .node-label.
-//                              --i (em .lane, .node e .edge) = índice da coluna, para escalonar a entrada.
+//                              --i (em .lane, .node e .edge) = índice do passo, para escalonar a entrada.
 //   .edge                      segmento de reta de centro a centro. left/top = ponto de saída, width =
 //                              comprimento, rotação em transform (origem no meio da borda esquerda).
 //                              data-from, data-to, data-active (true quando a origem já rodou).
@@ -137,7 +138,7 @@ function renderGraph(model) {
     const failed = vs.some((v) => variantOf(v.state) === 'fail')
     const kinds = vs.filter((v) => v.node).map((v) => v.node.kind)
     const round = maxRound > 1 && lane.kind === 'node' ? `round ${lane.round} · ` : ''
-    let sub = lane.kind === 'node' ? `${round}${lane.count === 1 ? '1 nó' : `${lane.count} em paralelo`}` : ''
+    let sub = lane.kind === 'node' ? `${round}${laneSize(lane)}` : ''
     let mood = ''
     if (running) [sub, mood] = live ? ['rodando', 'running'] : ['parada', 'frozen']
     else if (failed) [sub, mood] = ['falhou', 'fail']
@@ -156,7 +157,7 @@ function renderGraph(model) {
     },
     (d, l) => {
       setStyle(d, { left: `${l.left}px`, top: `${l.top}px`, width: `${l.width}px`, height: `${l.height}px` })
-      d.style.setProperty('--i', l.index)
+      d.style.setProperty('--i', l.first)
       setText(d.firstChild, l.title)
       setText(d.lastChild, l.sub)
       setData(d, { kind: l.kind, active: l.active, mood: l.mood })
@@ -201,6 +202,12 @@ function renderGraph(model) {
   )
 
   followRunning(model.wf, lanes)
+}
+
+// Tamanho da fase: "1 nó", "3 em paralelo" ou, com passos em sequência, "5 nós · até 2 em paralelo".
+function laneSize(lane) {
+  if (lane.steps === 1) return lane.count === 1 ? '1 nó' : `${lane.count} em paralelo`
+  return `${lane.count} nós · ${lane.maxParallel > 1 ? `até ${lane.maxParallel} em paralelo` : 'em sequência'}`
 }
 
 // Grafo mais largo que a tela (celular, ou run grande): rola até a etapa que está rodando, deixando a
