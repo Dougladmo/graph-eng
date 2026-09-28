@@ -395,7 +395,11 @@ describe('modo events: fila de pedidos e sinal de vida (C1-C4)', () => {
     const old = new Date(Date.now() - 6 * 60 * 1000)
     for (const f of fs.readdirSync(runDir)) fs.utimesSync(path.join(runDir, f), old, old)
 
-    const { stdout } = await runEventsUntilExit(['--run-dir', runDir, '--state-dir', stateDir, '--wait-ms', '50', '--listen-min', '0'], 900)
+    // Espera o 1º retrato ("retomando") e mais 600 ms de voltas do laço antes de afirmar que o
+    // "parada?" não saiu. Com um prazo fixo, a máquina carregada deixava o filho morrer antes do 1º
+    // retrato, e a afirmação passava sem ter conferido nada.
+    const { stdout } = await runEventsUntilExit(['--run-dir', runDir, '--state-dir', stateDir, '--wait-ms', '50', '--listen-min', '0'], 10000, { stopWhen: /retomando/ })
+    assert.match(stdout, /retomando/, 'o events deveria emitir o 1º retrato')
     assert.doesNotMatch(stdout, /parada\?/, 'com a própria dona ouvindo, 6 min de idle não deveria bater a janela de 15 min (3·5)')
 
     // controle: a mesma folga de 6 min, mas SEM sinal de vida nenhum (project diferente do da
@@ -404,7 +408,7 @@ describe('modo events: fila de pedidos e sinal de vida (C1-C4)', () => {
     fs.cpSync(fx('wf_dead'), looseDir, { recursive: true })
     for (const f of fs.readdirSync(looseDir)) fs.utimesSync(path.join(looseDir, f), old, old)
     const looseStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-ev-3n-loose-state-'))
-    const control = await runEventsUntilExit(['--run-dir', looseDir, '--state-dir', looseStateDir, '--wait-ms', '50'], 900)
+    const control = await runEventsUntilExit(['--run-dir', looseDir, '--state-dir', looseStateDir, '--wait-ms', '50'], 10000, { stopWhen: /parada\?/ })
     assert.match(control.stdout, /parada\?/, 'sem dona ouvindo (--run-dir solto), a janela de 1×N deveria bater em 6 min')
   })
 
