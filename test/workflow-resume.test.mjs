@@ -179,6 +179,68 @@ test('done com id desconhecido ao plano é ignorado com log, e o nó continua fo
   assert.deepEqual(callsOnly(calls), ['work:I2', 'verify:I2', 'critic:r1', 'polish:1', 'synth'])
 })
 
+// C7: trilho maxNodes na retomada. Plano de 17 nós (3 research, 5 design, 9 implement), 11 prontos
+// (todos os research/design + I1-I3), 6 pendentes (I4-I9). Ceiling 30 + nível max -> maxNodes=13
+// (target 30, sizing implement: floor((30-4)/2)=13). Sem a correção, o corte contaria os 17 nós do
+// plano contra o teto de 13 e cortaria 4 pendentes; com a correção, os 11 prontos ficam de fora da
+// conta (só 6 pendentes contra o teto de 13) e nenhum pendente é cortado.
+const bigPlan = {
+  goal: 'g',
+  complexity: 'moderate',
+  mode: 'implement',
+  doneWhen: ['ok'],
+  effort: { level: 'max', why: 'fixed by user' },
+  nodes: [
+    ...['R1', 'R2', 'R3'].map((id) => ({ id, kind: 'research', title: id, brief: 'b', deps: [], risk: 'low', acceptance: ['a'] })),
+    ...['D1', 'D2', 'D3', 'D4', 'DS'].map((id) => ({ id, kind: 'design', title: id, brief: 'b', deps: ['R1', 'R2', 'R3'], risk: 'low', acceptance: ['a'] })),
+    ...['I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7', 'I8', 'I9'].map((id) => ({
+      id, kind: 'implement', title: id, brief: 'b', deps: ['DS'], risk: 'low', acceptance: ['a'], files: [`src/${id.toLowerCase()}.js`],
+    })),
+  ],
+}
+const bigReady = ['R1', 'R2', 'R3', 'D1', 'D2', 'D3', 'D4', 'DS', 'I1', 'I2', 'I3']
+const bigPending = ['I4', 'I5', 'I6', 'I7', 'I8', 'I9']
+const bigDone = Object.fromEntries(bigReady.map((id) => [id, doneEntry(id, id.startsWith('I') ? { filesChanged: [`src/${id.toLowerCase()}.js`] } : {})]))
+
+test('C7: retomada com teto de nós não corta nó pronto nem nó pendente (17 nós, 11 prontos, teto 30, nível max)', async () => {
+  const args = {
+    task: 'tarefa de teste', runDir: RUN_DIR, mode: 'implement', effort: 'max', ceiling: 30, checks: [],
+    plan: bigPlan,
+    resume: { id: 'rs-20260928-160000', done: bigDone, rerun: [], dependents: false, designReview: { pass: true, attempts: 1 } },
+  }
+  const { result, calls } = await runWorkflow(args, defaultScript())
+  assert.equal(result.effort.target, 30) // nível max, ceiling 30 -> target 30, maxNodes = floor((30-4)/2) = 13
+  // nenhum nó (pronto ou pendente) foi cortado pelo trilho maxNodes, mesmo com 17 nós > maxNodes(13)
+  assert.equal(result.nodes.length, 17)
+  assert.deepEqual(result.resume.ready.sort(), [...bigReady].sort())
+  assert.deepEqual(result.resume.rerun, [])
+  const got = callsOnly(calls)
+  const touched = new Set(got.filter((c) => c.startsWith('work:') || c.startsWith('verify:')).map((c) => c.split(':')[1]))
+  assert.deepEqual([...touched].sort(), [...bigPending].sort())
+  for (const id of bigReady) {
+    assert.ok(!got.some((c) => c === `work:${id}` || c === `verify:${id}`), `${id} não deveria gerar agente (pronto)`)
+  }
+  assert.ok(got.includes('critic:r1') && got.includes('synth'))
+})
+
+// O bump automático de esforço também conta só quem vai rodar. Ceiling 40, implement: medium comporta
+// 6 nós (target 16) e max 18. O planner escolheu medium; os 6 pendentes cabem, então o nível fica.
+// Contando os 17 do plano, o bump subiria para max sem nenhum nó a mais para rodar.
+test('C7: na retomada, o bump automático de esforço não conta nó pronto (17 nós, 11 prontos, medium)', async () => {
+  const args = {
+    task: 'tarefa de teste', runDir: RUN_DIR, mode: 'implement', ceiling: 40, checks: [],
+    plan: { ...bigPlan, effort: { level: 'medium', why: 'planner' } },
+    resume: { id: 'rs-20260928-160500', done: bigDone, rerun: [], dependents: false, designReview: { pass: true, attempts: 1 } },
+  }
+  const { result, calls } = await runWorkflow(args, defaultScript())
+  assert.equal(result.effort.level, 'medium')
+  assert.equal(result.effort.target, 16)
+  assert.ok(!result.rails.some((r) => r.rule === 'effort'), 'não devia subir o esforço')
+  assert.ok(!result.rails.some((r) => r.rule === 'maxNodes'), 'não devia cortar nada')
+  const touched = new Set(callsOnly(calls).filter((c) => c.startsWith('work:')).map((c) => c.split(':')[1]))
+  assert.deepEqual([...touched].sort(), [...bigPending].sort())
+})
+
 test('done com artifact fora do run dir é ignorado, e o nó roda', async () => {
   const args = {
     ...BASE,

@@ -494,8 +494,23 @@ O algoritmo está no D2 §4.3, com um acréscimo no passo 9:
   é vazio. **É o acréscimo desta spec**: o CLI lê o fecho normalizado dessa linha (C8, passo 5).
 - **Retorno**: ganha `resume: { id, ready, rerun, ran, designReviewSkipped }`. `stats.agents` é o `spent`, que
   conta só os agentes novos.
-- **O que não muda**: `targetFor`, `sizing`, `applyLevel`, `applyMaxNodes` e os trilhos. O script continua sem
+- **O que não muda**: `targetFor`, `sizing`, `applyLevel` e os trilhos. O script continua sem
   `import`, `fs`, `Date.now` e `Math.random`.
+- **Trilho maxNodes na retomada** (acréscimo desta spec, achado ao ensaiar no harness os args da 3ª execução
+  desta própria run: plano de 17 nós, 11 prontos, teto 30 → nível max dá `maxNodes = 13`; sem a correção, o
+  corte contava os 17 nós do plano contra o teto de 13 e cortava 4 pendentes, justo os que faltavam rodar).
+  `applyMaxNodes` ganha um 4º parâmetro, `protectedIds` — os ids `READY` da retomada, classificados **antes**
+  do corte (o motor agora classifica pronto/refazer sobre o plano cru, e só depois aplica o corte de nós, na
+  ordem inversa da versão anterior desta spec). Um nó `READY` nunca é cortado, e não entra na conta do teto: o
+  corte passa a comparar `pending.length` (só quem ainda vai rodar) com `maxNodes`, em vez de `nodes.length`
+  (o plano inteiro). O porquê: um nó pronto não gasta agente nem ocupa o `width` do scheduler — contá-lo
+  contra o teto penaliza a retomada por ter história, exatamente o caso que ela deveria baratear. Sem
+  `resume`, `protectedIds` vem vazio e o corte fica idêntico ao de antes (nenhuma mudança de comportamento).
+  A estimativa do log (`~N agentes no caminho feliz`) também passa a contar só os nós que vão rodar nesta
+  execução (`first` menos os `READY`), pelo mesmo motivo. O bump automático de esforço (nível `auto`, que sobe
+  o nível quando o plano não cabe no escolhido pelo planner) usa a mesma conta e por isso roda depois da
+  classificação: contando os prontos, ele subiria o nível sem nenhum nó a mais para rodar. E um id de refazer
+  que o corte tenha tirado sai da linha `Resume:` e do `resumeInfo`, porque não roda.
 
 **Casos de teste** (`effort: 'high'` e `ceiling: 24`; o plano é `R1 → D1 → I1, I2, I4`, com `I3 ← I1`; `I1` e
 `I3` em `src/a.js`, `I2` em `src/b.js` e `I4` em `src/c.js`):
