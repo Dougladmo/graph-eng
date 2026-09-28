@@ -122,7 +122,7 @@ metade). A skill lê a config por um binário próprio, `bin/graph-config.mjs --
 de fora, que resolve a config e passa os valores como argumentos. Manter isso fora de `graph-watch.mjs` evita
 que o CLI de visualização (que já cresce a cada fase nova) dispute responsabilidade com o de config. O
 `PUT /api/config` **substitui** o arquivo inteiro (chave ausente no corpo volta ao padrão) em vez de fazer
-merge parcial, porque um merge implícito escondida do usuário do modal qual campo realmente mudou depois de
+merge parcial, porque um merge implícito esconderia do usuário do modal qual campo realmente mudou depois de
 uma edição anterior malformada.
 
 ### `Origin` obrigatório na escrita, sem CORS

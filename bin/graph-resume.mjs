@@ -14,9 +14,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { defaultStateDir } from './config.mjs'
-import { resolveRunDir, RUN_ID_RE } from './organize.mjs'
+import { resolveRunDir } from './organize.mjs'
 import { readJournalTolerant } from './graph-watch.mjs'
-import { NODE_RE, WF_RE, readListeners, ownerPresence, ownerPathInfo, writeJsonAtomic } from './requests.mjs'
+import { NODE_RE, readListeners, ownerPresence, ownerPathInfo, writeJsonAtomic } from './requests.mjs'
 
 export const RESUME_ID_RE = /^rs-\d{8}-\d{6}(-\d+)?$/
 export const ACTIVE_GUARD_MS = 60000 // C8: um agent-*.jsonl ou journal.jsonl escrito há menos disso ainda pode estar vivo
@@ -557,5 +557,3 @@ if (isMain) {
     process.exit(1)
   })
 }
-
-export { WF_RE, RUN_ID_RE }

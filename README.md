@@ -457,13 +457,13 @@ bin/
     graph-layout.mjs   modelo → layout, puro e testado (coluna "Revisão do design" etc.)
     sidebar.mjs        lista lateral (fixadas, grupos, accordion) e o menu/drag de cada run
     actions.mjs        botões de ação e copiar comando
-    confirm.mjs         dialog de confirmação (parar, refazer, apagar, apagar finalizadas)
+    confirm.mjs        dialog de confirmação (parar, refazer, apagar, apagar finalizadas)
     app.js             DOM ao vivo · theme.js (tema) · commands.mjs (texto dos comandos copiáveis)
-    src/style.css       fonte, Tailwind → style.css (gerado, versionado)
-    favicon.svg         ícone do painel (mesmo logo do cabeçalho)
-    favicon-32.png      PNG 32px do favicon (Safari não mostra SVG); também serve /favicon.ico
+    src/style.css      fonte, Tailwind → style.css (gerado, versionado)
+    favicon.svg        ícone do painel (mesmo logo do cabeçalho)
+    favicon-32.png     PNG 32px do favicon (Safari não mostra SVG); também serve /favicon.ico
     apple-touch-icon.png ícone para adicionar o painel à tela de início (iOS/Safari)
-    fonts/              Geist e Geist Mono, SIL OFL
+    fonts/             Geist e Geist Mono, SIL OFL
 ```
 
 </details>
