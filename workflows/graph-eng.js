@@ -312,23 +312,32 @@ const SYNTH = {
 // SHARED abre todo prompt, idêntico em todos os agentes: o prefixo comum vira cache hit. Effort/Ceiling/Target
 // vêm dos args de entrada e não mudam durante a run (o valor resolvido pelo planner vai no PLAN_BLOCK, à parte,
 // para não invalidar o cache de quem já rodou antes do plano).
-const SHARED = [
-  `# Graph run ${RUN_ID}`,
-  `Task: ${TASK}`,
-  `Mode: ${MODE}`,
-  `Economy: ${ECONOMY}`,
-  `Effort: ${LEVEL0 || 'auto'}`,
-  `Ceiling: ${CEILING}`,
-  LEVEL0 ? `Target: ${targetFor(LEVEL0, CEILING, MODE)}` : `Target: auto ${TARGET_RANGE.min}-${TARGET_RANGE.max}`,
-  `Run dir (paper trail): ${RUN_DIR}`,
-  SPEC && `Spec (source of truth for WHAT; the graph owns HOW): ${SPEC}. Read the parts your node needs.`,
-  CONTEXT && `Scouted context:\n${CONTEXT}`,
-  'Rules for every node:',
-  '- You are ONE node of a graph. Do only your job; other nodes cover the rest. Do not spawn subagents.',
-  '- Never commit, push, deploy, open PRs, touch remote databases or send messages. Code edits only in implement nodes.',
-  '- Every claim needs evidence (file:line, URL, or command + result). Without evidence, label it "unverified".',
-  '- Be terse. Full output goes to files; the structured return is a short summary.',
-].filter(Boolean).join('\n') + '\n'
+// RESUME_LINE fica vazia até o bloco de retomada (perto do normalize de `first`) calcular o fecho de
+// refazer; buildShared() é reinvocada depois disso para que a linha "Resume:" apareça já no prefixo
+// que os nós de pesquisa/design/implementação recebem (workPrompt etc. leem SHARED por closure, e só
+// rodam depois dessa reatribuição).
+let RESUME_LINE = ''
+function buildShared() {
+  return [
+    `# Graph run ${RUN_ID}`,
+    `Task: ${TASK}`,
+    `Mode: ${MODE}`,
+    `Economy: ${ECONOMY}`,
+    `Effort: ${LEVEL0 || 'auto'}`,
+    `Ceiling: ${CEILING}`,
+    LEVEL0 ? `Target: ${targetFor(LEVEL0, CEILING, MODE)}` : `Target: auto ${TARGET_RANGE.min}-${TARGET_RANGE.max}`,
+    `Run dir (paper trail): ${RUN_DIR}`,
+    RESUME_LINE || false,
+    SPEC && `Spec (source of truth for WHAT; the graph owns HOW): ${SPEC}. Read the parts your node needs.`,
+    CONTEXT && `Scouted context:\n${CONTEXT}`,
+    'Rules for every node:',
+    '- You are ONE node of a graph. Do only your job; other nodes cover the rest. Do not spawn subagents.',
+    '- Never commit, push, deploy, open PRs, touch remote databases or send messages. Code edits only in implement nodes.',
+    '- Every claim needs evidence (file:line, URL, or command + result). Without evidence, label it "unverified".',
+    '- Be terse. Full output goes to files; the structured return is a short summary.',
+  ].filter(Boolean).join('\n') + '\n'
+}
+let SHARED = buildShared()
 let PLAN_BLOCK = ''
 
 const MODE_HINT = {
@@ -989,7 +998,10 @@ async function runDesignReview() {
 
 function areasForPolish() {
   if (RMODE !== 'implement') return []
-  const implDone = first.filter((n) => n.kind === 'implement' && (RESULTS.get(n.id) || {}).status === 'done').map((n) => n.id)
+  // Numa retomada, o nó pronto (resumed:true) não rodou nesta execução: os polidores olham só as
+  // áreas de quem de fato rodou agora (C7, "Os polidores só olham as áreas das implementações que
+  // rodaram nesta execução").
+  const implDone = first.filter((n) => n.kind === 'implement' && (RESULTS.get(n.id) || {}).status === 'done' && !(RESULTS.get(n.id) || {}).resumed).map((n) => n.id)
   if (!implDone.length) return []
   const fileSets = new Map()
   for (const id of implDone) {
@@ -1039,6 +1051,18 @@ Area (only these files): ${area.files.join(', ')}. Before editing, copy each of 
 Return status, summary, filesChanged, checks, confidence.`,
     { label: 'polish:' + (i + 1), phase: 'Synthesize', schema: WORK, model: MDL.worker || undefined, effort: REASON_EFFORT })))
   return results.filter(Boolean).map((w, i) => ({ k: i + 1, files: w.filesChanged || [], status: w.status, summary: w.summary }))
+}
+
+// ── Resume (validação sem gastar agente, C7) ──
+// A retomada exige o plano pronto (senão o planner rodaria de novo, gastando um agente à toa) e não
+// combina com planOnly (que só devolve o plano, sem executar nada). O id vem pronto do CLI (o motor
+// não tem Date.now), então só confere a forma.
+const RESUME = A.resume && typeof A.resume === 'object' ? A.resume : null
+const RESUME_ID_RE = /^rs-\d{8}-\d{6}(-\d+)?$/
+if (RESUME) {
+  if (!(A.plan && Array.isArray(A.plan.nodes))) return { error: 'resume exige args.plan (o motor não replaneja numa retomada)', runDir: RUN_DIR }
+  if (A.planOnly) return { error: 'resume não combina com planOnly', runDir: RUN_DIR }
+  if (!RESUME_ID_RE.test(String(RESUME.id || ''))) return { error: `resume.id inválido: ${RESUME.id}`, runDir: RUN_DIR }
 }
 
 // ── Plan ──
@@ -1136,6 +1160,63 @@ if (!LEVEL0 && first.length > C.maxNodes) {
   }
 }
 first.forEach((n) => NODES.set(n.id, n))
+
+// ── Resume: consome done/rerun (C7) para não refazer nó pronto ──
+// READY = done ∩ NODES − RERUN (RERUN já é o fecho de descendentes, pelas deps NORMALIZADAS, quando
+// dependents=true — os trilhos já rodaram em normalize() acima). Cada pronto vai direto para RESULTS
+// com resumed:true, sem gastar agente; nenhum nó fora dessa lista é tocado aqui.
+let resumeInfo = null
+if (RESUME) {
+  const rerunRaw = Array.isArray(RESUME.rerun) ? [...new Set(RESUME.rerun.map(String))] : []
+  const unknownRerun = rerunRaw.filter((id) => !NODES.has(id))
+  if (unknownRerun.length) return { error: `resume.rerun com nó desconhecido: ${unknownRerun.join(', ')}`, runDir: RUN_DIR }
+  const childrenOf = new Map()
+  for (const n of first) for (const d of n.deps) {
+    if (!childrenOf.has(d)) childrenOf.set(d, [])
+    childrenOf.get(d).push(n.id)
+  }
+  const rerunSet = new Set(rerunRaw)
+  if (RESUME.dependents) {
+    const stack = [...rerunRaw]
+    while (stack.length) {
+      const id = stack.pop()
+      for (const c of (childrenOf.get(id) || [])) if (!rerunSet.has(c)) { rerunSet.add(c); stack.push(c) }
+    }
+  }
+  const doneMap = (RESUME.done && typeof RESUME.done === 'object') ? RESUME.done : {}
+  const readyIds = []
+  for (const rawId of Object.keys(doneMap)) {
+    const id = String(rawId)
+    const d = doneMap[rawId] || {}
+    if (!NODES.has(id)) { log(`resume: done.${id} desconhecido, nó não existe no plano, ignorado`); continue }
+    if (rerunSet.has(id)) continue // no fecho de refazer: roda de novo
+    const art = d.artifact ? normPath(String(d.artifact)) : ''
+    if (art && (art.includes('..') || !(art === RUN_DIR || art.startsWith(RUN_DIR + '/')))) {
+      log(`resume: done.${id} com artifact fora do run dir (${d.artifact}), ignorado; nó roda`)
+      continue
+    }
+    RESULTS.set(id, {
+      status: 'done',
+      work: {
+        status: 'done',
+        summary: String(d.summary || ''),
+        artifact: art || undefined,
+        filesChanged: Array.isArray(d.filesChanged) ? d.filesChanged.map(String) : undefined,
+        confidence: 'high',
+      },
+      verified: !!d.verified,
+      attempts: Number.isFinite(d.attempts) && d.attempts > 0 ? Math.floor(d.attempts) : 1,
+      resumed: true,
+    })
+    readyIds.push(id)
+  }
+  const fechoIds = [...rerunSet]
+  RESUME_LINE = `Resume: ${RESUME.id}` + (fechoIds.length ? ` · refazer: ${fechoIds.join(',')}` : '')
+  SHARED = buildShared()
+  resumeInfo = { id: RESUME.id, ready: readyIds, rerun: fechoIds, ran: [], designReviewSkipped: false }
+  log(`resume ${RESUME.id}: ${readyIds.length} nó(s) pronto(s) (${readyIds.join(', ') || '(nenhum)'}), refazer ${fechoIds.length ? fechoIds.join(', ') : '(nenhum)'}`)
+}
+
 PLAN_BLOCK = `Goal: ${plan.goal}\n` +
   (ASSUMPTIONS.length ? `Assumptions (treat as decided): ${ASSUMPTIONS.join(' | ')}\n` : '') +
   `Sizing: effort ${LEVEL} (${EFFORT_SOURCE}) -> target ${TARGET} of ceiling ${CEILING}, width ${C.width}, max nodes ${C.maxNodes}; mode ${RMODE}\n` +
@@ -1165,12 +1246,20 @@ log(graphText())
 // ── Esqueleto: Research/Design -> Design review -> Execute -> Verify/Critic -> Synthesize ──
 // Sem atalho trivial: todo modo roda as fases obrigatórias do seu esqueleto (D1 §4).
 phase('Research')
-const nonImpl1 = first.filter((n) => n.kind !== 'implement')
-const impl1 = first.filter((n) => n.kind === 'implement')
+const nonImpl1 = first.filter((n) => n.kind !== 'implement' && !RESULTS.has(n.id))
+const impl1 = first.filter((n) => n.kind === 'implement' && !RESULTS.has(n.id))
 await executeGraph(nonImpl1)
 
 let designReview = null
-if (MANDATORY.designReview || RMODE === 'implement' || RMODE === 'architecture') {
+// Retomada com revisão já aprovada, e nenhum nó de pesquisa/design do round 1 rodando agora: o
+// veredito herdado vale, sem gastar agente de novo (C7, "Revisão do design").
+const resumeReviewInherited = !!(RESUME && RESUME.designReview && RESUME.designReview.pass === true && nonImpl1.length === 0)
+if (resumeReviewInherited) {
+  designReview = { pass: true, attempts: Number.isFinite(RESUME.designReview.attempts) ? RESUME.designReview.attempts : 1, blocking: [] }
+  MANDATORY.designReview = false
+  if (resumeInfo) resumeInfo.designReviewSkipped = true
+  log(`resume ${RESUME.id}: revisão do design herdada (aprovada), não roda de novo`)
+} else if (MANDATORY.designReview || RMODE === 'implement' || RMODE === 'architecture') {
   phase('Design review')
   designReview = await runDesignReview()
   if (designReview.pass) {
@@ -1251,6 +1340,7 @@ const nodesOut = () => [...NODES.values()].map((n) => {
     artifact: r.work ? artifactOf(n.id, r) : undefined,
     blocking: r.verdict && !r.verdict.pass ? r.verdict.blocking : undefined,
     note: r.note,
+    resumed: !!r.resumed,
   }, n.injected === true ? { injected: true, reason: n.reason } : {})
 })
 
@@ -1292,6 +1382,7 @@ const finalNodes = nodesOut()
 // Nó implement 'partial' (done sem verify por falta de orçamento) rebaixa o status final: a run
 // não pode fechar 'done' com uma implementação sem verificação cruzada (§6).
 const hasUnverifiedImpl = finalNodes.some((n) => n.kind === 'implement' && n.status === 'partial')
+if (resumeInfo) resumeInfo.ran = finalNodes.filter((n) => !n.resumed && n.status !== 'not run').map((n) => n.id)
 
 return {
   task: TASK,
@@ -1315,5 +1406,6 @@ return {
   polish,
   nodes: finalNodes,
   graph,
+  resume: resumeInfo,
   stats: Object.assign({ agents: spent, dropped }, stats),
 }
