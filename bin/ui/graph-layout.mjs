@@ -27,6 +27,8 @@ export function laneTitle(lane, kinds, maxRound) {
   if (lane.kind === 'plan') return 'Plano'
   if (lane.kind === 'synth') return 'Síntese'
   if (lane.kind === 'critic') return maxRound > 1 ? `Crítica r${lane.round}` : 'Crítica'
+  if (lane.kind === 'design-review') return 'Revisão do design'
+  if (lane.kind === 'polish') return 'Síntese: polimento'
   const names = [...new Set(kinds.map((k) => KIND_TEXT[k] || 'Etapa'))]
   return names.length ? names.join(' + ') : 'Etapa'
 }
@@ -89,13 +91,28 @@ export function buildGraph(model) {
 
   const critic = model.critic || null
   const ended = model.synth === 'pronto' || model.status === 'terminado'
+  const dr = model.designReview || null
+  const polish = model.polish || []
   add({ id: 'plan', kind: 'plan', round: 1, title: 'plano', state: nodes.length || ended ? 'pronto' : 'trabalhando' })
-  for (const n of nodes) add({ id: n.id, kind: 'node', round: n.round || 1, title: n.title || n.id, state: n.state, node: n })
+  for (const n of nodes) {
+    const v = { id: n.id, kind: 'node', round: n.round || 1, title: n.title || n.id, state: n.state, node: n }
+    if (n.injected) v.injected = true
+    add(v)
+  }
+  // Revisão do design (D3 §5.2): pseudo-vértice único, uma tentativa vira estado e título dele.
+  if (dr) add({ id: 'design-review', kind: 'design-review', round: 1, title: dr.attempts > 1 ? `revisão do design r${dr.attempts}` : 'revisão do design', state: dr.state })
   for (let r = 1; r <= maxRound; r++) {
     let state = 'aguardando'
     if (critic && r < critic.r) state = 'pronto'
     else if (critic && r === critic.r) state = critic.running ? 'verificando' : 'pronto'
+    // Revisão do design reprovada e terminada: o critic do round 1 nunca roda de fato.
+    if (dr && r === 1 && dr.state === 'falhou' && ended) state = 'pulado'
     add({ id: `critic:r${r}`, kind: 'critic', round: r, title: maxRound > 1 ? `critic r${r}` : 'critic', state })
+  }
+  // Polidores (D3 §5.2, spec item 9): agentes da síntese visíveis, um vértice por polidor.
+  for (const p of polish) {
+    const state = p.state === 'trabalhando' ? 'trabalhando' : p.state === 'erro' ? 'erro' : 'pronto'
+    add({ id: `polish:${p.k}`, kind: 'polish', round: maxRound, title: `polidor ${p.k}`, state })
   }
   add({ id: 'synth', kind: 'synth', round: maxRound, title: 'síntese', state: model.synth === 'pronto' ? 'pronto' : model.synth === 'rodando' ? 'trabalhando' : 'aguardando' })
 
@@ -128,16 +145,53 @@ export function buildGraph(model) {
   for (let r = 1; r <= maxRound; r++) {
     const inRound = nodes.filter((n) => (n.round || 1) === r)
     const source = r === 1 ? 'plan' : `critic:r${r - 1}`
-    for (const n of inRound) {
-      const deps = directDeps(n)
-      if (deps.length) for (const d of deps) E.push({ from: d, to: n.id })
-      else E.push({ from: source, to: n.id })
+    if (r === 1 && dr) {
+      // Estágio 1 (não-implement) termina na revisão do design; estágio 2 (implement) sai dela e
+      // vai para o critic:r1 (D3 §5.2). A revisão substitui a aresta design→implement direta.
+      const stage1 = inRound.filter((n) => n.kind !== 'implement')
+      const stage2 = inRound.filter((n) => n.kind === 'implement')
+      const stage1Ids = new Set(stage1.map((n) => n.id))
+      const stage2Ids = new Set(stage2.map((n) => n.id))
+      const stage1DirectDeps = new Map(stage1.map((n) => [n.id, directDeps(n).filter((d) => stage1Ids.has(d))]))
+      for (const n of stage1) {
+        const deps = stage1DirectDeps.get(n.id)
+        if (deps.length) for (const d of deps) E.push({ from: d, to: n.id })
+        else E.push({ from: source, to: n.id })
+      }
+      const stage1DependedOn = new Set([...stage1DirectDeps.values()].flat())
+      const stage1Leaves = stage1.filter((n) => !stage1DependedOn.has(n.id))
+      if (stage1Leaves.length) for (const l of stage1Leaves) E.push({ from: l.id, to: 'design-review' })
+      else E.push({ from: source, to: 'design-review' })
+
+      const stage2DirectDeps = new Map(stage2.map((n) => [n.id, directDeps(n).filter((d) => stage2Ids.has(d))]))
+      for (const n of stage2) {
+        const deps = stage2DirectDeps.get(n.id)
+        if (deps.length) for (const d of deps) E.push({ from: d, to: n.id })
+        else E.push({ from: 'design-review', to: n.id })
+      }
+      const stage2DependedOn = new Set([...stage2DirectDeps.values()].flat())
+      const stage2Leaves = stage2.filter((n) => !stage2DependedOn.has(n.id))
+      if (stage2Leaves.length) for (const l of stage2Leaves) E.push({ from: l.id, to: 'critic:r1' })
+      else E.push({ from: 'design-review', to: 'critic:r1' })
+    } else {
+      for (const n of inRound) {
+        const deps = directDeps(n)
+        if (deps.length) for (const d of deps) E.push({ from: d, to: n.id })
+        else E.push({ from: source, to: n.id })
+      }
+      const leaves = inRound.filter((n) => !dependedOn.has(n.id))
+      if (leaves.length) for (const l of leaves) E.push({ from: l.id, to: `critic:r${r}` })
+      else E.push({ from: source, to: `critic:r${r}` })
     }
-    const leaves = inRound.filter((n) => !dependedOn.has(n.id))
-    if (leaves.length) for (const l of leaves) E.push({ from: l.id, to: `critic:r${r}` })
-    else E.push({ from: source, to: `critic:r${r}` })
   }
-  E.push({ from: `critic:r${maxRound}`, to: 'synth' })
+  if (polish.length) {
+    for (const p of polish) {
+      E.push({ from: `critic:r${maxRound}`, to: `polish:${p.k}` })
+      E.push({ from: `polish:${p.k}`, to: 'synth' })
+    }
+  } else {
+    E.push({ from: `critic:r${maxRound}`, to: 'synth' })
+  }
   return { V, E }
 }
 

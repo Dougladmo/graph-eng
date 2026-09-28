@@ -71,7 +71,8 @@ function assertWellFormed(model) {
     const step = p.x / LAYOUT.COL
     assert.ok(Number.isInteger(step) && step >= lane.first && step < lane.first + lane.steps, `${id} fora dos passos da coluna`)
   }
-  for (const l of L.lanes) if (l.kind !== 'node') assert.ok(l.count === 1 && l.steps === 1, `coluna ${l.kind} com mais de um vértice`)
+  // Exceto `polish` (D3 §8): a coluna de polimento pode ter vários polidores em paralelo.
+  for (const l of L.lanes) if (l.kind !== 'node' && l.kind !== 'polish') assert.ok(l.count === 1 && l.steps === 1, `coluna ${l.kind} com mais de um vértice`)
   // colunas cobrem os passos em ordem, sem buraco nem sobreposição
   L.lanes.forEach((l, i) => assert.equal(l.first, i ? L.lanes[i - 1].first + L.lanes[i - 1].steps : 0, `coluna ${i} fora de ordem`))
   // na tela, desktop e celular, com e sem gaveta: tudo dentro do quadro, rótulo incluso
@@ -280,5 +281,70 @@ describe('layoutGraph: invariantes', () => {
       checked++
     }
     assert.ok(checked >= 5, `só ${checked} fixtures verificadas`)
+  })
+})
+
+// D3 §10: esqueleto de fases (Pesquisa sempre, Revisão do design, polidores) em graph-layout.mjs.
+describe('esqueleto de fases (D3 §5)', () => {
+  test('ordem das colunas na fixture wf_phases: Pesquisa, Design, Revisão do design, Implementação', async () => {
+    const model = await buildModel({ runDir: path.join(FIXTURES, 'wf_phases'), mode: 'implement' })
+    const { L } = assertWellFormed(model)
+    const g = buildGraph(model)
+    const V = new Map(g.V.map((v) => [v.id, v]))
+    const names = L.lanes.map((l) => laneTitle(l, l.ids.map((id) => V.get(id).node && V.get(id).node.kind).filter(Boolean), model.round))
+    assert.deepEqual(names, ['Plano', 'Pesquisa', 'Design', 'Revisão do design', 'Implementação', 'Crítica', 'Síntese: polimento', 'Síntese'])
+  })
+
+  test('revisão isolada: coluna própria, sem aresta D1→I1, com D1→design-review e design-review→I1/I2', async () => {
+    const model = await buildModel({ runDir: path.join(FIXTURES, 'wf_phases'), mode: 'implement' })
+    const g = buildGraph(model)
+    const L = layoutGraph(g)
+    const drLane = L.lanes.find((l) => l.kind === 'design-review')
+    assert.equal(drLane.count, 1)
+    assert.equal(drLane.steps, 1)
+    const s = g.E.map((e) => `${e.from}>${e.to}`)
+    assert.ok(!s.includes('D1>I1'))
+    assert.ok(s.includes('D1>design-review'))
+    assert.ok(s.includes('design-review>I1'))
+    assert.ok(s.includes('design-review>I2'))
+  })
+
+  test('architecture: sem implementação, colunas terminam em Revisão do design → Crítica', () => {
+    const model = {
+      round: 1,
+      nodes: [node('R1', [], { kind: 'research' }), node('D1', ['R1'], { kind: 'design' })],
+      critic: { r: 1, running: false, gaps: 0, done: true },
+      synth: 'pronto',
+      designReview: { state: 'pronto', attempts: 1, pass: true, blocking: [] },
+    }
+    const { g, L } = assertWellFormed(model)
+    const V = new Map(g.V.map((v) => [v.id, v]))
+    const names = L.lanes.map((l) => laneTitle(l, l.ids.map((id) => V.get(id).node && V.get(id).node.kind).filter(Boolean), 1))
+    assert.deepEqual(names, ['Plano', 'Pesquisa', 'Design', 'Revisão do design', 'Crítica', 'Síntese'])
+    assert.ok(g.E.map((e) => `${e.from}>${e.to}`).includes('design-review>critic:r1'))
+  })
+
+  test('research: sem revisão do design, colunas ficam em Pesquisa → Crítica', () => {
+    const model = { round: 1, nodes: [node('R1', [], { kind: 'research' })], critic: { r: 1, running: false, gaps: 0, done: true }, synth: 'pronto' }
+    const { L } = assertWellFormed(model)
+    const g = buildGraph(model)
+    const V = new Map(g.V.map((v) => [v.id, v]))
+    const names = L.lanes.map((l) => laneTitle(l, l.ids.map((id) => V.get(id).node && V.get(id).node.kind).filter(Boolean), 1))
+    assert.deepEqual(names, ['Plano', 'Pesquisa', 'Crítica', 'Síntese'])
+  })
+
+  test('nó injetado: v.injected === true e o rótulo contém "(injetada)"', async () => {
+    const model = await buildModel({ runDir: path.join(FIXTURES, 'wf_phases'), mode: 'implement' })
+    const g = buildGraph(model)
+    const v = g.V.find((x) => x.id === 'research-base')
+    assert.equal(v.injected, true)
+    assert.ok(nodeLabel(v).includes('(injetada)'))
+  })
+
+  test('antes do primeiro polidor: sem coluna polish, critic:r1 → synth direto', async () => {
+    const model = await buildModel({ runDir: path.join(FIXTURES, 'wf_phases'), mode: 'implement', cutLine: 27 })
+    const g = buildGraph(model)
+    assert.ok(!g.V.some((v) => v.kind === 'polish'))
+    assert.ok(g.E.map((e) => `${e.from}>${e.to}`).includes('critic:r1>synth'))
   })
 })

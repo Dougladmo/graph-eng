@@ -153,6 +153,22 @@ describe('modo events, alimentado linha a linha (§8.2 item 7)', () => {
     assert.ok(seenIds.size > 0, 'esperava pelo menos um marco final na fixture happy')
   })
 
+  // D3 §10 "Outros": um caso sobre a wf_phases, com o marco do trilho R1 e os dois vereditos da
+  // revisão do design (reprovada no r1, aprovada no r2).
+  test('wf_phases: marcos de trilho e de revisão do design', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-ev-phases-'))
+    const lines = fs.readFileSync(fx('wf_phases/journal.jsonl'), 'utf8').split('\n').filter(Boolean)
+    const stopFeeding = feedIncrementally(dir, lines, 12)
+    const { code, stdout } = await runEventsUntilExit(['--run-dir', dir], 8000)
+    stopFeeding()
+    assert.equal(code, 0)
+    const joined = stdout
+    assert.match(joined, /trilho R1: research-base injetado/)
+    assert.match(joined, /revisão do design r1: reprovada \(1 bloqueio\(s\): D1\) → reparo/)
+    assert.match(joined, /revisão do design r2: aprovada/)
+    assert.match(joined, /TERMINADO/)
+  })
+
   test('sem \\x1b em pipe (§8.2 item 9)', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-ev-noansi-'))
     fs.cpSync(fx('happy'), dir, { recursive: true })

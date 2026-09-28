@@ -84,7 +84,9 @@ function reprovedWithoutLaterRepair(dir, cutLine) {
 }
 
 const mod = await import('../bin/graph-watch.mjs').catch((e) => ({ __importError: e }))
-const { buildModel, normalizeNodes, estimateAgents, GraphWatchError } = mod
+const { buildModel, normalizeNodes, estimateAgents, applyRails, GraphWatchError } = mod
+const { estimateAgents: estimateTarget } = await import('../bin/ui/agent-target.mjs')
+const { runWorkflow, defaultScript } = await import('./helpers/run-workflow.mjs')
 
 function nodeById(model, id) {
   const n = model.nodes.find((n) => n.id === id)
@@ -416,4 +418,164 @@ test('resume sem started plan ignora as tentativas interrompidas e soma o custo 
   assert.deepEqual(states(resumed), states(clean), 'mesmo estado da run que não foi interrompida')
   assert.equal(resumed.spent, clean.spent + 2, 'os 2 agentes interrompidos contam no custo')
   assert.ok(resumed.warns.some((w) => w.includes('interrompido')))
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Esqueleto de fases (D3 §9-§10): fixture wf_phases, com trilhos, revisão do design e polidores.
+// ─────────────────────────────────────────────────────────────────────────
+describe('wf_phases: esqueleto de fases, effort/ceiling, revisão do design e polidores', () => {
+  test('rótulos novos aceitos: status terminado e spent === 16', async () => {
+    const model = await buildModel({ runDir: fx('wf_phases') })
+    assert.equal(model.status, 'terminado')
+    assert.equal(model.spent, 16)
+  })
+
+  test('nó injetado: research-base com trilhos R1/R2/R4 e sem pseudo-nós vazando para os nós', async () => {
+    const model = await buildModel({ runDir: fx('wf_phases') })
+    const base = nodeById(model, 'research-base')
+    assert.equal(base.kind, 'research')
+    assert.equal(base.injected, true)
+    assert.ok(base.reason && base.reason.length > 0)
+    assert.ok(nodeById(model, 'D1').deps.includes('research-base'))
+    assert.ok(nodeById(model, 'I2').deps.includes('D1'))
+    assert.deepEqual(new Set(model.rails.map((r) => r.rule)), new Set(['R1', 'R2', 'R4']))
+    for (const id of ['r1', 'r2', '1', '2']) assert.equal(model.nodes.some((n) => n.id === id), false, `pseudo ${id} não deveria virar nó`)
+  })
+
+  test('estados finais: tudo pronto, D1 reparado uma vez, revisão e polidores prontos', async () => {
+    const model = await buildModel({ runDir: fx('wf_phases') })
+    for (const n of model.nodes) assert.equal(n.state, 'pronto', `${n.id} deveria estar pronto, veio ${n.state}`)
+    assert.equal(nodeById(model, 'D1').reps, 1)
+    assert.deepEqual(model.designReview, { state: 'pronto', attempts: 2, pass: true, blocking: [] })
+    assert.deepEqual(model.polish, [{ k: 1, state: 'pronto' }, { k: 2, state: 'pronto' }])
+  })
+
+  test('meio da run (cutLine): reprovada, reparando, verificando, paralelo, 1º polidor', async () => {
+    const at13 = await buildModel({ runDir: fx('wf_phases'), cutLine: 13 })
+    assert.equal(at13.designReview.state, 'falhou')
+    assert.deepEqual(at13.designReview.blocking, ['D1'])
+
+    const at14 = await buildModel({ runDir: fx('wf_phases'), cutLine: 14 })
+    assert.equal(at14.designReview.state, 'reparando')
+    assert.equal(nodeById(at14, 'D1').state, 'reparando')
+
+    const at16 = await buildModel({ runDir: fx('wf_phases'), cutLine: 16 })
+    assert.equal(at16.designReview.state, 'verificando')
+
+    const at19 = await buildModel({ runDir: fx('wf_phases'), cutLine: 19 })
+    assert.equal(nodeById(at19, 'I1').state, 'trabalhando')
+    assert.equal(nodeById(at19, 'I2').state, 'trabalhando')
+
+    const at28 = await buildModel({ runDir: fx('wf_phases'), cutLine: 28 })
+    assert.equal(at28.polish.filter((p) => p.state === 'trabalhando').length, 1)
+  })
+
+  test('alvo e teto: ceiling 24 dá target 17; sem ceiling, target/ceiling ficam undefined', async () => {
+    const withCeiling = await buildModel({ runDir: fx('wf_phases'), ceiling: 24 })
+    assert.equal(withCeiling.target, 17)
+    assert.equal(withCeiling.ceiling, 24)
+    const first = withCeiling.nodes.filter((n) => n.round === 1 && !n.orphan)
+    assert.equal(withCeiling.estimate, estimateTarget(first, { mode: 'implement', level: 'high' }))
+
+    const withoutCeiling = await buildModel({ runDir: fx('wf_phases') })
+    assert.equal(withoutCeiling.target, undefined)
+    assert.equal(withoutCeiling.ceiling, undefined)
+  })
+
+  test('revisão reprovada e terminada: I1/I2 pulados, D1 falhou', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-wf-phases-falhou-'))
+    const lines = fs.readFileSync(fx('wf_phases/journal.jsonl'), 'utf8').split('\n').filter(Boolean).slice(0, 13)
+    lines.push(JSON.stringify({ type: 'started', key: 'v2:end', agentId: 'a-end', label: 'synth', phase: 'Synthesize' }))
+    fs.writeFileSync(path.join(dir, 'journal.jsonl'), lines.join('\n') + '\n')
+    const model = await buildModel({ runDir: dir })
+    assert.equal(model.designReview.state, 'falhou')
+    assert.equal(nodeById(model, 'I1').state, 'pulado')
+    assert.equal(nodeById(model, 'I2').state, 'pulado')
+    assert.equal(nodeById(model, 'D1').state, 'falhou')
+  })
+
+  test('paridade dos trilhos com o motor (harness do I1)', async () => {
+    async function planOnlyNodes(mode, rawNodes) {
+      const script = defaultScript({
+        plan: () => ({ goal: 'g', complexity: 'moderate', doneWhen: ['ok'], nodes: rawNodes, effort: { level: 'high', why: 't' } }),
+      })
+      const { result } = await runWorkflow({ task: 'x', mode, effort: 'high', planOnly: true }, script)
+      assert.ok(result && result.planOnly, 'planOnly devolveu resultado')
+      return result
+    }
+    const cases = [
+      { mode: 'implement', nodes: [
+        { id: 'D1', kind: 'design', deps: [] },
+        { id: 'I1', kind: 'implement', deps: ['D1'] },
+        { id: 'I2', kind: 'implement', deps: [] },
+      ] },
+      { mode: 'implement', nodes: [
+        { id: 'D1', kind: 'design', deps: [] },
+        { id: 'R1', kind: 'research', deps: ['D1'] },
+      ] },
+      { mode: 'architecture', nodes: [
+        { id: 'R1', kind: 'research', deps: [] },
+        { id: 'I1', kind: 'implement', deps: ['R1'] },
+      ] },
+    ]
+    for (const c of cases) {
+      const engine = await planOnlyNodes(c.mode, c.nodes)
+      const mine = applyRails(
+        normalizeNodes(c.nodes, { round: 1, readOnly: c.mode !== 'implement', reserved: ['research-base', 'design-base'] }),
+        c.mode,
+      )
+      const norm = (list) => list.map((n) => ({ id: n.id, deps: [...n.deps].sort(), injected: !!n.injected })).sort((a, b) => a.id.localeCompare(b.id))
+      assert.deepEqual(norm(engine.plan.nodes), norm(mine.nodes), `paridade de nós (${c.mode})`)
+      assert.deepEqual([...engine.rails.map((r) => r.rule)].sort(), [...mine.rails.map((r) => r.rule)].sort(), `paridade de trilhos (${c.mode})`)
+    }
+  })
+
+  test('compatibilidade: fixtures antigas seguem sem designReview/polish/rails/target/injected', async () => {
+    for (const name of ['happy', 'wf_blocked', 'interrupted', 'resumed']) {
+      const model = await buildModel({ runDir: fx(name), economy: 'balanced', mode: 'implement' })
+      assert.equal(model.designReview, undefined, name)
+      assert.equal(model.polish, undefined, name)
+      assert.equal(model.rails, undefined, name)
+      assert.equal(model.target, undefined, name)
+      assert.ok(model.nodes.every((n) => !n.injected), name)
+    }
+  })
+
+  test('LABEL_RE aceita design-review sem lançar o erro de formato não reconhecido', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-dr-only-'))
+    const lines = [
+      JSON.stringify({ type: 'launched' }),
+      JSON.stringify({ type: 'started', key: 'k1', agentId: 'a1', label: 'design-review:r1', phase: 'Design review' }),
+    ]
+    fs.writeFileSync(path.join(dir, 'journal.jsonl'), lines.join('\n') + '\n')
+    await assert.doesNotReject(() => buildModel({ runDir: dir }))
+  })
+
+  test('precedência do nível: args vencem o plano cru (gate trocou o effort)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-wf-phases-level-'))
+    const raw = fs.readFileSync(fx('wf_phases/journal.jsonl'), 'utf8')
+    const patched = raw.replace('"effort":{"level":"high","why":"fixture"}', '"effort":{"level":"medium","why":"fixture"}')
+    fs.writeFileSync(path.join(dir, 'journal.jsonl'), patched)
+
+    const withHigh = await buildModel({ runDir: dir, effort: 'high', ceiling: 24 })
+    assert.equal(withHigh.effort.level, 'high')
+    assert.equal(withHigh.target, 17)
+
+    const noOverride = await buildModel({ runDir: dir, ceiling: 24 })
+    assert.equal(noOverride.effort.level, 'medium')
+    assert.equal(noOverride.target, 10)
+
+    for (const bad of ['auto', 'manual']) {
+      const m = await buildModel({ runDir: dir, effort: bad, ceiling: 24 })
+      assert.equal(m.effort.level, 'medium', `effort:${bad} deveria cair para o plano`)
+      assert.equal(m.target, 10)
+    }
+  })
+
+  test('precedência do modo: args vencem o mode do plano', async () => {
+    const withArch = await buildModel({ runDir: fx('wf_phases'), mode: 'architecture' })
+    assert.equal(withArch.effort.mode, 'architecture')
+    const withAuto = await buildModel({ runDir: fx('wf_phases'), mode: 'auto' })
+    assert.equal(withAuto.effort.mode, 'implement')
+  })
 })

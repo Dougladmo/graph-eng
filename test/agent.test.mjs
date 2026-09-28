@@ -7,7 +7,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { buildAgentView, GraphWatchError } from '../bin/graph-watch.mjs'
+import { buildAgentView, agentsOfNode, GraphWatchError } from '../bin/graph-watch.mjs'
+
+const FIXTURES = path.join(path.dirname(new URL(import.meta.url).pathname), 'fixtures')
 
 function makeFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-agent-'))
@@ -95,5 +97,29 @@ describe('buildAgentView (§6.7)', () => {
       if (prev === undefined) delete process.env.TZ
       else process.env.TZ = prev
     }
+  })
+})
+
+// D3 §10 "Outros": agentsOfNode sobre a fixture wf_phases, com os pseudo-nós novos.
+describe('agentsOfNode (D3 §7)', () => {
+  const dir = path.join(FIXTURES, 'wf_phases')
+
+  test('design-review lista as duas tentativas', () => {
+    const agents = agentsOfNode(dir, 'design-review')
+    assert.equal(agents.length, 2)
+    assert.deepEqual(agents.map((a) => a.label), ['design-review:r1', 'design-review:r2'])
+  })
+
+  test('polish:2 e polish-2 devolvem o mesmo agente', () => {
+    const byColon = agentsOfNode(dir, 'polish:2')
+    const byDash = agentsOfNode(dir, 'polish-2')
+    assert.equal(byColon.length, 1)
+    assert.deepEqual(byColon.map((a) => a.label), byDash.map((a) => a.label))
+    assert.equal(byColon[0].label, 'polish:2')
+  })
+
+  test('D1 inclui work:D1, verify:D1 e design-repair:D1', () => {
+    const agents = agentsOfNode(dir, 'D1')
+    assert.deepEqual(agents.map((a) => a.label), ['work:D1', 'verify:D1', 'design-repair:D1'])
   })
 })

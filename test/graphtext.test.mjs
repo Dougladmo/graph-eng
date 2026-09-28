@@ -7,10 +7,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { graphText as watchGraphText } from '../bin/graph-watch.mjs'
+import { graphText as watchGraphText, buildModel } from '../bin/graph-watch.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ENGINE_PATH = path.join(__dirname, '..', 'workflows', 'graph-eng.js')
+const FIXTURES = path.join(__dirname, 'fixtures')
 
 // Extrai o corpo de `function graphText() { ... }` contando chaves (a função tem ternários e
 // arrow functions com seu próprio bloco, então um regex ganancioso simples não fecha certo).
@@ -115,4 +116,15 @@ test('graphText() do motor: nó sem resultado ainda sai como aguardando, sem mar
   const BLOCKED = new Set()
   const out = runEngineGraphText(NODES, RESULTS, BLOCKED)
   assert.equal(out, '[ ] solo aguardando  ← plan')
+})
+
+// D3 §10 "Outros": um caso sobre a fixture wf_phases, com o sufixo "(injetada)" e a linha da
+// revisão do design.
+test('graphText() da fixture wf_phases: nó injetado com sufixo e linha "revisão do design"', async () => {
+  const model = await buildModel({ runDir: path.join(FIXTURES, 'wf_phases') })
+  const text = watchGraphText(model, { cols: 200 })
+  assert.ok(model.nodes.find((n) => n.id === 'research-base').reason.length > 0, 'nó injetado com motivo')
+  assert.match(text, /\(injetado\) = nó que o motor acrescentou ao plano/)
+  assert.match(text, /revisão do design: pronto r2/)
+  assert.match(text, /polimento 2\/2/)
 })

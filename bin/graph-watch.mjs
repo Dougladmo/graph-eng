@@ -7,6 +7,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { estimateAgents as estimateTarget, targetFor } from './ui/agent-target.mjs'
 
 // ── Erros ──
 export class GraphWatchError extends Error {
@@ -24,7 +25,11 @@ const PRESETS = {
   max: { maxAgents: 48, defer: [] },
 }
 
-const LABEL_RE = /^(plan|work|verify|escalate|repair|draft-[ab]|judge|critic|synth)(:|$)/
+const LABEL_RE = /^(plan|work|verify|escalate|repair|draft-[ab]|judge|critic|synth|design-review|design-repair|polish)(:|$)/
+// `id` depois de ':' não é nó real para estes rótulos: fica fora de `per` (D3 §3.1).
+const PSEUDO_LABELS = new Set(['critic', 'design-review', 'polish'])
+// Ids reservados pelo motor para os nós injetados pelos trilhos (D1 §5, D3 §3.3).
+const RESERVED_NODE_IDS = ['research-base', 'design-base']
 
 // ── Leitura tolerante do journal (§7: linha parcial fica guardada até completar) ──
 export function readJournalTolerant(journalPath) {
@@ -52,20 +57,22 @@ export function readJournalTolerant(journalPath) {
 
 // ── normalize() (graph-eng.js:314-349), como função pura e testável ──
 export function normalizeNodes(list, opts = {}) {
-  const { prefix = '', round = 1, existingIds = new Set(), readOnly = false } = opts
+  const { prefix = '', round = 1, existingIds = new Set(), readOnly = false, reserved = [] } = opts
   const idMap = new Map()
   const taken = new Set(existingIds)
   const out = []
   for (const raw of list || []) {
     const rawId = String(raw.id || '')
     let id = prefix + (rawId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'n' + (out.length + 1))
+    // [DR-6] reserva condicional: só renomeia quando o planner (não o motor) usou o id (D1 §5 regra 2).
+    if (prefix === '' && reserved.includes(id) && raw.injected !== true) id += '_'
     while (taken.has(id)) id += '_'
     taken.add(id)
     idMap.set(rawId, id)
     const rawKind = ['research', 'design', 'implement'].includes(raw.kind) ? raw.kind : 'research'
     let kind = rawKind
     if (kind === 'implement' && readOnly) kind = 'design'
-    out.push({
+    out.push(Object.assign({
       id,
       kind,
       rawKind,
@@ -74,7 +81,7 @@ export function normalizeNodes(list, opts = {}) {
       rawDeps: (raw.deps || []).map(String),
       risk: ['low', 'medium', 'high'].includes(raw.risk) ? raw.risk : 'medium',
       explore: !!raw.explore && kind === 'design',
-    })
+    }, raw.injected === true ? { injected: true, reason: String(raw.reason || '') } : {}))
   }
   for (const n of out) {
     n.deps = []
@@ -96,6 +103,110 @@ export function estimateAgents(nodes, preset, opts = {}) {
     estimate += (n.explore ? 3 : 1) + (n.kind === 'implement' || !P.defer.includes(n.risk) ? 1 : 0)
   }
   return estimate
+}
+
+function ancestorsOfNode(n, byId) {
+  const seen = new Set()
+  const stack = [...((n && n.deps) || [])]
+  while (stack.length) {
+    const id = stack.pop()
+    if (seen.has(id)) continue
+    seen.add(id)
+    const m = byId.get(id)
+    if (m) stack.push(...(m.deps || []))
+  }
+  return seen
+}
+
+// Espelha workflows/graph-eng.js `applyRails` (D1 §5), como função pura sobre uma lista de nós já
+// normalizados do round 1. Só o motor decide de fato (esta cópia serve para desenhar o grafo antes
+// de o nó injetado rodar); test/model.test.mjs prova a paridade contra o harness do motor (D3 §10.7).
+export function applyRails(nodes, mode) {
+  const out = nodes.map((n) => ({ ...n, deps: [...(n.deps || [])] }))
+  const byId = new Map(out.map((n) => [n.id, n]))
+  const round = out.length ? out[0].round : 1
+  const rails = []
+  const railLog = (rule, node, action, detail) => rails.push({ rule, node, action, detail })
+
+  // R1: nenhum nó research -> injeta research-base na raiz
+  if (!out.some((n) => n.kind === 'research')) {
+    let base = byId.get('research-base')
+    if (!base) {
+      const reason = 'research-base injetado na raiz (plano sem pesquisa)'
+      base = { id: 'research-base', kind: 'research', rawKind: 'research', round, title: 'pesquisa de base (injetada)', deps: [], risk: 'medium', explore: false, injected: true, reason }
+      out.push(base)
+      byId.set(base.id, base)
+      railLog('R1', base.id, 'inject', reason)
+    }
+  }
+
+  // R3: implement/architecture sem nó design -> injeta design-base, depende de toda pesquisa
+  if ((mode === 'implement' || mode === 'architecture') && !out.some((n) => n.kind === 'design')) {
+    const researchIds = out.filter((n) => n.kind === 'research').map((n) => n.id)
+    let base = byId.get('design-base')
+    if (!base) {
+      const reason = `design-base injetado, depende de ${researchIds.join(', ') || '(nada)'} (plano sem design)`
+      base = { id: 'design-base', kind: 'design', rawKind: 'design', round, title: 'design de base (injetado)', deps: [...researchIds], risk: 'medium', explore: false, injected: true, reason }
+      out.push(base)
+      byId.set(base.id, base)
+      railLog('R3', base.id, 'inject', reason)
+    } else {
+      const add = researchIds.filter((id) => !base.deps.includes(id))
+      if (add.length) base.deps.push(...add)
+    }
+  }
+
+  // R5: nó research dependendo de design/implement -> a dep cai
+  for (const n of out) {
+    if (n.kind !== 'research') continue
+    const bad = n.deps.filter((d) => { const m = byId.get(d); return m && m.kind !== 'research' })
+    if (bad.length) {
+      n.deps = n.deps.filter((d) => !bad.includes(d))
+      railLog('R5', n.id, 'drop-dep', `${n.id} deixou de depender de ${bad.join(', ')} (pesquisa não depende de design/implementação)`)
+    }
+  }
+
+  // R6: nó design dependendo de implement -> a dep cai (evita deadlock do estágio 1)
+  for (const n of out) {
+    if (n.kind !== 'design') continue
+    const bad = n.deps.filter((d) => { const m = byId.get(d); return m && m.kind === 'implement' })
+    if (bad.length) {
+      n.deps = n.deps.filter((d) => !bad.includes(d))
+      railLog('R6', n.id, 'drop-dep', `${n.id} deixou de depender de ${bad.join(', ')} (design roda antes da implementação)`)
+    }
+  }
+
+  // R2: nó design sem research entre os ancestrais -> ganha dep em toda pesquisa do round
+  const researchIds2 = out.filter((n) => n.kind === 'research').map((n) => n.id)
+  if (researchIds2.length) {
+    for (const n of out) {
+      if (n.kind !== 'design') continue
+      const anc = ancestorsOfNode(n, byId)
+      if (researchIds2.some((r) => anc.has(r))) continue
+      const add = researchIds2.filter((r) => r !== n.id && !n.deps.includes(r))
+      if (add.length) {
+        n.deps.push(...add)
+        railLog('R2', n.id, 'add-dep', `${n.id} passou a depender de ${add.join(', ')} (design sem pesquisa entre os ancestrais)`)
+      }
+    }
+  }
+
+  // R4: nó implement sem design entre os ancestrais -> ganha dep em todo design do round
+  const designIds = out.filter((n) => n.kind === 'design').map((n) => n.id)
+  if (designIds.length) {
+    for (const n of out) {
+      if (n.kind !== 'implement') continue
+      const anc = ancestorsOfNode(n, byId)
+      if (designIds.some((d) => anc.has(d))) continue
+      const add = designIds.filter((d) => d !== n.id && !n.deps.includes(d))
+      if (add.length) {
+        n.deps.push(...add)
+        railLog('R4', n.id, 'add-dep', `${n.id} passou a depender de ${add.join(', ')} (implementação sem design entre os ancestrais)`)
+      }
+    }
+  }
+
+  return { nodes: out, rails }
 }
 
 function findSiblingPlanOnly(runDir) {
@@ -140,7 +251,7 @@ function findSiblingPlanOnly(runDir) {
 
 // ── Modelo (§6.1) a partir de um journal já achado ──
 export async function buildModel(opts = {}) {
-  const { runDir, siblingPlanOnlyDir, economy, mode, cutLine } = opts
+  const { runDir, siblingPlanOnlyDir, economy, mode, cutLine, effort, ceiling } = opts
   const journalPath = path.join(runDir, 'journal.jsonl')
   let stat
   try {
@@ -167,9 +278,43 @@ export async function buildModel(opts = {}) {
   const P = PRESETS[economy] || null
   const READ_ONLY = mode === 'research' || mode === 'review'
 
+  // ── Formato novo (D3 §2): esqueleto de fases, effort/ceiling, revisão do design, polidores.
+  // `NEW` só liga quando o journal já usa o schema novo (rótulos novos, ou `effort` no plano cru,
+  // ou a flag/opt `effort`). Sem nenhum dos três, o caminho inteiro segue byte a byte o de hoje.
+  const NEW_LABEL_RE = /^(design-review|design-repair|polish)(:|$)/
+  let NEW = labels.some((l) => NEW_LABEL_RE.test(l)) || effort != null
+  const LEVELS = ['low', 'medium', 'high', 'max']
+  const RMODES = ['implement', 'architecture', 'research', 'review']
+  let LEVEL = null
+  let RMODE = null
+  let HAS_DR = false
+  function resolveModeFallback(rawNodes) {
+    const list = rawNodes || []
+    if (list.some((n) => n.kind === 'implement')) return 'implement'
+    if (list.some((n) => n.kind === 'design')) return 'architecture'
+    return 'research'
+  }
+  // Precedência D1 §3.2/"plan gate": o valor fixado nos args/flags vence o do plano cru.
+  function applyPlanEffortAndMode(res) {
+    if (res && res.effort && typeof res.effort.level === 'string') NEW = true
+    if (!NEW) return
+    LEVEL = LEVELS.includes(effort) ? effort : LEVELS.includes(res && res.effort && res.effort.level) ? res.effort.level : null
+    RMODE = RMODES.includes(mode) ? mode : RMODES.includes(res && res.mode) ? res.mode : resolveModeFallback(res && res.nodes)
+    HAS_DR = RMODE === 'implement' || RMODE === 'architecture'
+  }
+  const RAILS_OUT = []
+  function applyRoundOneRails(list) {
+    if (!NEW) return list
+    const { nodes: withRails, rails: rr } = applyRails(list, RMODE)
+    for (const n of withRails) NODES.set(n.id, n)
+    RAILS_OUT.push(...rr)
+    return withRails
+  }
+
   const NODES = new Map()
   function doNormalize(list, o) {
-    const out = normalizeNodes(list, { ...o, existingIds: new Set(NODES.keys()), readOnly: READ_ONLY })
+    const ro = NEW ? RMODE !== 'implement' : READ_ONLY
+    const out = normalizeNodes(list, { ...o, existingIds: new Set(NODES.keys()), readOnly: ro, reserved: NEW ? RESERVED_NODE_IDS : undefined })
     out.forEach((n) => NODES.set(n.id, n))
     return out
   }
@@ -187,7 +332,9 @@ export async function buildModel(opts = {}) {
       const hasWork = sibEvents.some((e) => e.type === 'started' && e.label && e.label.startsWith('work:'))
       if (res && !hasWork) {
         planRes = res.result
-        doNormalize(planRes.nodes, { round: 1 })
+        applyPlanEffortAndMode(planRes)
+        const first = doNormalize(planRes.nodes, { round: 1 })
+        applyRoundOneRails(first)
         warns.push(`plano lido da run planOnly ${path.basename(sibDir)}`)
       }
     }
@@ -207,6 +354,16 @@ export async function buildModel(opts = {}) {
   let critic = null
   let synth = null
   let round = 1
+
+  // ── Revisão do design e polidores (§3.2, §4.1, §4.3) ──
+  let drStarted = false
+  let drOpenCount = 0
+  let designRepairOpenCount = 0
+  let drAttempts = 0
+  let drLastPass = null
+  let drLastBlocking = []
+  let drLastFailed = false
+  const polishState = new Map() // k -> { state }
 
   for (const e of events.slice(cut)) {
     if (e.type === 'started') {
@@ -230,12 +387,23 @@ export async function buildModel(opts = {}) {
         NODES.set(id, { id, kind: '?', rawKind: '?', risk: 'medium', round: 1, title: '(sem plano no journal)', deps: [], explore: false, orphan: true })
         orphans.push(id)
       }
-      if (id && k !== 'critic') {
+      if (id && !PSEUDO_LABELS.has(k)) {
         if (!per.has(id)) per.set(id, [])
         per.get(id).push(s)
       }
       if (k === 'critic') critic = { r: Number(id.slice(1)), running: true }
       if (k === 'synth') synth = 'rodando'
+      if (k === 'design-review') {
+        drStarted = true
+        drOpenCount++
+        const attempt = Number(String(id).replace(/^r/, '')) || 1
+        drAttempts = Math.max(drAttempts, attempt)
+      }
+      if (k === 'design-repair') designRepairOpenCount++
+      if (k === 'polish') {
+        const kk = Number(id)
+        if (Number.isFinite(kk)) polishState.set(kk, { state: 'trabalhando' })
+      }
     } else if (e.type === 'result' || e.type === 'failed') {
       const s = byKey.get(e.key)
       if (!s) continue
@@ -245,7 +413,9 @@ export async function buildModel(opts = {}) {
       s.result = e.result
       if (s.label === 'plan' && e.result && Array.isArray(e.result.nodes)) {
         planRes = e.result
-        doNormalize(e.result.nodes, { round: 1 })
+        applyPlanEffortAndMode(planRes)
+        const first = doNormalize(e.result.nodes, { round: 1 })
+        applyRoundOneRails(first)
       }
       if (s.label && s.label.startsWith('critic:')) {
         const r = Number(s.label.split(':')[1].slice(1))
@@ -257,6 +427,20 @@ export async function buildModel(opts = {}) {
         }
       }
       if (s.label === 'synth') synth = 'pronto'
+      if (s.label && s.label.startsWith('design-review:')) {
+        drOpenCount--
+        const attempt = Number(s.label.split(':')[1].replace(/^r/, '')) || 1
+        drAttempts = Math.max(drAttempts, attempt)
+        const r = e.result || {}
+        drLastFailed = e.type === 'failed'
+        drLastPass = drLastFailed ? false : !!r.pass
+        drLastBlocking = (r.blocking || []).map((b) => String((b && b.node) || b))
+      }
+      if (s.label && s.label.startsWith('design-repair:')) designRepairOpenCount--
+      if (s.label && s.label.startsWith('polish:')) {
+        const kk = Number(s.label.split(':')[1])
+        if (Number.isFinite(kk)) polishState.set(kk, { state: e.type === 'failed' ? 'erro' : 'pronto' })
+      }
     }
   }
 
@@ -265,11 +449,26 @@ export async function buildModel(opts = {}) {
   if (!planStarted && !planRes && NODES.size === 0) warns.push('sem plano no journal nem run planOnly irmã')
 
   const ended = synth !== null
+
+  // Estado da revisão do design (§4.1): o primeiro caso que se aplicar, na ordem da lista.
+  function computeDesignReviewState() {
+    if (drOpenCount > 0) return { state: 'verificando', attempts: drAttempts, pass: drLastPass, blocking: drLastBlocking }
+    if (designRepairOpenCount > 0) return { state: 'reparando', attempts: drAttempts, pass: drLastPass, blocking: drLastBlocking }
+    if (!drStarted) return { state: 'aguardando', attempts: 0, pass: null, blocking: [] }
+    if (drLastPass && !drLastFailed && !drLastBlocking.length) return { state: 'pronto', attempts: drAttempts, pass: true, blocking: [] }
+    return { state: 'falhou', attempts: drAttempts, pass: drLastPass, blocking: drLastBlocking }
+  }
+  const designReviewModel = NEW ? computeDesignReviewState() : null
+
   const START = new Map()
   for (const [id, xs] of per) START.set(id, xs[0].seq)
 
   function closed(id) {
     if (ended) return true
+    if (NEW && HAS_DR && designReviewModel && designReviewModel.state !== 'aguardando') {
+      const n0 = NODES.get(id)
+      if (n0 && n0.round === 1 && n0.kind !== 'implement') return true
+    }
     for (const n of NODES.values()) if (n.deps && n.deps.includes(id) && START.has(n.id)) return true
     const n = NODES.get(id)
     return !!(critic && n && critic.r >= (n.round || 1))
@@ -296,7 +495,7 @@ export async function buildModel(opts = {}) {
     if (open.length) {
       const k = kindOf(open[open.length - 1].label)
       if (k === 'verify' || k === 'escalate') return 'verificando'
-      if (k === 'repair') return 'reparando'
+      if (k === 'repair' || k === 'design-repair') return 'reparando'
       return 'trabalhando'
     }
     const last = xs[xs.length - 1]
@@ -306,7 +505,10 @@ export async function buildModel(opts = {}) {
       if (lk === 'work' || lk === 'judge' || (drafts.length === 2 && drafts.every((x) => x.failed))) return 'bloqueado'
       return 'erro'
     }
-    const deferred = !!(P && n && n.kind !== 'implement' && P.defer.includes(n.risk))
+    // Adiamento (§4.2): numa run nova, LEVEL substitui o preset --economy (P.defer).
+    const deferred = NEW && LEVEL
+      ? !!(n && n.kind !== 'implement' && n.round === 1 && (LEVEL === 'low' || LEVEL === 'medium'))
+      : !!(P && n && n.kind !== 'implement' && P.defer.includes(n.risk))
     let verdict = null
     let pendingAfter = null
     let verifiedEver = false
@@ -326,24 +528,24 @@ export async function buildModel(opts = {}) {
         pendingAfter = 'draft'
         continue
       }
-      if (!asWork && k !== 'repair') continue
+      if (!asWork && k !== 'repair' && k !== 'design-repair') continue
       if (asWork && r.status === 'blocked') return 'bloqueado'
       const red = (r.checks || []).some((c) => c && c.ok === false)
-      const gated = k === 'repair' || (P ? !deferred : x !== last)
+      const gated = k === 'repair' || k === 'design-repair' || (NEW && LEVEL ? !deferred : P ? !deferred : x !== last)
       if (red && gated) {
         verdict = { pass: false, via: 'check' }
         pendingAfter = null
         verifiedEver = true
         continue
       }
-      pendingAfter = k === 'repair' ? 'repair' : 'work'
+      pendingAfter = k === 'repair' || k === 'design-repair' ? 'repair' : 'work'
       verdict = null
     }
     if (pendingAfter === 'draft') return closed(id) ? 'bloqueado' : 'trabalhando'
     if (verdict) return verdict.pass ? 'pronto' : verdict.via === 'check' ? 'falhou-check' : 'falhou'
     if (pendingAfter === 'repair') return closed(id) ? 'sem-reverificacao' : 'reparando'
-    if (!verifiedEver && (deferred || closed(id) || !P)) {
-      const flagsUnknown = !P || (mode === undefined && n && n.rawKind === 'implement')
+    if (!verifiedEver && (deferred || closed(id) || (NEW && LEVEL ? false : !P))) {
+      const flagsUnknown = NEW && LEVEL ? false : !P || (mode === undefined && n && n.rawKind === 'implement')
       if (flagsUnknown) {
         warns.push(`${id}: deferido ou reprovado? passe --economy e --mode`)
         return 'pronto-sem-verif?'
@@ -354,11 +556,22 @@ export async function buildModel(opts = {}) {
   }
 
   const nodes = [...NODES.values()].map((n) => {
-    const st = state(n.id)
+    let st = state(n.id)
     const xs = per.get(n.id) || []
-    const reps = xs.filter((x) => kindOf(x.label) === 'repair').length
+    const reps = xs.filter((x) => kindOf(x.label) === 'repair' || kindOf(x.label) === 'design-repair').length
+    // Revisão do design verificou o nó não-implement do round 1: sobrescreve o veredito do próprio
+    // nó (§4.2). "falhou" vale mesmo sobre um verify próprio que passou; "pronto" só troca estados
+    // sem verificação, porque um verify próprio que já reprovou continua valendo.
+    if (NEW && HAS_DR && designReviewModel && n.round === 1 && n.kind !== 'implement') {
+      if (designReviewModel.state === 'falhou' && ended && designReviewModel.blocking.includes(n.id)) st = 'falhou'
+      else if (designReviewModel.state === 'pronto' && ['pronto-sem-verif', 'pronto-sem-verif?', 'sem-reverificacao'].includes(st)) st = 'pronto'
+    }
     const out = { id: n.id, kind: n.kind, risk: n.risk, round: n.round || 1, title: n.title, deps: n.deps || [], explore: !!n.explore, state: st, reps, closed: closed(n.id) }
     if (n.orphan) out.orphan = true
+    if (n.injected) {
+      out.injected = true
+      out.reason = n.reason || ''
+    }
     if (ACTIVE_STATES.has(st)) {
       const open = xs.filter((x) => !x.done)
       const last = open[open.length - 1]
@@ -382,7 +595,21 @@ export async function buildModel(opts = {}) {
     spent,
   }
 
-  if (P) {
+  if (NEW) {
+    model.effort = { level: LEVEL, why: (planRes && planRes.effort && planRes.effort.why) || undefined, mode: RMODE }
+    model.rails = RAILS_OUT
+    model.designReview = HAS_DR ? designReviewModel : null
+    model.polish = [...polishState.entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => ({ k, state: v.state }))
+  }
+
+  if (NEW && LEVEL) {
+    const first = nodes.filter((n) => n.round === 1 && !n.orphan)
+    model.estimate = estimateTarget(first, { mode: RMODE, level: LEVEL })
+    if (typeof ceiling === 'number' && Number.isFinite(ceiling)) {
+      model.ceiling = ceiling
+      model.target = targetFor(LEVEL, ceiling, RMODE)
+    }
+  } else if (P) {
     const first = nodes.filter((n) => n.round === 1 && !n.orphan)
     const trivial = !!(planRes && planRes.complexity === 'trivial' && first.length === 1)
     model.estimate = estimateAgents(first, economy, { spent: 1, trivial })
@@ -712,7 +939,11 @@ export function graphText(model, opts = {}) {
   const out = []
   const doneCount = model.nodes.filter((n) => n.state.startsWith('pronto')).length
   let header = `graph-eng · ${model.wf} · round ${model.round} · ${doneCount}/${model.nodes.length} prontos · agentes ${model.spent}`
-  if (model.estimate != null) header += ` (estimativa ~${model.estimate}, teto ${model.ceiling})`
+  if (model.estimate != null && model.ceiling != null) {
+    header += model.target != null
+      ? ` (estimativa ~${model.estimate}, alvo ${model.target}, teto ${model.ceiling})`
+      : ` (estimativa ~${model.estimate}, teto ${model.ceiling})`
+  }
   if (model.status === 'parada?') header += ` · parada? (último evento há ${Math.max(1, Math.round(model.idleSec / 60))} min)`
   out.push(cutCols(header, cols))
   for (const w of model.warns) out.push(cutCols('aviso: ' + w, cols))
@@ -720,6 +951,7 @@ export function graphText(model, opts = {}) {
 
   const layers = layoutLayers(model.nodes)
   const hasOrphan = model.nodes.some((n) => n.orphan)
+  const hasInjected = model.nodes.some((n) => n.injected)
   const full = !hasOrphan && layers.every((L) => L.length * (BOX_W + 2) + Math.max(0, L.length - 1) * GAP <= cols)
   if (full && layers.length) {
     out.push(...renderBoxLayers(model, layers, color))
@@ -727,14 +959,27 @@ export function graphText(model, opts = {}) {
     out.push(...renderCompact(model, layers, color, rows, cols))
   }
   out.push('')
+  if (model.designReview) {
+    const dr = model.designReview
+    let drLine = `revisão do design: ${dr.state}`
+    if (dr.attempts) drLine += ` r${dr.attempts}`
+    if (dr.state === 'falhou' && dr.blocking.length) drLine += ` · bloqueios: ${dr.blocking.join(', ')}`
+    out.push(cutCols(drLine, cols))
+  }
   const criticLine = model.critic
     ? model.critic.running
       ? `critic r${model.critic.r} rodando`
       : `critic r${model.critic.r}: ${model.critic.done ? 'critérios atendidos' : model.critic.gaps + ' gap(s) → round ' + (model.critic.r + 1)}`
     : 'critic: aguardando'
-  out.push(cutCols(`${criticLine} · synth: ${model.synth}`, cols))
+  let synthLine = `${criticLine} · synth: ${model.synth}`
+  if (model.polish && model.polish.length) {
+    const done = model.polish.filter((p) => p.state === 'pronto').length
+    synthLine += ` · polimento ${done}/${model.polish.length}`
+  }
+  out.push(cutCols(synthLine, cols))
   out.push(cutCols('legenda: [~] trabalhando  [?] verificando  [R] reparando N  [r] reparado, sem reverificação  [+] pronto', cols))
   out.push(cutCols('         [o] pronto s/ verif.  [x] falhou / falhou (check) / bloqueado  [!] erro  [ ] aguardando  [-] pulado', cols))
+  if (hasInjected) out.push(cutCols('         (injetado) = nó que o motor acrescentou ao plano (trilho)', cols))
   return out.join('\n')
 }
 
@@ -867,15 +1112,22 @@ function agentData(runDir, st, events, n) {
   }
 }
 
-const PSEUDO_KINDS = new Set(['plan', 'critic', 'synth'])
+const PSEUDO_KINDS = new Set(['plan', 'critic', 'synth', 'design-review', 'polish'])
+// Aceita `polish:<k>` (rótulo do journal) e `polish-<k>` (id da URL do painel, D3 §7): a API do
+// painel (I2) evita dois-pontos no id do pseudo-nó, e aqui as duas grafias caem no mesmo agente.
+const POLISH_ID_RE = /^polish[-:](\d{1,3})$/
 
 // Todos os agentes de um nó, na ordem do journal. `id` é o id do nó (`I2`, `r2-G1`) ou um pseudo-nó
-// (`plan`, `critic` — todas as rodadas —, `synth`).
+// (`plan`, `critic` — todas as rodadas —, `synth`, `design-review` — todas as tentativas —, `polish:<k>`
+// ou `polish-<k>` — só o próprio polidor).
 export function agentsOfNode(runDir, id, n = 20) {
   const { events } = readJournalTolerant(path.join(runDir, 'journal.jsonl'))
   const started = events.filter((e) => e.type === 'started' && e.label)
+  const pm = POLISH_ID_RE.exec(id)
+  const want = pm ? 'polish:' + Number(pm[1]) : null
   const mine = started.filter((e) => {
     const [k, rest] = e.label.split(':')
+    if (want) return e.label === want
     return PSEUDO_KINDS.has(id) ? k === id : rest === id
   })
   return mine.map((st) => agentData(runDir, st, events, n))
@@ -933,14 +1185,15 @@ function summarizeActive(model) {
 // quando deve sair sozinho (0, após TERMINADO); nunca resolve fora disso — a run interrompida
 // (§7 "não sai sozinho") depende de o processo ser encerrado de fora (SIGINT/kill).
 export async function runEventsMode(runDir, opts = {}) {
-  const { economy, modeFlag, explicitRun } = opts
+  const { economy, modeFlag, effort, ceiling, explicitRun } = opts
   const journalPath = path.join(runDir, 'journal.jsonl')
   const emittedFinal = new Map()
+  const emittedDR = new Map()
   let planEmitted = false
   let paradaEmitted = false
   let synthEmitted = false
 
-  const snap = (cutLine) => buildModel({ runDir, economy, mode: modeFlag, cutLine })
+  const snap = (cutLine) => buildModel({ runDir, economy, mode: modeFlag, effort, ceiling, cutLine })
 
   function checkParada(model) {
     if (paradaEmitted || model.status !== 'parada?') return
@@ -953,8 +1206,13 @@ export async function runEventsMode(runDir, opts = {}) {
     if (!planEmitted && count) {
       planEmitted = true
       let text = `plano: ${count} nó(s)`
-      if (curModel.estimate != null) text += `, estimativa ~${curModel.estimate}, teto ${curModel.ceiling}`
+      if (curModel.estimate != null && curModel.ceiling != null) {
+        text += curModel.target != null
+          ? `, estimativa ~${curModel.estimate}, alvo ${curModel.target}, teto ${curModel.ceiling}`
+          : `, estimativa ~${curModel.estimate}, teto ${curModel.ceiling}`
+      }
       console.log(eventLine(curModel, text))
+      for (const r of curModel.rails || []) console.log(eventLine(curModel, `trilho ${r.rule}: ${r.detail}`))
     }
     const prevById = new Map((prevModel ? prevModel.nodes : []).map((n) => [n.id, n]))
     for (const n of curModel.nodes) {
@@ -965,6 +1223,19 @@ export async function runEventsMode(runDir, opts = {}) {
       if (isFinal && emittedFinal.get(n.id) !== n.state) {
         emittedFinal.set(n.id, n.state)
         console.log(eventLine(curModel, `${n.id} ${stateLabel(n)[0]}`))
+      }
+    }
+    if (curModel.designReview) {
+      const dr = curModel.designReview
+      if (dr.attempts > 0 && dr.state !== 'verificando' && dr.state !== 'reparando') {
+        const key = `design-review:r${dr.attempts}`
+        if (!emittedDR.has(key)) {
+          emittedDR.set(key, true)
+          const text = dr.state === 'pronto'
+            ? `revisão do design r${dr.attempts}: aprovada`
+            : `revisão do design r${dr.attempts}: reprovada (${dr.blocking.length} bloqueio(s): ${dr.blocking.join(', ')}) → reparo`
+          console.log(eventLine(curModel, text))
+        }
       }
     }
     if (curModel.critic && !curModel.critic.running) {
@@ -1038,7 +1309,7 @@ export async function runEventsMode(runDir, opts = {}) {
 
 // ── Modo `live` (§6.6) ──
 export async function runLive(runDir, opts = {}) {
-  const { economy, modeFlag, stdout = process.stdout, stdin = process.stdin, intervalMs = 500, maxTicks, signal, colsFixed, rowsFixed, onModel, footer } = opts
+  const { economy, modeFlag, effort, ceiling, stdout = process.stdout, stdin = process.stdin, intervalMs = 500, maxTicks, signal, colsFixed, rowsFixed, onModel, footer } = opts
   const isTTY = !!stdout.isTTY
   let lastText = null
   let stopped = false
@@ -1102,7 +1373,7 @@ export async function runLive(runDir, opts = {}) {
       let body
       let idleSec = 0
       try {
-        const model = await buildModel({ runDir, economy, mode: modeFlag })
+        const model = await buildModel({ runDir, economy, mode: modeFlag, effort, ceiling })
         idleSec = model.idleSec
         body = graphText(model, { cols: cols(), rows: rows(), color: isTTY }) + '\n' + buildNowBlock(model, runDir)
         if (onModel) onModel(model)
@@ -1131,7 +1402,7 @@ export async function runLive(runDir, opts = {}) {
 }
 
 // ── CLI ──
-const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n', '--port'])
+const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n', '--port', '--ceiling', '--effort'])
 
 function parseArgs(rest) {
   const opts = {}
@@ -1165,6 +1436,8 @@ async function main() {
   const waitMs = Number(opts['--wait-ms'] ?? (mode === 'events' ? 60000 : 5000))
   const economy = opts['--economy']
   const modeFlag = opts['--mode']
+  const effortFlag = opts['--effort']
+  const ceilingFlag = opts['--ceiling'] != null ? Number(opts['--ceiling']) : undefined
   const cols = Number(opts['--cols'] || process.stdout.columns || 100)
   const rows = Number(opts['--rows'] || process.stdout.rows || 40)
 
@@ -1202,7 +1475,7 @@ async function main() {
   }
 
   if (mode === 'snapshot') {
-    const model = await buildModel({ runDir, economy, mode: modeFlag })
+    const model = await buildModel({ runDir, economy, mode: modeFlag, effort: effortFlag, ceiling: ceilingFlag })
     const lines = [graphText(model, { cols, rows, color }), buildNowBlock(model, runDir)]
     if (terminated) lines.push(`aviso: sem --run, usando ${model.wf} (terminada)`)
     console.log(lines.join('\n'))
@@ -1218,7 +1491,7 @@ async function main() {
     console.log(view.text)
     process.exit(0)
   } else if (mode === 'events') {
-    const code = await runEventsMode(runDir, { economy, modeFlag, explicitRun: !!opts['--run'] })
+    const code = await runEventsMode(runDir, { economy, modeFlag, effort: effortFlag, ceiling: ceilingFlag, explicitRun: !!opts['--run'] })
     process.exit(code)
   } else if (mode === 'live') {
     // `--svg` virou alias do painel web: garante o painel (instância única) e segue como `live`.
@@ -1240,6 +1513,8 @@ async function main() {
     await runLive(runDir, {
       economy,
       modeFlag,
+      effort: effortFlag,
+      ceiling: ceilingFlag,
       colsFixed: opts['--cols'] ? cols : undefined,
       rowsFixed: opts['--rows'] ? rows : undefined,
       signal: controller.signal,

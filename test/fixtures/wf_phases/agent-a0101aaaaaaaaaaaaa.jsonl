@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"# Graph run wf_cccc0000-alfa-fases\nTask: Fixture sintética do esqueleto de fases.\nMode: implement\nEconomy: balanced\nEffort: auto\nCeiling: 24\nTarget: auto 8-24\nRun dir (paper trail): test/fixtures/wf_phases"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Plano pronto."}]}}
