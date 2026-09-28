@@ -24,9 +24,12 @@
 //                              com uma .dot por nó, data-variant/data-tone).
 //   #live                      data-state connecting|on|off. #conn: aviso de conexão (vazio quando conectado).
 //   #empty-msg                 estado vazio.
+//   #settings[data-state]      closed|open|closing — modal de engrenagem (card flutuante central). Lógica em
+//                              config-modal.mjs (initSettings), chamada uma vez abaixo; o switch de tema mora lá.
 // A geometria vem de graph-layout.mjs (LAYOUT, placeGraph).
 
 import { STATE_TEXT, variantOf, hasRun, buildGraph, layoutGraph, placeGraph, laneTitle, nodeLabel, LAYOUT } from './graph-layout.mjs'
+import { initSettings } from './config-modal.mjs'
 
 // ── DOM ──
 const $ = (id) => document.getElementById(id)
@@ -39,8 +42,6 @@ const els = {
   sidebarToggle: $('sidebar-toggle'),
   groupActive: $('group-active'),
   groupDone: $('group-done'),
-  themeSwitch: $('theme-switch'),
-  themeLabel: $('theme-label'),
   header: $('run-header'),
   emptyMsg: $('empty-msg'),
   conn: $('conn'),
@@ -132,6 +133,9 @@ function renderGraph(model) {
 
   const byId = new Map(graph.V.map((v) => [v.id, v]))
   const maxRound = Math.max(1, ...graph.V.map((v) => v.round || 1))
+  // o contorno tracejado do nó injetado pelos trilhos só entra na legenda quando a run tem um
+  const legendInjected = document.getElementById('legend-injected')
+  if (legendInjected) legendInjected.hidden = !graph.V.some((v) => v.injected)
   const lanes = place.lanes.map((lane) => {
     const vs = lane.ids.map((id) => byId.get(id))
     const running = vs.some((v) => variantOf(v.state) === 'running')
@@ -197,7 +201,7 @@ function renderGraph(model) {
       setText(b.lastChild, nodeLabel(v))
       b.title = full
       b.setAttribute('aria-label', `${full}, ${STATE_TEXT[v.state] || v.state}`)
-      setData(b, { id: v.id, kind: v.kind, variant: variantOf(v.state), state: v.state, round: v.round, tone: toneOf(v.round), selected: v.id === openNodeId })
+      setData(b, { id: v.id, kind: v.kind, variant: variantOf(v.state), state: v.state, round: v.round, tone: toneOf(v.round), selected: v.id === openNodeId, injected: v.injected ? '1' : '' })
     },
   )
 
@@ -287,19 +291,8 @@ els.railClose.addEventListener('click', () => setRailOpen(false))
 els.railOpen.addEventListener('click', () => setRailOpen(true))
 syncRailButtons()
 
-// ── Tema ──
-function syncThemeSwitch() {
-  const dark = window.graphEngTheme ? window.graphEngTheme.get() === 'dark' : false
-  els.themeSwitch.setAttribute('aria-checked', String(dark))
-}
-els.themeSwitch.addEventListener('click', () => {
-  if (!window.graphEngTheme) return
-  window.graphEngTheme.set(window.graphEngTheme.get() === 'dark' ? 'light' : 'dark')
-  syncThemeSwitch()
-})
-// o tema pode mudar sozinho (sistema mudou e não há escolha salva)
-new MutationObserver(syncThemeSwitch).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
-syncThemeSwitch()
+// ── Configurações (modal de engrenagem, com o switch de tema dentro) ──
+initSettings()
 
 // ── Lateral ──
 const runEls = new Map()
@@ -484,8 +477,9 @@ async function openDetail(id) {
 }
 
 async function loadDetail(wf, id) {
-  // pseudo-nó critic:rN usa o endpoint `critic` (todas as rodadas)
-  const apiId = id.startsWith('critic:') ? 'critic' : id
+  // pseudo-nó critic:rN usa o endpoint `critic` (todas as rodadas); polish:<k> usa `polish-<k>`
+  // (a URL não aceita ':')
+  const apiId = id.startsWith('critic:') ? 'critic' : id.startsWith('polish:') ? `polish-${id.slice('polish:'.length)}` : id
   try {
     const res = await fetch(`/api/runs/${encodeURIComponent(wf)}/nodes/${encodeURIComponent(apiId)}`)
     if (!res.ok || openNodeId !== id || wf !== selectedWf) return
@@ -519,6 +513,7 @@ function renderDetailHead(detail, id) {
 function renderDetail(detail) {
   const body = els.drawerBody
   body.replaceChildren()
+  if (detail.injected) body.append(el('p', 'drawer-note', `injetado pelo motor: ${detail.reason || ''}`))
   if (!detail.agents || !detail.agents.length) return body.append(el('p', 'drawer-note', 'Esse nó ainda não começou.'))
 
   for (const agent of [...detail.agents].reverse()) {

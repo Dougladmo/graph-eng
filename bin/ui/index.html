@@ -30,8 +30,10 @@
         </section>
       </div>
       <div id="sidebar-foot">
-        <span id="theme-label">Tema escuro</span>
-        <button id="theme-switch" type="button" role="switch" aria-checked="false" aria-labelledby="theme-label"><span class="knob" aria-hidden="true"></span></button>
+        <button id="settings-open" class="foot-btn" type="button" aria-haspopup="dialog" aria-controls="settings">
+          <svg class="gear" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 3.6v1.9M12 18.5v1.9M20.4 12h-1.9M5.5 12H3.6M17.66 6.34l-1.34 1.34M7.68 16.32l-1.34 1.34M17.66 17.66l-1.34-1.34M7.68 7.68 6.34 6.34" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+          <span>Configurações</span>
+        </button>
       </div>
     </nav>
   </div>
@@ -53,6 +55,7 @@
       <li><span class="dot" data-variant="done" aria-hidden="true"></span>já rodou</li>
       <li><span class="dot" data-variant="fail" aria-hidden="true"></span>falhou</li>
       <li><span class="dot" data-variant="skipped" aria-hidden="true"></span>pulado</li>
+      <li id="legend-injected" hidden><span class="dot" data-variant="done" data-injected="1" aria-hidden="true"></span>posto pelo motor</li>
     </ul>
   </main>
   <aside id="drawer" aria-label="detalhe do nó">
@@ -67,6 +70,70 @@
     <div id="drawer-body"></div>
   </aside>
 </div>
+<dialog id="settings" aria-labelledby="settings-title" aria-describedby="settings-desc" data-state="closed">
+  <form id="settings-form" class="settings-card" novalidate>
+    <div class="drawer-head">
+      <div class="drawer-head-row">
+        <h2 id="settings-title">Configurações</h2>
+        <button id="settings-close" type="button" aria-label="Fechar configurações"><span class="x" aria-hidden="true"></span></button>
+      </div>
+      <p id="settings-desc" class="settings-desc">Valem a partir da próxima run. Flags na chamada ganham do arquivo.</p>
+    </div>
+    <div class="settings-body">
+      <fieldset class="settings-section">
+        <legend>Agentes</legend>
+        <label for="cfg-ceiling">Teto de agentes</label>
+        <input id="cfg-ceiling" name="ceiling" type="number" inputmode="numeric" step="1" min="8" max="100" aria-describedby="cfg-ceiling-hint cfg-ceiling-err">
+        <p id="cfg-ceiling-hint" class="hint">De 8 a 100. Nenhuma run passa disso.</p>
+        <p id="cfg-ceiling-err" class="field-err" hidden></p>
+        <fieldset class="seg" aria-describedby="cfg-effort-help">
+          <legend>Esforço</legend>
+          <label><input type="radio" name="effort" value="manual"><span>Manual</span></label>
+          <label><input type="radio" name="effort" value="auto"><span>Automático</span></label>
+          <label><input type="radio" name="effort" value="low"><span>Baixo</span></label>
+          <label><input type="radio" name="effort" value="medium"><span>Médio</span></label>
+          <label><input type="radio" name="effort" value="high"><span>Alto</span></label>
+          <label><input type="radio" name="effort" value="max"><span>Máximo</span></label>
+        </fieldset>
+        <p id="cfg-effort-help" class="hint"></p>
+        <p id="cfg-preview" class="preview" aria-live="polite"></p>
+        <p id="cfg-table" class="hint mono"></p>
+      </fieldset>
+      <fieldset class="settings-section">
+        <legend>Modelos</legend>
+        <fieldset class="seg">
+          <legend>Economia</legend>
+          <label><input type="radio" name="economy" value="lean"><span>Econômico</span></label>
+          <label><input type="radio" name="economy" value="balanced"><span>Equilibrado</span></label>
+          <label><input type="radio" name="economy" value="max"><span>Máximo</span></label>
+        </fieldset>
+        <p id="cfg-economy-help" class="hint">Só troca o modelo dos agentes; não muda quantos rodam.</p>
+      </fieldset>
+      <fieldset class="settings-section">
+        <legend>Execução</legend>
+        <div class="row"><span id="cfg-plan-gate-label">Sempre pedir aprovação do plano</span>
+          <button id="cfg-plan-gate" class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="cfg-plan-gate-label"><span class="knob" aria-hidden="true"></span></button></div>
+        <label for="cfg-max-rounds">Máximo de rounds da crítica</label>
+        <input id="cfg-max-rounds" name="maxRounds" type="number" inputmode="numeric" step="1" min="1" max="5" aria-describedby="cfg-max-rounds-err">
+        <p id="cfg-max-rounds-err" class="field-err" hidden></p>
+        <label for="cfg-max-repairs">Máximo de reparos por nó</label>
+        <input id="cfg-max-repairs" name="maxRepairs" type="number" inputmode="numeric" step="1" min="1" max="3" aria-describedby="cfg-max-repairs-err">
+        <p id="cfg-max-repairs-err" class="field-err" hidden></p>
+      </fieldset>
+      <fieldset class="settings-section">
+        <legend>Aparência</legend>
+        <div class="row"><span id="theme-label">Tema escuro</span>
+          <button id="theme-switch" class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="theme-label"><span class="knob" aria-hidden="true"></span></button></div>
+        <p class="hint">Fica neste navegador; não vai para o arquivo.</p>
+      </fieldset>
+    </div>
+    <div class="settings-foot">
+      <p id="settings-status" role="status" aria-live="polite"></p>
+      <button id="settings-reset" class="btn-ghost" type="button">Restaurar padrões</button>
+      <button id="settings-save" class="btn-primary" type="submit">Salvar</button>
+    </div>
+  </form>
+</dialog>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -19,11 +19,14 @@ const css = fs.readFileSync(path.join(UI_DIR, 'src', 'style.css'), 'utf8')
 const builtCss = fs.readFileSync(path.join(UI_DIR, 'style.css'), 'utf8')
 const layout = fs.readFileSync(path.join(UI_DIR, 'graph-layout.mjs'), 'utf8')
 const theme = fs.readFileSync(path.join(UI_DIR, 'theme.js'), 'utf8')
+const configModal = fs.readFileSync(path.join(UI_DIR, 'config-modal.mjs'), 'utf8')
+const agentTarget = fs.readFileSync(path.join(UI_DIR, 'agent-target.mjs'), 'utf8')
 const favicon = fs.readFileSync(path.join(UI_DIR, 'favicon.svg'), 'utf8')
+const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'bin', 'ui-server.mjs'), 'utf8')
 const graphHtml = html.slice(html.indexOf('<div id="graph">'), html.indexOf('<ul id="legend">'))
 
-test('app.js, graph-layout.mjs e theme.js não usam innerHTML (sem innerHTML nenhum)', () => {
-  assert.equal(/innerHTML/.test(js + layout + theme), false)
+test('app.js, graph-layout.mjs, theme.js e config-modal.mjs não usam innerHTML (sem innerHTML nenhum)', () => {
+  assert.equal(/innerHTML/.test(js + layout + theme + configModal), false)
 })
 
 test('index.html referencia só arquivos locais: theme.js antes do CSS, app.js como módulo', () => {
@@ -39,7 +42,7 @@ test('index.html referencia só arquivos locais: theme.js antes do CSS, app.js c
 test('nenhuma URL externa (CDN) em bin/ui; fontes servidas pelo próprio painel', () => {
   // O namespace XML do SVG (`http://www.w3.org/2000/svg`) não é uma busca de rede e fica de fora.
   // comentário (o cabeçalho de licença do Tailwind cita o site) não é busca de rede e fica de fora
-  for (const src of [html, js, css, builtCss, layout, theme, favicon]) {
+  for (const src of [html, js, css, builtCss, layout, theme, configModal, agentTarget, favicon]) {
     const withoutSvgNs = src.replaceAll('http://www.w3.org/2000/svg', '').replace(/\/\*[\s\S]*?\*\//g, '')
     assert.equal(/https?:\/\//.test(withoutSvgNs), false)
   }
@@ -51,19 +54,63 @@ test('nenhuma URL externa (CDN) em bin/ui; fontes servidas pelo próprio painel'
 })
 
 test('sem caminho absoluto da máquina em bin/ui', () => {
-  for (const src of [html, js, css, layout, theme]) {
+  for (const src of [html, js, css, layout, theme, configModal, agentTarget]) {
     assert.equal(/\/Users\/|\/Volumes\//.test(src), false)
   }
 })
 
 test('tema claro/escuro: tokens por data-theme, switch acessível, escolha salva e padrão do sistema', () => {
   assert.match(css, /:root\[data-theme='dark'\]\s*\{/)
-  assert.match(html, /id="theme-switch"[^>]*role="switch"[^>]*aria-checked=/)
+  assert.match(html, /id="theme-switch"[^>]*class="switch"[^>]*role="switch"[^>]*aria-checked=/)
   assert.match(theme, /prefers-color-scheme: dark/)
   assert.match(theme, /localStorage\.getItem/)
   // localStorage pode lançar (navegação privada, site bloqueado): leitura e escrita protegidas
   assert.equal((theme.match(/localStorage\./g) || []).length, (theme.match(/try \{\s*(var v = )?localStorage\./g) || []).length)
-  assert.match(js, /aria-checked/)
+  assert.match(configModal, /aria-checked/)
+})
+
+test('modal de engrenagem: botão na lateral, dialog com as quatro seções e tema saiu do rodapé', () => {
+  assert.match(html, /<button id="settings-open"[^>]*aria-haspopup="dialog"[^>]*aria-controls="settings"/)
+  assert.match(html, /<dialog id="settings"[^>]*aria-labelledby="settings-title"[^>]*aria-describedby="settings-desc"/)
+  const dialogOpen = html.indexOf('<dialog id="settings"')
+  const dialogClose = html.indexOf('</dialog>')
+  assert.ok(dialogOpen >= 0 && dialogClose > dialogOpen, 'dialog#settings não encontrado')
+  const dialogHtml = html.slice(dialogOpen, dialogClose)
+  for (const legend of ['Agentes', 'Modelos', 'Execução', 'Aparência']) {
+    assert.ok(dialogHtml.includes(`<legend>${legend}</legend>`), `seção "${legend}" ausente no modal`)
+  }
+  // o switch de tema saiu de #sidebar-foot e mora dentro do dialog
+  const footOpen = html.indexOf('<div id="sidebar-foot">')
+  const footClose = html.indexOf('</div>', footOpen)
+  assert.equal(html.slice(footOpen, footClose).includes('theme-switch'), false, '#theme-switch ainda está em #sidebar-foot')
+  const themeIdx = html.indexOf('id="theme-switch"')
+  assert.ok(themeIdx > dialogOpen && themeIdx < dialogClose, '#theme-switch devia estar dentro do dialog#settings')
+  assert.equal(footClose < dialogOpen, true, '#sidebar-foot devia vir antes do dialog#settings')
+})
+
+test('config-modal.mjs: importa a fórmula, prende o foco, fecha com Esc/animação e mostra a config sem HTML bruto', () => {
+  assert.match(configModal, /from '\.\/agent-target\.mjs'/)
+  assert.match(configModal, /'cancel'/)
+  assert.match(configModal, /'Tab'/)
+  assert.match(configModal, /showModal/)
+  assert.match(configModal, /\.focus\(/)
+  assert.match(configModal, /aria-checked/)
+})
+
+test('app.js não referencia mais o switch de tema direto; a lógica mora no modal', () => {
+  assert.equal(/theme-switch/.test(js), false)
+  assert.match(js, /initSettings/)
+  assert.match(js, /from '\.\/config-modal\.mjs'/)
+})
+
+test('bin/ui/style.css (gerado) prova que o css:build rodou depois do modal', () => {
+  assert.match(builtCss, /#settings\b/)
+  assert.match(builtCss, /--scrim/)
+})
+
+test('/config-modal.mjs está no STATIC do servidor e o arquivo existe em bin/ui/', () => {
+  assert.match(serverSrc, /'\/config-modal\.mjs'/)
+  assert.ok(fs.existsSync(path.join(UI_DIR, 'config-modal.mjs')))
 })
 
 test('lateral e gaveta são cards que abrem e fecham com transição (sem display: none, que corta a saída)', () => {
@@ -144,6 +191,23 @@ test('bin/ui/style.css (gerado) está em dia com bin/ui/src/style.css', { skip: 
   const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ge-css-')), 'style.css')
   execFileSync(path.join(root, 'node_modules', '.bin', 'tailwindcss'), ['-i', 'bin/ui/src/style.css', '-o', out], { cwd: root, stdio: 'pipe' })
   assert.equal(fs.readFileSync(out, 'utf8'), builtCss, 'rode npm run css:build e versione bin/ui/style.css')
+})
+
+test('loadDetail mapeia polish:<k> para o id da API polish-<k> (como critic: → critic)', () => {
+  assert.match(js, /id\.startsWith\('polish:'\)\s*\?\s*`polish-\$\{id\.slice\('polish:'\.length\)\}`/)
+})
+
+test('nó injetado: setData leva injected e a gaveta mostra o motivo', () => {
+  assert.match(js, /injected: v\.injected \? '1' : ''/)
+  assert.match(js, /injetado pelo motor: \$\{detail\.reason \|\| ''\}/)
+})
+
+test('style.css: nó injetado tem contorno tracejado com --accent; design-review e polish nas listas de pseudo-kind', () => {
+  assert.match(css, /\.node\[data-injected='1'\] \.dot\s*\{[^}]*outline:[^}]*dashed var\(--accent\)/)
+  assert.match(builtCss, /\.node\[data-injected='1'\]/)
+  for (const kind of ['design-review', 'polish']) {
+    assert.ok(css.includes(`[data-kind='${kind}']`), `falta [data-kind='${kind}'] em style.css`)
+  }
 })
 
 test('tokens do painel viram utilitários do Tailwind e dark: segue o switch de tema', () => {
