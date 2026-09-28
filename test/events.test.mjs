@@ -33,20 +33,27 @@ function feedIncrementally(dir, lines, delayMs) {
 }
 
 // Roda `events` até o processo sair sozinho (TERMINADO) ou até `maxMs`, o que vier primeiro —
-// nunca deixa um processo pendurado no fim da suíte.
-function runEventsUntilExit(args, maxMs) {
+// nunca deixa um processo pendurado no fim da suíte. Com `stopWhen`, mata `graceMs` depois da
+// primeira saída que casa, e `maxMs` vira só o teto: um prazo fixo curto falhava com a máquina
+// carregada (várias suítes em paralelo), porque o filho morria antes de emitir a linha esperada.
+function runEventsUntilExit(args, maxMs, { stopWhen = null, graceMs = 600 } = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [BIN, 'events', ...args, '--no-color'], { cwd: ROOT })
     let stdout = ''
     let stderr = ''
     let settled = false
+    let grace = null
     const finish = (code) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      clearTimeout(grace)
       resolve({ code, stdout, stderr })
     }
-    child.stdout.on('data', (d) => (stdout += d))
+    child.stdout.on('data', (d) => {
+      stdout += d
+      if (stopWhen && !grace && stopWhen.test(stdout)) grace = setTimeout(() => child.kill('SIGKILL'), graceMs)
+    })
     child.stderr.on('data', (d) => (stderr += d))
     child.on('close', (code) => finish(code))
     child.on('error', () => finish(null))
@@ -121,7 +128,9 @@ describe('modo events, alimentado linha a linha (§8.2 item 7)', () => {
     fs.cpSync(fx('interrupted'), dir, { recursive: true })
     const old = new Date(Date.now() - 15 * 60 * 1000)
     fs.utimesSync(path.join(dir, 'journal.jsonl'), old, old)
-    const { stdout } = await runEventsUntilExit(['--run-dir', dir, '--wait-ms', '50'], 700)
+    // Não sai sozinho (run interrompida): para 600 ms depois do "parada?", o bastante para ver que
+    // ele não se repete (com --wait-ms 50, uma dúzia de voltas do laço).
+    const { stdout } = await runEventsUntilExit(['--run-dir', dir, '--wait-ms', '50'], 10000, { stopWhen: /parada\?/ })
     const outLines = stdout.trim().split('\n').filter(Boolean)
     const paradaLines = outLines.filter((l) => /parada\?/.test(l))
     assert.equal(paradaLines.length, 1, `esperava 1 linha de parada?, achou ${paradaLines.length}`)
