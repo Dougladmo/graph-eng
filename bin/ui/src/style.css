@@ -1672,6 +1672,14 @@ button {
   line-height: 19px;
   color: var(--fg3);
 }
+/* Agrupa os .agent-block: #drawer-body também guarda .node-actions-slot (Actions.renderNodeActions),
+   que renderDetail() nunca deve tocar — por isso os blocos de agente ficam num wrapper próprio, com o
+   mesmo espaçamento que tinham como filhos diretos de #drawer-body. */
+.agent-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .agent-block {
   display: flex;
   flex-direction: column;
@@ -2305,6 +2313,241 @@ button {
     max-height: calc(100dvh - 24px);
     margin: auto auto 12px;
     box-shadow: var(--sheet-shadow);
+  }
+}
+
+/* ── I7: ações da run (retomar, parar, refazer nó, artefatos) — docs/specs/2026-09-28-acoes-no-painel.md C14 ── */
+.chip-reason {
+  color: var(--orange-text);
+  background: var(--orange-soft);
+}
+.chip-listen {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--fg2);
+  background: var(--surface);
+}
+.chip-listen:empty {
+  display: none;
+}
+.chip-listen .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: none;
+  border: 1.5px solid var(--muted);
+}
+.chip-listen[data-on='1'] .dot {
+  background: var(--green);
+  border: none;
+}
+
+#run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 36px 0 312px;
+}
+:root[data-rail='closed'] #run-actions {
+  margin-left: 108px;
+}
+#run-actions[hidden] {
+  display: none;
+}
+.btn-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: var(--fg3);
+  cursor: pointer;
+}
+.btn-link:hover {
+  text-decoration: underline;
+}
+.btn-ghost.danger,
+.btn-link.danger {
+  color: var(--red);
+}
+.btn-ghost.danger:hover {
+  background: var(--red-soft);
+}
+#act-why {
+  margin: 6px 36px 0 312px;
+  font-size: 12px;
+  color: var(--fg3);
+}
+:root[data-rail='closed'] #act-why {
+  margin-left: 108px;
+}
+#act-why:empty {
+  display: none;
+}
+#req-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 36px 0 312px;
+  font-size: 13px;
+  color: var(--fg2);
+}
+:root[data-rail='closed'] #req-status {
+  margin-left: 108px;
+}
+#req-status[hidden] {
+  display: none;
+}
+#req-status[data-state='falhou'] {
+  color: var(--red);
+}
+
+.node-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--section-line);
+  border-radius: 12px;
+}
+.node-actions .row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.node-actions .why {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg3);
+}
+.chip-resumed {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.node-output summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  font-size: 13px;
+  color: var(--accent-text);
+  cursor: pointer;
+  list-style: none;
+}
+.node-output summary::-webkit-details-marker {
+  display: none;
+}
+.node-output summary::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  margin: 0 1px 0 0;
+  border: solid currentColor;
+  border-width: 1.5px 1.5px 0 0;
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+.node-output[open] summary::before {
+  transform: rotate(135deg);
+}
+.node-output-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.node-output-files button {
+  align-self: flex-start;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg2);
+  cursor: pointer;
+}
+.node-output-files button:hover {
+  color: var(--accent-text);
+}
+
+pre.artifact {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--section-line);
+  border-radius: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.artifact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.artifact-group-label {
+  margin: 8px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--fg4);
+}
+.artifact-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg2);
+  text-align: left;
+  cursor: pointer;
+}
+.artifact-item:hover {
+  background: var(--surface-hover);
+}
+.artifact-item[aria-current='true'] {
+  background: var(--surface);
+}
+.artifact-requests {
+  margin-top: 12px;
+  border-top: 1px solid var(--section-line);
+  padding-top: 8px;
+}
+.artifact-requests ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.artifact-requests li {
+  font-size: 12px;
+  color: var(--fg2);
+}
+
+@media (max-width: 720px) {
+  #run-actions,
+  #act-why,
+  #req-status {
+    margin-left: 0;
   }
 }
 

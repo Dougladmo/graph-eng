@@ -32,6 +32,7 @@ import { STATE_TEXT, variantOf, hasRun, buildGraph, layoutGraph, placeGraph, lan
 import { initSettings } from './config-modal.mjs'
 import { PAGE, STEP, sectionOf, titleOf, metaOf, stripOf, buildSections } from './sidebar.mjs'
 import { openConfirm } from './confirm.mjs'
+import * as Actions from './actions.mjs'
 
 // ── DOM ──
 const $ = (id) => document.getElementById(id)
@@ -258,6 +259,7 @@ let runs = []
 let selectedWf = new URLSearchParams(location.search).get('run') || null
 let currentModel = null
 let openNodeId = null
+let drawerMode = null // null | 'node' | 'run' (artefatos, Actions.openArtifactsDrawer)
 
 els.sidebarToggle.addEventListener('click', () => setSidebarOpen(!els.sidebar.classList.contains('open')))
 els.drawerClose.addEventListener('click', closeDrawer)
@@ -277,11 +279,13 @@ function setSidebarOpen(open) {
 }
 
 function closeDrawer() {
-  if (!openNodeId) return
+  if (!openNodeId && !drawerMode) return
   openNodeId = null
+  drawerMode = null
   setData(els.app, { drawer: 'closed' })
   for (const b of nodeEls.values()) setData(b, { selected: false })
   if (currentModel) renderGraph(currentModel)
+  Actions.onDrawerClosed()
 }
 
 // ── Lateral de runs (card flutuante; recolhe e expande) ──
@@ -305,6 +309,21 @@ syncRailButtons()
 
 // ── Configurações (modal de engrenagem, com o switch de tema dentro) ──
 initSettings()
+
+// ── Ações da run (retomar, parar, refazer nó, artefatos; bin/ui/actions.mjs, C14) ──
+Actions.initActions({
+  openArtifactsDrawer() {
+    openNodeId = null
+    drawerMode = 'run'
+    setData(els.app, { drawer: 'open', drawerMode: 'run' })
+    els.drawer.setAttribute('aria-label', 'artefatos da run')
+    for (const b of nodeEls.values()) setData(b, { selected: false })
+    if (currentModel) renderGraph(currentModel)
+  },
+  selectRun(wf) {
+    selectRun(wf)
+  },
+})
 
 // ── Lateral (bin/ui/sidebar.mjs monta as seções; app.js só desenha) ──
 // O ícone da lixeira (Apagar finalizadas…) vive como <template> estático em index.html; app.js só clona,
@@ -1044,6 +1063,7 @@ async function refresh() {
     renderHeader(currentModel)
     renderGraph(currentModel)
     if (openNodeId) await loadDetail(wf, openNodeId)
+    else if (drawerMode === 'run') Actions.refreshArtifacts()
   } catch {
     /* sem rede: o #conn já avisa; o próximo evento tenta de novo */
   } finally {
@@ -1056,19 +1076,27 @@ async function refresh() {
 }
 
 function renderHeader(model) {
-  if (!model) return els.header.replaceChildren()
+  if (!model) {
+    els.header.replaceChildren()
+    Actions.render(null)
+    return
+  }
   if (!els.header.firstChild) {
     const h1 = el('h1')
     h1.append(document.createTextNode(''), el('span', 'mono'))
     const chips = el('div', 'chips')
-    chips.append(el('span', 'chip chip-status'), el('span', 'chip'), el('span', 'chip'), el('span', 'warns'))
+    const reason = el('span', 'chip chip-reason')
+    reason.id = 'chip-reason'
+    const listen = el('span', 'chip-listen')
+    listen.id = 'chip-listen'
+    chips.append(el('span', 'chip chip-status'), el('span', 'chip'), el('span', 'chip'), reason, listen, el('span', 'warns'))
     els.header.append(h1, chips, el('p', 'goal'))
   }
   const [h1, chips, goal] = els.header.children
   const id = shortWf(model.wf)
   if (h1.firstChild.data !== (model.project ? `${model.project} — ` : '')) h1.firstChild.data = model.project ? `${model.project} — ` : ''
   setText(h1.lastChild, id)
-  const [status, round, agents, warns] = chips.children
+  const [status, round, agents, , , warns] = chips.children
   setText(status, model.status || '')
   setData(status, { status: model.status || '' })
   setText(round, `round ${model.round}`)
@@ -1080,6 +1108,7 @@ function renderHeader(model) {
   while (warns.children.length < list.length) warns.append(el('span', 'chip chip-warn'))
   list.forEach((w, i) => setText(warns.children[i], w))
   setText(goal, model.goal || '')
+  Actions.render(model)
 }
 
 // ── Detalhe ──
@@ -1087,11 +1116,20 @@ async function openDetail(id) {
   if (!selectedWf) return
   const wasOpen = !!openNodeId
   openNodeId = id
-  setData(els.app, { drawer: 'open' })
+  drawerMode = 'node'
+  // Sai do modo run: vindo dos Artefatos sem fechar a gaveta, o artifactsState seguia preenchido, e
+  // cada refresh anexava a lista "Pedidos" na gaveta do nó. Zerar também faz desistir um
+  // loadArtifacts ainda em voo.
+  Actions.onDrawerClosed()
+  setData(els.app, { drawer: 'open', drawerMode: 'node' })
+  els.drawer.setAttribute('aria-label', 'detalhe do nó')
   for (const b of nodeEls.values()) setData(b, { selected: b.dataset.id === id })
   if (!wasOpen && currentModel) renderGraph(currentModel)
   renderDetailHead(null, id)
-  els.drawerBody.replaceChildren(el('p', 'drawer-note', 'Carregando…'))
+  // Limpa a gaveta (pode vir dos Artefatos ou de outro nó) e põe o aviso DENTRO de .agent-content, que
+  // renderDetail substitui; solto em #drawer-body ele ficaria para sempre entre as ações e os agentes.
+  els.drawerBody.replaceChildren()
+  agentContentEl().replaceChildren(el('p', 'drawer-note', 'Carregando…'))
   await loadDetail(selectedWf, id)
 }
 
@@ -1107,6 +1145,9 @@ async function loadDetail(wf, id) {
     const scroll = els.drawerBody.scrollTop
     renderDetailHead(detail, id)
     renderDetail(detail)
+    const v = buildGraph(currentModel || { nodes: [] }).V.find((x) => x.id === id) || {}
+    const pseudo = v.kind ? v.kind !== 'node' : !!detail.pseudo
+    Actions.renderNodeActions(pseudo ? null : currentModel, id)
     els.drawerBody.scrollTop = scroll
   } catch {
     /* mantém o que já estava desenhado */
@@ -1129,8 +1170,20 @@ function renderDetailHead(detail, id) {
   setData(els.drawerState, { variant: variantOf(state) })
 }
 
+// Só o conteúdo dos agentes fica aqui dentro; `.node-actions-slot` (Actions.renderNodeActions) é irmão
+// dele em #drawer-body e nunca é tocado por esta função — senão o refresh de ~1 s fecharia o <details>
+// "Saída do nó" e descartaria o arquivo aberto a cada poll (ver I7.md, pendência do REPAIR).
+function agentContentEl() {
+  let c = els.drawerBody.querySelector('.agent-content')
+  if (!c) {
+    c = el('div', 'agent-content')
+    els.drawerBody.append(c)
+  }
+  return c
+}
+
 function renderDetail(detail) {
-  const body = els.drawerBody
+  const body = agentContentEl()
   body.replaceChildren()
   if (detail.injected) body.append(el('p', 'drawer-note', `injetado pelo motor: ${detail.reason || ''}`))
   if (!detail.agents || !detail.agents.length) return body.append(el('p', 'drawer-note', 'Esse nó ainda não começou.'))

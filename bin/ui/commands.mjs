@@ -2,7 +2,13 @@
 // monta o texto exato que o botão "Copiar" põe no clipboard, para colar de volta numa sessão do
 // Claude Code (a 1ª seção da SKILL.md desvia `retomar`/`refazer`/`parar` para "Ações sobre uma run"
 // sem pergunta — colar já é a confirmação).
-import { WF_RE, NODE_RE } from '../requests.mjs'
+//
+// WF_RE e NODE_RE são cópias literais das de bin/requests.mjs (fonte da verdade), e não um import:
+// este módulo roda no navegador (servido por bin/ui-server.mjs via UI_MODULE_RE, sem bundler), e
+// bin/requests.mjs importa node:fs. Um `import '../requests.mjs'` resolveria, no navegador, para
+// `/requests.mjs` (fora de bin/ui/, 404) e quebraria mesmo se o arquivo existisse ali.
+const WF_RE = /^wf_[A-Za-z0-9_-]+$/
+const NODE_RE = /^[A-Za-z0-9_-]{1,64}$/
 
 // runDir "seguro" para ir dentro de aspas duplas no comando: absoluto ou `~/…`, sem `"` nem quebra
 // de linha (o resto do texto do run dir é livre — pode ter espaço, acento etc.).

@@ -36,12 +36,14 @@ export function initSettings() {
     maxRoundsErr: $('cfg-max-rounds-err'),
     maxRepairs: $('cfg-max-repairs'),
     maxRepairsErr: $('cfg-max-repairs-err'),
+    stall: $('cfg-stall'),
+    stallErr: $('cfg-stall-err'),
     themeSwitch: $('theme-switch'),
     themeLabel: $('theme-label'),
   }
   const effortRadios = [...form.querySelectorAll('input[name="effort"]')]
   const economyRadios = [...form.querySelectorAll('input[name="economy"]')]
-  const fields = [els.ceiling, els.planGate, els.maxRounds, els.maxRepairs, ...effortRadios, ...economyRadios]
+  const fields = [els.ceiling, els.planGate, els.maxRounds, els.maxRepairs, els.stall, ...effortRadios, ...economyRadios]
 
   let opener = null
   let defaults = null
@@ -68,6 +70,7 @@ export function initSettings() {
     setSwitch(els.planGate, !!config.planGate)
     els.maxRounds.value = String(config.maxRounds)
     els.maxRepairs.value = String(config.maxRepairs)
+    els.stall.value = String(config.stallMinutes)
     clearErrors()
     updatePreview()
   }
@@ -87,7 +90,7 @@ export function initSettings() {
   }
 
   function clearErrors() {
-    for (const [input, err] of [[els.ceiling, els.ceilingErr], [els.maxRounds, els.maxRoundsErr], [els.maxRepairs, els.maxRepairsErr]]) {
+    for (const [input, err] of [[els.ceiling, els.ceilingErr], [els.maxRounds, els.maxRoundsErr], [els.maxRepairs, els.maxRepairsErr], [els.stall, els.stallErr]]) {
       input.removeAttribute('aria-invalid')
       err.hidden = true
       err.textContent = ''
@@ -163,6 +166,12 @@ export function initSettings() {
       ok = false
       firstInvalid = firstInvalid || els.maxRepairs
     }
+    const stall = Number(els.stall.value)
+    if (!Number.isInteger(stall) || stall < 1 || stall > 60) {
+      setFieldError(els.stall, els.stallErr, 'de 1 a 60')
+      ok = false
+      firstInvalid = firstInvalid || els.stall
+    }
     if (!ok && firstInvalid) firstInvalid.focus()
     return ok
   }
@@ -175,6 +184,7 @@ export function initSettings() {
       planGate: els.planGate.getAttribute('aria-checked') === 'true',
       maxRounds: Number(els.maxRounds.value),
       maxRepairs: Number(els.maxRepairs.value),
+      stallMinutes: Number(els.stall.value),
     }
   }
 
@@ -194,6 +204,10 @@ export function initSettings() {
       defaults = body.defaults
       els.ceiling.min = String(body.limits.ceiling.min)
       els.ceiling.max = String(body.limits.ceiling.max)
+      if (body.limits.stallMinutes) {
+        els.stall.min = String(body.limits.stallMinutes.min)
+        els.stall.max = String(body.limits.stallMinutes.max)
+      }
       fill(body.config)
       setEnabled(true)
       loaded = true
@@ -292,9 +306,10 @@ export function initSettings() {
           ['ceiling', els.ceilingErr],
           ['maxRounds', els.maxRoundsErr],
           ['maxRepairs', els.maxRepairsErr],
+          ['stallMinutes', els.stallErr],
         ]) {
           if (body.fields[key]) {
-            const input = key === 'ceiling' ? els.ceiling : key === 'maxRounds' ? els.maxRounds : els.maxRepairs
+            const input = key === 'ceiling' ? els.ceiling : key === 'maxRounds' ? els.maxRounds : key === 'maxRepairs' ? els.maxRepairs : els.stall
             setFieldError(input, err, body.fields[key])
           }
         }

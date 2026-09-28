@@ -53,6 +53,9 @@
   <button id="rail-open" type="button" aria-label="Mostrar suas runs" aria-controls="rail" aria-expanded="false"><svg class="logo" width="24" height="24" viewBox="0 0 64 64" aria-hidden="true"><rect class="logo-bg" width="64" height="64" rx="15"/><path class="logo-line" d="M17 32 32 19 47 32 32 45Z" stroke-width="2.5" stroke-linejoin="round" fill="none"/><circle class="logo-fg" cx="17" cy="32" r="5"/><circle class="logo-fg" cx="32" cy="19" r="5"/><circle class="logo-ring" cx="32" cy="45" r="3.8" stroke-width="2.5"/><circle class="logo-accent" cx="47" cy="32" r="5"/></svg><span class="panel-icon" aria-hidden="true"></span></button>
   <main id="board">
     <header id="run-header"></header>
+    <div id="run-actions" hidden></div>
+    <p id="act-why" class="act-why"></p>
+    <p id="req-status" role="status" aria-live="polite" data-state="" hidden></p>
     <p id="conn" role="alert"></p>
     <p id="empty-msg" role="status">Procurando runs do graph-eng…</p>
     <div id="map-scroll">
@@ -134,6 +137,10 @@
         <label for="cfg-max-repairs">Máximo de reparos por nó</label>
         <input id="cfg-max-repairs" name="maxRepairs" type="number" inputmode="numeric" step="1" min="1" max="3" aria-describedby="cfg-max-repairs-err">
         <p id="cfg-max-repairs-err" class="field-err" hidden></p>
+        <label for="cfg-stall">Considerar parada depois de</label>
+        <input id="cfg-stall" name="stallMinutes" type="number" inputmode="numeric" step="1" min="1" max="60" aria-describedby="cfg-stall-hint cfg-stall-err">
+        <p id="cfg-stall-hint" class="hint">Sem escrita no histórico do agente em execução por mais que isso, a run vai para Paradas. Com a sessão dona ouvindo, vale o triplo. De 1 a 60 min.</p>
+        <p id="cfg-stall-err" class="field-err" hidden></p>
       </fieldset>
       <fieldset class="settings-section">
         <legend>Aparência</legend>
