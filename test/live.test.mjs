@@ -41,11 +41,15 @@ describe('modo live (§6.6, §8.2 item 10)', () => {
     assert.ok(all.includes('\x1b[?25h'), 'esperava mostrar o cursor de volta')
   })
 
-  test('um quadro novo só é escrito quando o texto muda (sem run-dir/journal mudando, 3 ticks -> 1 quadro)', async () => {
+  test('um quadro novo só é escrito quando o texto muda (sem run-dir/journal mudando, nenhum quadro repete o anterior)', async () => {
     const stdout = fakeTTY()
     await runLive(fx('happy'), { stdout, stdin: { isTTY: false }, maxTicks: 3, intervalMs: 5 })
-    const frames = stdout.chunks.filter((c) => c.includes('\x1b[?2026h')).length
-    assert.equal(frames, 1, 'o modelo não muda entre os ticks: só o 1º deveria desenhar')
+    const frames = stdout.chunks.filter((c) => c.includes('\x1b[?2026h'))
+    // O rodapé tem relógio ("atualizado HH:MM:SS · último evento há Ns"): se os 3 ticks cruzam a virada
+    // de um segundo, o texto muda de verdade e sai um 2º quadro — contar "só 1" falhava sob carga. O que
+    // não pode é escrever de novo um quadro igual ao anterior.
+    assert.ok(frames.length >= 1, 'o 1º tick deveria desenhar')
+    for (let i = 1; i < frames.length; i++) assert.notEqual(frames[i], frames[i - 1], `o quadro ${i + 1} repete o anterior: o texto não mudou`)
   })
 
   test('SIGINT (via AbortSignal) restaura a tela alternativa antes de o processo seguir', async () => {
