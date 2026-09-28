@@ -205,6 +205,15 @@ describe('modo events, alimentado linha a linha (§8.2 item 7)', () => {
     assert.match(joined, /TERMINADO/)
   })
 
+  // REPAIR do I11: as linhas de marco final do events também trazem o motivo (não só o snapshot).
+  test('wf_blocked: a linha de marco final traz o motivo (bloqueado e pulado em cascata)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-ev-reason-'))
+    fs.cpSync(fx('wf_blocked'), dir, { recursive: true })
+    const { stdout } = await runEventsUntilExit(['--run-dir', dir, '--wait-ms', '50'], 8000, { stopWhen: /I3 pulado/ })
+    assert.match(stdout, /R2 bloqueado — bloqueado: o agente não voltou com resultado utilizável/)
+    assert.match(stdout, / — pulado: não rodou porque a dependência R2 ficou bloqueada/)
+  })
+
   test('sem \\x1b em pipe (§8.2 item 9)', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-ev-noansi-'))
     fs.cpSync(fx('happy'), dir, { recursive: true })

@@ -43,7 +43,7 @@ test('index.html referencia só arquivos locais: theme.js antes do CSS, app.js c
   assert.deepEqual(scriptSrcs, ['/theme.js', '/app.js'])
   assert.match(html, /<script type="module" src="\/app.js">/)
   assert.ok(html.indexOf('/theme.js') < html.indexOf('/style.css'), 'o tema tem que ser aplicado antes do CSS pintar')
-  assert.deepEqual(linkHrefs, ['/favicon.svg', '/style.css'])
+  assert.deepEqual(linkHrefs, ['/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png', '/style.css'])
   assert.equal(/https?:\/\//.test(html), false)
 })
 

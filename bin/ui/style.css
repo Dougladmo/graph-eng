@@ -1577,6 +1577,17 @@
   .pill:empty {
     display: none;
   }
+  #drawer-reason {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--surface);
+    font-size: 12.5px;
+    line-height: 18px;
+    color: var(--fg2);
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
   .pill::before {
     content: '';
     width: 7px;

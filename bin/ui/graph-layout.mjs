@@ -63,6 +63,22 @@ export const VARIANT = {
 export const variantOf = (state) => VARIANT[state] || 'empty'
 export const hasRun = (state) => ['done', 'fail'].includes(variantOf(state))
 
+// Motivo do vértice (7º pedido do PEDIDO.md): um nó guarda o motivo em v.node.reason (vindo do
+// modelo, bin/graph-watch.mjs); um pseudo-vértice (ex.: critic:r1 pulado pela revisão do design)
+// guarda em v.reason direto. Nunca inventa: string vazia quando o modelo não deu motivo.
+export function reasonOf(v) {
+  return (v.kind === 'node' ? v.node && v.node.reason : v.reason) || ''
+}
+
+// Primeira linha de um motivo (potencialmente multilinha) para o title/aria-label da bolinha; a
+// gaveta mostra o texto inteiro. Mesma ideia do firstLine() de bin/graph-watch.mjs, sem depender dele
+// (o painel roda no navegador).
+export function firstLine(s, max = 140) {
+  const t = String(s || '').split('\n')[0].trim()
+  if (!t) return ''
+  return t.length > max ? t.slice(0, max - 1) + '…' : t
+}
+
 export const STATE_TEXT = {
   trabalhando: 'trabalhando',
   verificando: 'verificando',
@@ -106,8 +122,12 @@ export function buildGraph(model) {
     if (critic && r < critic.r) state = 'pronto'
     else if (critic && r === critic.r) state = critic.running ? 'verificando' : 'pronto'
     // Revisão do design reprovada e terminada: o critic do round 1 nunca roda de fato.
-    if (dr && r === 1 && dr.state === 'falhou' && ended) state = 'pulado'
-    add({ id: `critic:r${r}`, kind: 'critic', round: r, title: maxRound > 1 ? `critic r${r}` : 'critic', state })
+    let reason
+    if (dr && r === 1 && dr.state === 'falhou' && ended) {
+      state = 'pulado'
+      reason = 'pulado: a revisão do design reprovou, então este round de crítica não rodou'
+    }
+    add({ id: `critic:r${r}`, kind: 'critic', round: r, title: maxRound > 1 ? `critic r${r}` : 'critic', state, ...(reason ? { reason } : {}) })
   }
   // Polidores (D3 §5.2, spec item 9): agentes da síntese visíveis, um vértice por polidor.
   for (const p of polish) {

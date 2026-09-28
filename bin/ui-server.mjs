@@ -133,11 +133,13 @@
 // Estáticos (lista fixa, qualquer outro caminho → 404): `/` e `/index.html` (text/html), `/app.js`
 // (text/javascript), `/graph-layout.mjs` (módulo importado pelo app.js), `/agent-target.mjs` (fórmula de
 // alvos, importada pelo modal), `/config-modal.mjs` (modal de engrenagem), `/theme.js` (aplica o tema antes
-// da pintura), `/style.css`, `/favicon.svg` e as fontes Geist em `/fonts/*.woff2` (SIL OFL, fonts/OFL.txt),
-// lidos de bin/ui/. Além da lista, a regra fechada dos módulos da UI (C10): `/<nome>.mjs` com nome
-// `[a-z0-9-]+` serve um arquivo regular (sem symlink) direto em bin/ui/, como text/javascript; assim um
-// módulo novo da página entra sem editar este arquivo. Nada vem de fora: CSP com script, estilo, fonte e
-// conexão só 'self'.
+// da pintura), `/style.css`, `/favicon.svg`, `/favicon-32.png` e `/apple-touch-icon.png` (7º pedido do
+// PEDIDO.md: o mesmo logo do cabeçalho, gerado uma vez e versionado — Safari não mostra favicon SVG) e as
+// fontes Geist em `/fonts/*.woff2` (SIL OFL, fonts/OFL.txt), lidos de bin/ui/. `/favicon.ico` devolve o PNG
+// de 32px (não há .ico de verdade — todo browser que pede /favicon.ico aceita PNG nessa resposta). Além da
+// lista, a regra fechada dos módulos da UI (C10): `/<nome>.mjs` com nome `[a-z0-9-]+` serve um arquivo
+// regular (sem symlink) direto em bin/ui/, como text/javascript; assim um módulo novo da página entra sem
+// editar este arquivo. Nada vem de fora: CSP com script, estilo, fonte e conexão só 'self'.
 
 import fs from 'node:fs'
 import http from 'node:http'
@@ -205,6 +207,8 @@ const STATIC = {
   '/config-modal.mjs': ['config-modal.mjs', 'text/javascript; charset=utf-8'],
   '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
+  '/favicon-32.png': ['favicon-32.png', 'image/png'],
+  '/apple-touch-icon.png': ['apple-touch-icon.png', 'image/png'],
   '/fonts/geist-latin.woff2': ['fonts/geist-latin.woff2', 'font/woff2'],
   '/fonts/geist-latin-ext.woff2': ['fonts/geist-latin-ext.woff2', 'font/woff2'],
   '/fonts/geist-mono-latin.woff2': ['fonts/geist-mono-latin.woff2', 'font/woff2'],
@@ -1392,7 +1396,17 @@ export function createPanelServer(opts = {}) {
     const mod = UI_MODULE_RE.exec(pathname)
     if (mod) return sendUiModule(res, mod[1])
 
-    if (pathname === '/favicon.ico') return send(res, 204, '')
+    if (pathname === '/favicon.ico') {
+      // Sem .ico de verdade no repo (7º pedido do PEDIDO.md): devolve o PNG de 32px, que todo
+      // browser que bate em /favicon.ico aceita nessa resposta (antes: 204 vazio, sem ícone nenhum).
+      let body
+      try {
+        body = fs.readFileSync(path.join(UI_DIR, 'favicon-32.png'))
+      } catch {
+        return send(res, 204, '')
+      }
+      return send(res, 200, body, 'image/png')
+    }
     const parts = pathname.split('/').slice(1)
     if (parts[0] !== 'api') return sendError(res, 404, 'não encontrado')
     if (parts.length === 2 && parts[1] === 'health') return send(res, 200, { app: 'graph-watch', version: 1 })

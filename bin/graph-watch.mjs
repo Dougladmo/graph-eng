@@ -55,6 +55,21 @@ function stopReasonText(reason, idleSec) {
   return STOP_REASON_TEXT[reason] || `sem atividade há ${Math.max(1, Math.floor(idleSec / 60))} min`
 }
 
+// ── Motivo do nó (spec C.., 7º pedido do PEDIDO.md: "motivo de cada nó") ──
+// Só os 5 estados abaixo — "não terminou verificado" — ganham `n.reason`, calculado em buildModel a
+// partir do journal (nunca inventado). Os demais (pronto, pronto-sem-verif[?], trabalhando,
+// verificando, reparando, aguardando, erro) ficam sem motivo: são estados saudáveis/esperados, ou
+// (erro) fora do pedido literal.
+const REASON_STATES = new Set(['pulado', 'falhou', 'falhou-check', 'bloqueado', 'sem-reverificacao'])
+
+// Primeira linha de um texto livre, achatado e cortado em `max` chars (usada no title da bolinha e
+// como resumo; a gaveta e as linhas do events/snapshot mostram o `reason` inteiro, com quebras).
+function firstLine(s, max = 160) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim()
+  if (!t) return ''
+  return t.length > max ? t.slice(0, max - 1) + '…' : t
+}
+
 // Última linha JSON válida de um texto com uma tentativa por linha (linhas truncadas ou vazias no
 // meio da cauda lida são ignoradas: a última válida é a que importa).
 function lastValidJsonLine(text) {
@@ -625,6 +640,7 @@ export async function buildModel(opts = {}) {
   let drAttempts = 0
   let drLastPass = null
   let drLastBlocking = []
+  let drLastBlockingRaw = [] // itens crus (com .issue), p/ motivo por nó — drLastBlocking fica só com ids
   let drLastFailed = false
   const polishState = new Map() // k -> { state }
 
@@ -698,6 +714,7 @@ export async function buildModel(opts = {}) {
         drLastFailed = e.type === 'failed'
         drLastPass = drLastFailed ? false : !!r.pass
         drLastBlocking = (r.blocking || []).map((b) => String((b && b.node) || b))
+        drLastBlockingRaw = r.blocking || []
       }
       if (s.label && s.label.startsWith('design-repair:')) designRepairOpenCount--
       if (s.label && s.label.startsWith('polish:')) {
@@ -737,36 +754,77 @@ export async function buildModel(opts = {}) {
     return !!(critic && n && critic.r >= (n.round || 1))
   }
 
+  // Por que `closed(id)` deu true, na mesma ordem que ela confere (usado só para o motivo de
+  // sem-reverificacao: nunca muda o valor de `closed`, só explica em pt-BR qual dos ramos bateu).
+  function closedCause(id) {
+    if (ended) return 'a run terminou antes de reverificar'
+    if (NEW && HAS_DR && designReviewModel && designReviewModel.state !== 'aguardando') {
+      const n0 = NODES.get(id)
+      if (n0 && n0.round === 1 && n0.kind !== 'implement') return 'a revisão do design já fechou este round'
+    }
+    for (const n of NODES.values()) {
+      if (n.deps && n.deps.includes(id) && START.has(n.id)) return `o nó ${n.id} já começou antes da reverificação`
+    }
+    const n = NODES.get(id)
+    if (critic && n && critic.r >= (n.round || 1)) return 'a crítica avançou para o próximo round'
+    return 'motivo não determinado no journal'
+  }
+
   const DEAD = new Set(['bloqueado', 'pulado'])
   const kindOf = (l) => l.split(':')[0]
   const isDraft = (k) => k === 'draft-a' || k === 'draft-b'
   const MEMO = new Map()
-  function state(id) {
+  // `full(id)` memoiza { state, reason }; `state(id)` (usada pelo resto do arquivo, inclusive
+  // recursivamente aqui dentro para os deps) segue devolvendo só a string, como sempre devolveu.
+  function full(id) {
     if (!MEMO.has(id)) MEMO.set(id, computeState(id))
     return MEMO.get(id)
+  }
+  function state(id) {
+    return full(id).state
   }
 
   function computeState(id) {
     const xs = per.get(id) || []
     const n = NODES.get(id)
     if (!xs.length) {
-      const dead = n && n.deps && n.deps.some((d) => DEAD.has(state(d)))
-      if (dead || ended) return 'pulado'
-      return 'aguardando'
+      // `badDep` usa o mesmo DEAD (bloqueado/pulado) que decide `dead` — uma dependência que só
+      // "falhou" não entra aqui (o motor não trata isso como cascata; ela conta como orçamento).
+      const badDep = n && n.deps && n.deps.find((d) => DEAD.has(state(d)))
+      const dead = !!badDep
+      if (dead || ended) {
+        let reason
+        if (badDep) {
+          const ds = state(badDep)
+          reason = ds === 'pulado'
+            ? `pulado: não rodou porque a dependência ${badDep} foi pulada`
+            : `pulado: não rodou porque a dependência ${badDep} ficou bloqueada`
+        } else if (typeof ceiling === 'number' && Number.isFinite(ceiling) && spent >= ceiling) {
+          reason = `pulado: sem orçamento — o teto de ${ceiling} agentes acabou antes deste nó`
+        } else {
+          reason = 'pulado: não rodou: a run terminou antes'
+        }
+        return { state: 'pulado', reason }
+      }
+      return { state: 'aguardando', reason: null }
     }
     const open = xs.filter((x) => !x.done)
     if (open.length) {
       const k = kindOf(open[open.length - 1].label)
-      if (k === 'verify' || k === 'escalate') return 'verificando'
-      if (k === 'repair' || k === 'design-repair') return 'reparando'
-      return 'trabalhando'
+      if (k === 'verify' || k === 'escalate') return { state: 'verificando', reason: null }
+      if (k === 'repair' || k === 'design-repair') return { state: 'reparando', reason: null }
+      return { state: 'trabalhando', reason: null }
     }
     const last = xs[xs.length - 1]
     const lk = kindOf(last.label)
     const drafts = xs.filter((x) => isDraft(kindOf(x.label)))
     if (last.failed) {
-      if (lk === 'work' || lk === 'judge' || (drafts.length === 2 && drafts.every((x) => x.failed))) return 'bloqueado'
-      return 'erro'
+      if (lk === 'work' || lk === 'judge' || (drafts.length === 2 && drafts.every((x) => x.failed))) {
+        const r = last.result || {}
+        const msg = firstLine(r.summary || r.assessment || r.error || '', 200)
+        return { state: 'bloqueado', reason: `bloqueado: ${msg || 'o agente não voltou com resultado utilizável'}` }
+      }
+      return { state: 'erro', reason: null }
     }
     // Adiamento (§4.2): numa run nova, LEVEL substitui o preset --economy (P.defer).
     const deferred = NEW && LEVEL
@@ -780,7 +838,7 @@ export async function buildModel(opts = {}) {
       const k = kindOf(x.label)
       const r = x.result || {}
       if (k === 'verify' || k === 'escalate') {
-        verdict = { pass: !!r.pass && !(r.blocking || []).length, via: 'verify' }
+        verdict = { pass: !!r.pass && !(r.blocking || []).length, via: 'verify', blocking: r.blocking || [] }
         pendingAfter = null
         verifiedEver = true
         continue
@@ -792,11 +850,15 @@ export async function buildModel(opts = {}) {
         continue
       }
       if (!asWork && k !== 'repair' && k !== 'design-repair') continue
-      if (asWork && r.status === 'blocked') return 'bloqueado'
-      const red = (r.checks || []).some((c) => c && c.ok === false)
+      if (asWork && r.status === 'blocked') {
+        const msg = firstLine(r.summary || r.assessment || '', 200)
+        return { state: 'bloqueado', reason: `bloqueado: ${msg || 'o worker sinalizou bloqueio, sem detalhe no resultado'}` }
+      }
+      const failedCheck = (r.checks || []).find((c) => c && c.ok === false)
+      const red = !!failedCheck
       const gated = k === 'repair' || k === 'design-repair' || (NEW && LEVEL ? !deferred : P ? !deferred : x !== last)
       if (red && gated) {
-        verdict = { pass: false, via: 'check' }
+        verdict = { pass: false, via: 'check', check: failedCheck }
         pendingAfter = null
         verifiedEver = true
         continue
@@ -804,30 +866,62 @@ export async function buildModel(opts = {}) {
       pendingAfter = k === 'repair' || k === 'design-repair' ? 'repair' : 'work'
       verdict = null
     }
-    if (pendingAfter === 'draft') return closed(id) ? 'bloqueado' : 'trabalhando'
-    if (verdict) return verdict.pass ? 'pronto' : verdict.via === 'check' ? 'falhou-check' : 'falhou'
-    if (pendingAfter === 'repair') return closed(id) ? 'sem-reverificacao' : 'reparando'
+    if (pendingAfter === 'draft') {
+      if (!closed(id)) return { state: 'trabalhando', reason: null }
+      const bothFailed = drafts.length === 2 && drafts.every((x) => x.failed)
+      const reason = bothFailed ? 'bloqueado: os dois rascunhos falharam' : 'bloqueado: os rascunhos não fecharam antes da run terminar'
+      return { state: 'bloqueado', reason }
+    }
+    if (verdict) {
+      if (verdict.pass) return { state: 'pronto', reason: null }
+      if (verdict.via === 'check') {
+        const c = verdict.check || {}
+        const out = String(c.output || '').replace(/\s+/g, ' ').trim()
+        const reason = `falhou (check): ${c.cmd || '(comando desconhecido)'}` + (out ? `\n${out.slice(0, 300)}` : '')
+        return { state: 'falhou-check', reason }
+      }
+      const reps = xs.filter((x) => kindOf(x.label) === 'repair' || kindOf(x.label) === 'design-repair').length
+      const items = (verdict.blocking || []).map((b) => firstLine(String((b && b.issue) || b), 220)).filter(Boolean)
+      const first = items[0] || '(sem detalhe de bloqueio no resultado)'
+      const lines = [`falhou: reprovado na verificação — ${first}`, ...items.slice(1).map((i) => `- ${i}`)]
+      if (reps > 0) lines.push(ended ? 'reparo sem progresso' : 'reparo tentado, segue sem verificação aprovada')
+      else if (ended) lines.push('sem orçamento para reparar')
+      return { state: 'falhou', reason: lines.join('\n') }
+    }
+    if (pendingAfter === 'repair') {
+      if (!closed(id)) return { state: 'reparando', reason: null }
+      return { state: 'sem-reverificacao', reason: `sem-reverificacao: reparado, mas sem nova verificação — ${closedCause(id)}` }
+    }
     if (!verifiedEver && (deferred || closed(id) || (NEW && LEVEL ? false : !P))) {
       const flagsUnknown = NEW && LEVEL ? false : !P || (mode === undefined && n && n.rawKind === 'implement')
       if (flagsUnknown) {
         warns.push(`${id}: deferido ou reprovado? passe --economy e --mode`)
-        return 'pronto-sem-verif?'
+        return { state: 'pronto-sem-verif?', reason: null }
       }
-      return 'pronto-sem-verif'
+      return { state: 'pronto-sem-verif', reason: null }
     }
-    return 'verificando'
+    return { state: 'verificando', reason: null }
   }
 
   const nodes = [...NODES.values()].map((n) => {
-    let st = state(n.id)
+    const f0 = full(n.id)
+    let st = f0.state
+    let reason = f0.reason
     const xs = per.get(n.id) || []
     const reps = xs.filter((x) => kindOf(x.label) === 'repair' || kindOf(x.label) === 'design-repair').length
     // Revisão do design verificou o nó não-implement do round 1: sobrescreve o veredito do próprio
     // nó (§4.2). "falhou" vale mesmo sobre um verify próprio que passou; "pronto" só troca estados
     // sem verificação, porque um verify próprio que já reprovou continua valendo.
     if (NEW && HAS_DR && designReviewModel && n.round === 1 && n.kind !== 'implement') {
-      if (designReviewModel.state === 'falhou' && ended && designReviewModel.blocking.includes(n.id)) st = 'falhou'
-      else if (designReviewModel.state === 'pronto' && ['pronto-sem-verif', 'pronto-sem-verif?', 'sem-reverificacao'].includes(st)) st = 'pronto'
+      if (designReviewModel.state === 'falhou' && ended && designReviewModel.blocking.includes(n.id)) {
+        st = 'falhou'
+        const item = drLastBlockingRaw.find((b) => b && (b.node === n.id || String(b.node || b) === n.id))
+        const issue = item && item.issue ? firstLine(String(item.issue), 220) : ''
+        reason = `falhou: reprovado na revisão do design${issue ? ' — ' + issue : ''}`
+      } else if (designReviewModel.state === 'pronto' && ['pronto-sem-verif', 'pronto-sem-verif?', 'sem-reverificacao'].includes(st)) {
+        st = 'pronto'
+        reason = null
+      }
     }
     const out = { id: n.id, kind: n.kind, risk: n.risk, round: n.round || 1, title: n.title, deps: n.deps || [], explore: !!n.explore, state: st, reps, closed: closed(n.id) }
     if (n.orphan) out.orphan = true
@@ -835,6 +929,8 @@ export async function buildModel(opts = {}) {
     if (n.injected) {
       out.injected = true
       out.reason = n.reason || ''
+    } else if (REASON_STATES.has(st) && reason) {
+      out.reason = reason
     }
     if (ACTIVE_STATES.has(st)) {
       const open = xs.filter((x) => !x.done)
@@ -1210,7 +1306,8 @@ function renderCompact(model, layers, color, rows, cols) {
       const indent = '  '.repeat(k)
       const arrow = k ? '└▶ ' : ''
       const deps = n.deps && n.deps.length ? n.deps.join(' ') : n.orphan ? '?' : 'plan'
-      const line = `${indent}${arrow}[${marker}] ${n.id} ${label}  ← ${deps}`
+      const reasonSuffix = n.reason ? `  · ${firstLine(n.reason, 80)}` : ''
+      const line = `${indent}${arrow}[${marker}] ${n.id} ${label}  ← ${deps}${reasonSuffix}`
       lines.push({ id, c, text: paint(cutCols(line, cols), c, color) })
     }
   })
@@ -1249,6 +1346,16 @@ export function graphText(model, opts = {}) {
   const full = !hasOrphan && layers.every((L) => L.length * (BOX_W + 2) + Math.max(0, L.length - 1) * GAP <= cols)
   if (full && layers.length) {
     out.push(...renderBoxLayers(model, layers, color))
+    // O layout em caixas (diferente do compacto, que traz o motivo embutido na linha via
+    // `reasonSuffix`) não tem espaço para o texto dentro da caixa — por isso ele sai aqui, num
+    // bloco à parte, uma linha por nó com `n.reason` (REPAIR do I11: os dois layouts do snapshot
+    // precisam trazer o motivo, não só o compacto).
+    const withReason = model.nodes.filter((n) => n.reason)
+    if (withReason.length) {
+      out.push('')
+      out.push(cutCols('motivos:', cols))
+      for (const n of withReason) out.push(cutCols(`  ${n.id}: ${firstLine(n.reason, cols)}`, cols))
+    }
   } else {
     out.push(...renderCompact(model, layers, color, rows, cols))
   }
@@ -1603,7 +1710,8 @@ export async function runEventsMode(runDir, opts = {}) {
       const isFinal = FINAL_ALWAYS.has(n.state) || (FINAL_CLOSED.has(n.state) && n.closed)
       if (isFinal && emittedFinal.get(n.id) !== n.state) {
         emittedFinal.set(n.id, n.state)
-        console.log(eventLine(curModel, `${n.id} ${stateLabel(n)[0]}`))
+        const text = `${n.id} ${stateLabel(n)[0]}` + (n.reason ? ` — ${firstLine(n.reason, 140)}` : '')
+        console.log(eventLine(curModel, text))
       }
     }
     if (curModel.designReview) {

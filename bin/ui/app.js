@@ -28,7 +28,7 @@
 //                              config-modal.mjs (initSettings), chamada uma vez abaixo; o switch de tema mora lá.
 // A geometria vem de graph-layout.mjs (LAYOUT, placeGraph).
 
-import { STATE_TEXT, variantOf, hasRun, buildGraph, layoutGraph, placeGraph, laneTitle, nodeLabel, LAYOUT } from './graph-layout.mjs'
+import { STATE_TEXT, variantOf, hasRun, buildGraph, layoutGraph, placeGraph, laneTitle, nodeLabel, reasonOf, firstLine, LAYOUT } from './graph-layout.mjs'
 import { initSettings } from './config-modal.mjs'
 import { PAGE, STEP, sectionOf, titleOf, metaOf, stripOf, buildSections } from './sidebar.mjs'
 import { openConfirm } from './confirm.mjs'
@@ -66,6 +66,7 @@ const els = {
   drawer: $('drawer'),
   drawerTitle: $('drawer-title'),
   drawerState: $('drawer-state'),
+  drawerReason: $('drawer-reason'),
   drawerBody: $('drawer-body'),
   drawerClose: $('drawer-close'),
 }
@@ -211,9 +212,10 @@ function renderGraph(model) {
       setStyle(b, { left: `${p.x}px`, top: `${p.y}px` })
       b.style.setProperty('--i', p.col)
       const full = v.kind === 'node' ? `${v.id} · ${v.title}` : v.title
+      const reason = firstLine(reasonOf(v))
       setText(b.lastChild, nodeLabel(v))
-      b.title = full
-      b.setAttribute('aria-label', `${full}, ${STATE_TEXT[v.state] || v.state}`)
+      b.title = reason ? `${full}\n${reason}` : full
+      b.setAttribute('aria-label', `${full}, ${STATE_TEXT[v.state] || v.state}` + (reason ? `. Motivo: ${reason}` : ''))
       setData(b, { id: v.id, kind: v.kind, variant: variantOf(v.state), state: v.state, round: v.round, tone: toneOf(v.round), selected: v.id === openNodeId, injected: v.injected ? '1' : '' })
     },
   )
@@ -1168,6 +1170,11 @@ function renderDetailHead(detail, id) {
   if (!pseudo && title !== id) els.drawerTitle.append(' ', el('span', 'mono', `(${id})`))
   setText(els.drawerState, STATE_TEXT[state] || state)
   setData(els.drawerState, { variant: variantOf(state) })
+  // Motivo no topo da gaveta (7º pedido do PEDIDO.md): texto inteiro (pode ter várias linhas), só
+  // quando o modelo deu um — nunca inventado. Some (hidden) nos nós saudáveis/em andamento.
+  const reason = reasonOf(v)
+  els.drawerReason.hidden = !reason
+  if (reason) setText(els.drawerReason, reason)
 }
 
 // Só o conteúdo dos agentes fica aqui dentro; `.node-actions-slot` (Actions.renderNodeActions) é irmão

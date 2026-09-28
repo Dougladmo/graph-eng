@@ -281,6 +281,8 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
     for (const [p, type] of [
       ['/theme.js', /javascript/],
       ['/favicon.svg', /image\/svg\+xml/],
+      ['/favicon-32.png', /image\/png/],
+      ['/apple-touch-icon.png', /image\/png/],
       ['/fonts/geist-latin.woff2', /font\/woff2/],
       ['/fonts/geist-mono-latin.woff2', /font\/woff2/],
     ]) {
@@ -292,6 +294,13 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
     for (const p of ['/fonts/OFL.txt', '/fonts/x.woff2', '/../graph-watch.mjs', '/%2e%2e/graph-watch.mjs', '/x.js', '/ui/app.js', '/graph-watch.mjs', '/..%2fgraph-watch.mjs']) {
       assert.equal((await get(panel.port, p)).status, 404, `esperava 404 para ${p}`)
     }
+  })
+
+  test('/favicon.ico devolve um ícone de verdade (o PNG de 32px), não mais 204 vazio (7º pedido do PEDIDO.md)', async () => {
+    const r = await get(panel.port, '/favicon.ico')
+    assert.equal(r.status, 200)
+    assert.match(r.headers['content-type'], /image\/png/)
+    assert.ok(r.body && r.body.length > 0)
   })
 
   test('só GET: POST → 405 e nada muda', async () => {

@@ -353,6 +353,97 @@ describe('fixtures dedicadas de estado', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────
+// Motivo do nó (7º pedido do PEDIDO.md, "motivo de cada nó"): `n.reason` só existe nos 5 estados que
+// não terminaram verificados (pulado, falhou, falhou-check, bloqueado, sem-reverificacao), nunca
+// inventado — sempre derivado do journal (veredito do verificador, check vermelho, resultado do
+// worker ou estado das dependências). Os fixtures pequenos abaixo já existiam para os testes de
+// estado (§6.2); aqui só se confere o `reason` sobre o mesmo journal.
+// ─────────────────────────────────────────────────────────────────────────
+describe('motivo do nó (n.reason)', () => {
+  test('estados saudáveis não ganham reason (happy: pronto e pronto-sem-verif)', async () => {
+    const model = await buildModel({ runDir: fx('happy'), economy: 'balanced', mode: 'implement' })
+    assert.equal(nodeById(model, 'R1').reason, undefined)
+    assert.equal(nodeById(model, 'R2').reason, undefined)
+    assert.equal(nodeById(model, 'I2').reason, undefined)
+  })
+
+  test('falhou (check): reason cita o comando e a saída do check (happy cortado em work:I1)', async () => {
+    const model = await buildModel({ runDir: fx('happy'), economy: 'balanced', mode: 'implement', cutLine: 11 })
+    const i1 = nodeById(model, 'I1')
+    assert.equal(i1.state, 'falhou-check')
+    assert.match(i1.reason, /^falhou \(check\): npm run exemplo:check/)
+    assert.match(i1.reason, /falha de exemplo no check/)
+  })
+
+  test('falhou: reason traz o primeiro bloqueio do verificador no título (happy cortado em verify:I1 reprovado)', async () => {
+    const model = await buildModel({ runDir: fx('happy'), economy: 'balanced', mode: 'implement', cutLine: 15 })
+    const i1 = nodeById(model, 'I1')
+    assert.equal(i1.state, 'falhou')
+    assert.match(i1.reason.split('\n')[0], /^falhou: reprovado na verificação — bloqueio de exemplo um/)
+  })
+
+  test('bloqueado: reason traz o que o worker disse (wf_work_failed, work terminou em failed)', async () => {
+    const model = await buildModel({ runDir: fx('wf_work_failed'), economy: 'balanced', mode: 'implement' })
+    const x = nodeById(model, 'X')
+    assert.equal(x.state, 'bloqueado')
+    assert.match(x.reason, /^bloqueado: /)
+  })
+
+  test('pulado: dependência bloqueada nomeada no reason (wf_blocked, I1/I2/I3 dependem de R2)', async () => {
+    const model = await buildModel({ runDir: fx('wf_blocked'), economy: 'balanced', mode: 'implement' })
+    for (const id of ['I1', 'I2', 'I3']) {
+      assert.equal(nodeById(model, id).reason, `pulado: não rodou porque a dependência R2 ficou bloqueada`)
+    }
+  })
+
+  test('sem reverificação: reason explica por que fechou (wf_repair_noverify, X fecha porque Y já começou)', async () => {
+    const model = await buildModel({ runDir: fx('wf_repair_noverify'), economy: 'balanced', mode: 'implement' })
+    const x = nodeById(model, 'X')
+    assert.equal(x.state, 'sem-reverificacao')
+    assert.match(x.reason, /^sem-reverificacao: reparado, mas sem nova verificação — o nó Y já começou/)
+  })
+
+  // Fixture real (fixação copiada e anonimizada de uma execução real desta própria run do graph-eng,
+  // wf_bf053007-f97: teto de 50 agentes esgotado com I3/I6 falhos na verificação e I5/I7/I8/I9 sem
+  // rodar). Cobre, com evidência real, os 3 sabores de "pulado" e os 2 de "falhou".
+  describe('fixture real: wf_reasons_real (execução anterior desta run, teto de 50 agentes)', () => {
+    test('I5 pulado por orçamento (nenhuma dependência dele ficou pulada/bloqueada)', async () => {
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const i5 = nodeById(model, 'I5')
+      assert.equal(i5.state, 'pulado')
+      assert.equal(i5.reason, 'pulado: sem orçamento — o teto de 50 agentes acabou antes deste nó')
+    })
+
+    test('I7, I8 e I9 pulados em cascata: reason aponta a dependência I5, que foi pulada', async () => {
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      for (const id of ['I7', 'I8', 'I9']) {
+        assert.equal(nodeById(model, id).state, 'pulado')
+        assert.equal(nodeById(model, id).reason, 'pulado: não rodou porque a dependência I5 foi pulada')
+      }
+    })
+
+    test('I3 e I6 falhos: reason com o bloqueio real do verificador e o destino do reparo', async () => {
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const i3 = nodeById(model, 'I3')
+      const i6 = nodeById(model, 'I6')
+      assert.equal(i3.state, 'falhou')
+      assert.equal(i6.state, 'falhou')
+      assert.match(i3.reason.split('\n')[0], /^falhou: reprovado na verificação — A janela de escuta/)
+      assert.equal(i3.reason.trim().split('\n').pop(), 'reparo sem progresso') // repair:I3 rodou, verify falhou de novo
+      assert.match(i6.reason.split('\n')[0], /^falhou: reprovado na verificação — Não dá para fechar a seção/)
+      assert.equal(i6.reason.trim().split('\n').pop(), 'sem orçamento para reparar') // nunca chegou a reparar
+    })
+
+    test('DS terminou pronto (verificado e aprovado na revisão do design): sem reason', async () => {
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const ds = nodeById(model, 'DS')
+      assert.equal(ds.state, 'pronto')
+      assert.equal(ds.reason, undefined)
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
 // Propriedade sobre todas as fixtures, com as duas flags (§8.2 item 2, último parágrafo).
 //
 // A versão anterior comparava `n.state` com ele mesmo (`FAILED_STATES.has(n.state) &&
