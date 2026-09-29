@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg">
-    <img src="docs/assets/logo-light.svg" width="120" height="120" alt="Logo do graph-eng: quadrado escuro com quatro bolinhas em losango ligadas por linhas retas">
+    <img src="docs/assets/logo-light.svg" width="200" height="200" alt="Logo do graph-eng: quadrado escuro com quatro bolinhas em losango ligadas por linhas retas">
   </picture>
 </p>
 
@@ -13,7 +13,9 @@
 </p>
 
 <p align="center">
-  <a href=".claude-plugin/plugin.json"><img src="https://img.shields.io/badge/vers%C3%A3o-0.5.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versão 0.5.0"></a>
+  <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="stars"></a>
+  <a href=".claude-plugin/plugin.json"><img src="https://img.shields.io/badge/vers%C3%A3o-0.1.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versão 0.1.0"></a>
+  <a href="https://github.com/Dougladmo/graph-eng/commits"><img src="https://img.shields.io/github/last-commit/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=último%20commit" alt="último commit"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-1d1d1f?style=flat-square" alt="licença MIT"></a>
   <a href="#instalação"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="plugin do Claude Code"></a>
   <a href="#requisitos"><img src="https://img.shields.io/badge/Node-22-1d1d1f?style=flat-square" alt="Node 22"></a>
@@ -30,6 +32,19 @@
   <a href="skills/graph-eng/DESIGN.md">Por que o desenho é este</a>
 </p>
 
+<p align="center">
+  <strong>executor barato · revisor forte · toda implementação verificada por outro agente · painel ao vivo · 0 dependências</strong><br>
+  <sub>Workers em Sonnet, planner, verificador e critic no modelo da sessão. O design é revisado antes de implementar, e o grafo roda em loop até os critérios de pronto fecharem, dentro de um teto de agentes que você controla.</sub>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/painel-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/painel-light.png">
+    <img src="docs/assets/painel-light.png" width="860" alt="Painel do graph-eng com uma run fictícia rodando: na lateral, as runs em Fixadas, num grupo, Em andamento, Paradas e Finalizadas recolhida; no centro, o grafo em sete colunas de fase, com nós prontos, rodando, bloqueado, falho e pulado">
+  </picture>
+</p>
+
 ---
 
 ## O que é
@@ -44,14 +59,6 @@ PLAN ─▶ PESQUISA ─▶ DESIGN ─▶ REVISÃO DO DESIGN ─▶ [ DAG: work 
                                     ▲                                                                            │
                                     └─────────────────────────── gaps = novos nós ─────────────────────────────┘   (até maxRounds, ou sem gap novo)
 ```
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/painel-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/painel-light.png">
-    <img src="docs/assets/painel-light.png" width="860" alt="Painel do graph-eng com uma run fictícia rodando: na lateral, as runs em Fixadas, num grupo, Em andamento, Paradas e Finalizadas recolhida; no centro, o grafo em sete colunas de fase, com nós prontos, rodando, bloqueado, falho e pulado">
-  </picture>
-</p>
 
 Em dois comandos:
 
@@ -170,6 +177,11 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" ui
 # imprime "graph-eng: painel: http://127.0.0.1:<porta>"; abra "<url>/?run=<wf>" para uma run
 ```
 
+A skill sobe o painel com `ui --detach`, que solta o servidor num processo próprio: fechar a tarefa, o
+painel ou a sessão do Claude não derruba o localhost. Para subir na mão, use `/graph-eng:painel`; para
+parar, `/graph-eng:painel stop` (ou `graph-watch.mjs ui --stop`). O log do servidor desacoplado fica em
+`~/.claude/graph-eng/painel.log`.
+
 Roda em `127.0.0.1`, com **uma instância por máquina**: se a porta já tem um `graph-watch ui` no ar, o
 comando novo sai na hora reaproveitando ele. A porta padrão é 4477; troque com `--port <N>` ou com a
 variável `GRAPH_ENG_PORT` (a flag vence a variável). Para a skill usar outra porta sempre, fixe no
@@ -182,8 +194,8 @@ variável `GRAPH_ENG_PORT` (a flag vence a variável). Para a skill usar outra p
 Cada nó do grafo mostra uma bolinha — piscando quando está rodando agora, preenchida quando já rodou
 (vermelha se falhou) e vazia quando ainda não rodou. A lista lateral mostra as runs da máquina,
 organizada como no Claude Code (ver [Lista de runs](#lista-de-runs-fixadas-grupos-arquivadas)), e clicar
-num nó abre o detalhe (prompt, ferramentas recentes, resultado). Antes da 0.5.0 o painel só lia; agora
-também **age** sobre a run — ver a seção seguinte.
+num nó abre o detalhe (prompt, ferramentas recentes, resultado). O painel também **age** sobre a run —
+ver a seção seguinte.
 
 Um nó que não terminou verificado mostra o **motivo**, tirado só dos arquivos da run (journal, veredito
 do verificador, revisão do design) e nunca inventado: `pulado` (revisão do design reprovada, dependência
@@ -379,7 +391,10 @@ modal:
 | Comando | O que faz |
 | --- | --- |
 | `/graph-eng:graph-eng [flags] <modo> <tarefa>` | dispara uma run |
+| `/graph-eng:painel [stop]` | sobe o painel desacoplado da sessão, ou para ele |
 | `graph-watch.mjs ui` | sobe (ou reaproveita) o painel web |
+| `graph-watch.mjs ui --detach` | igual, mas num processo próprio, que sobrevive à sessão |
+| `graph-watch.mjs ui --stop` | para o painel que está no ar |
 | `graph-watch.mjs live --run <wf>` | grafo ao vivo em texto, num terminal à parte |
 | `graph-watch.mjs live --svg` | alias que garante o painel subindo e imprime o link |
 | `graph-watch.mjs snapshot --run <wf> --no-color` | uma foto do estado atual, para colar na conversa |
@@ -445,6 +460,8 @@ mudança sem o bump.
 skills/graph-eng/
   SKILL.md             triagem, spec, scout, parâmetros, esforço/teto, plan gate, ações sobre uma run, entrega
   DESIGN.md            decisão → evidência, com fontes
+commands/
+  painel.md            /graph-eng:painel: sobe o painel desacoplado da sessão (ou para, com stop)
 workflows/
   graph-eng.js         o grafo: plan → esqueleto de fases → DAG → verify/repair → critic → synth → args.resume
 docs/
@@ -478,3 +495,13 @@ bin/
 ## Licença
 
 [MIT](LICENSE)
+
+## Star History
+
+<a href="https://www.star-history.com/#Dougladmo/graph-eng&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date&theme=dark">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date">
+    <img alt="Star History do graph-eng" src="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date">
+  </picture>
+</a>
