@@ -15,11 +15,9 @@
 <p align="center">
   <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="stars"></a>
   <a href=".claude-plugin/plugin.json"><img src="https://img.shields.io/badge/vers%C3%A3o-0.1.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versão 0.1.0"></a>
-  <a href="https://github.com/Dougladmo/graph-eng/commits"><img src="https://img.shields.io/github/last-commit/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=último%20commit" alt="último commit"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-1d1d1f?style=flat-square" alt="licença MIT"></a>
   <a href="#instalação"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="plugin do Claude Code"></a>
   <a href="#requisitos"><img src="https://img.shields.io/badge/Node-22-1d1d1f?style=flat-square" alt="Node 22"></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/depend%C3%AAncias%20em%20runtime-0-1d1d1f?style=flat-square" alt="zero dependência em runtime"></a>
 </p>
 
 <p align="center">
