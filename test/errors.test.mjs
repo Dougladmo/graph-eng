@@ -38,19 +38,27 @@ function run(args, { input } = {}) {
 // `events` numa run interrompida NÃO sai sozinho (§7: "Não sai sozinho") — só emite a linha
 // "parada?" e continua esperando. Um `run()` que espera o processo fechar travaria para sempre,
 // então este helper mata o filho depois de `killAfterMs` e devolve o que já foi lido até lá.
-function runKillable(args, { killAfterMs = 700 } = {}) {
+// Com `stopWhen`, mata `graceMs` depois da primeira saída que casa, e `killAfterMs` vira só o teto.
+// Um prazo fixo curto falhava com a máquina carregada (várias suítes em paralelo): o filho morria
+// antes de subir o node e emitir a linha esperada.
+function runKillable(args, { killAfterMs = 700, stopWhen = null, graceMs = 600 } = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [BIN, ...args], { cwd: ROOT })
     let stdout = ''
     let stderr = ''
     let settled = false
+    let grace = null
     const finish = (code) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      clearTimeout(grace)
       resolve({ code, stdout, stderr })
     }
-    child.stdout.on('data', (d) => (stdout += d))
+    child.stdout.on('data', (d) => {
+      stdout += d
+      if (stopWhen && !grace && stopWhen.test(stdout)) grace = setTimeout(() => child.kill('SIGKILL'), graceMs)
+    })
     child.stderr.on('data', (d) => (stderr += d))
     child.on('error', () => finish(null))
     child.on('close', (code) => finish(code))
@@ -96,6 +104,22 @@ describe('exit codes e erros (§7, §8.2 item 6)', () => {
     const { code, stdout, stderr } = await run(['snapshot', '--projects-dir', projectsDir, '--wait-ms', '10', '--no-color'])
     assert.equal(code, 3)
     assert.match((stdout + stderr), /nenhuma run/)
+  })
+
+  test('snapshot de run terminada: "sem --run" só sai quando a run foi escolhida sozinha', async () => {
+    const projectsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-terminada-'))
+    try {
+      const dest = path.join(projectsDir, ROOT.replace(/[^A-Za-z0-9]/g, '-'), 'sess', 'subagents', 'workflows', 'wf_hhhh0000-hhh')
+      fs.cpSync(fx('happy'), dest, { recursive: true })
+      const auto = await run(['snapshot', '--projects-dir', projectsDir, '--no-color'])
+      assert.equal(auto.code, 0)
+      assert.match(auto.stdout, /aviso: sem --run, usando wf_hhhh0000-hhh \(terminada\)/)
+      const explicit = await run(['snapshot', '--projects-dir', projectsDir, '--run', 'wf_hhhh0000-hhh', '--no-color'])
+      assert.equal(explicit.code, 0)
+      assert.doesNotMatch(explicit.stdout, /sem --run/)
+    } finally {
+      fs.rmSync(projectsDir, { recursive: true, force: true })
+    }
   })
 
   test('linha JSON parcial/cortada: fica pendurada até completar, sem crash', async () => {
@@ -157,8 +181,9 @@ describe('modo events (§5.1, §8.2 item 7)', () => {
     const old = new Date(Date.now() - 15 * 60 * 1000)
     fs.utimesSync(path.join(dir, 'journal.jsonl'), old, old)
     // Run interrompida: o modo `events` não termina sozinho (§7), então não dá para esperar o
-    // processo fechar — mata-se o filho depois de ler o suficiente para ver "parada?" só uma vez.
-    const { stdout } = await runKillable(['events', '--run-dir', dir, '--no-color', '--wait-ms', '50'], { killAfterMs: 700 })
+    // processo fechar — mata-se o filho um tempo depois do "parada?", o bastante para ver que ele
+    // não se repete (com --wait-ms 50, uma dúzia de voltas do laço).
+    const { stdout } = await runKillable(['events', '--run-dir', dir, '--no-color', '--wait-ms', '50'], { killAfterMs: 10000, stopWhen: /parada\?/ })
     const matches = stdout.split('\n').filter((l) => /parada\?/.test(l))
     assert.equal(matches.length, 1)
   })

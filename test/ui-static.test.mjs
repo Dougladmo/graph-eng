@@ -22,11 +22,19 @@ const theme = fs.readFileSync(path.join(UI_DIR, 'theme.js'), 'utf8')
 const configModal = fs.readFileSync(path.join(UI_DIR, 'config-modal.mjs'), 'utf8')
 const agentTarget = fs.readFileSync(path.join(UI_DIR, 'agent-target.mjs'), 'utf8')
 const favicon = fs.readFileSync(path.join(UI_DIR, 'favicon.svg'), 'utf8')
+const sidebar = fs.readFileSync(path.join(UI_DIR, 'sidebar.mjs'), 'utf8')
+const confirmMod = fs.readFileSync(path.join(UI_DIR, 'confirm.mjs'), 'utf8')
+const actionsMod = fs.readFileSync(path.join(UI_DIR, 'actions.mjs'), 'utf8')
+const commandsMod = fs.readFileSync(path.join(UI_DIR, 'commands.mjs'), 'utf8')
 const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'bin', 'ui-server.mjs'), 'utf8')
 const graphHtml = html.slice(html.indexOf('<div id="graph">'), html.indexOf('<ul id="legend">'))
 
-test('app.js, graph-layout.mjs, theme.js e config-modal.mjs não usam innerHTML (sem innerHTML nenhum)', () => {
-  assert.equal(/innerHTML/.test(js + layout + theme + configModal), false)
+test('app.js, graph-layout.mjs, theme.js, config-modal.mjs, sidebar.mjs, confirm.mjs e actions.mjs não usam innerHTML (sem innerHTML nenhum)', () => {
+  assert.equal(/innerHTML/.test(js + layout + theme + configModal + sidebar + confirmMod + actionsMod), false)
+})
+
+test('sidebar.mjs, confirm.mjs e actions.mjs: sem createElementNS/getContext (SVG só no logo e no ícone estático)', () => {
+  assert.equal(/createElementNS|getContext\(/.test(sidebar + confirmMod + actionsMod), false)
 })
 
 test('index.html referencia só arquivos locais: theme.js antes do CSS, app.js como módulo', () => {
@@ -35,14 +43,14 @@ test('index.html referencia só arquivos locais: theme.js antes do CSS, app.js c
   assert.deepEqual(scriptSrcs, ['/theme.js', '/app.js'])
   assert.match(html, /<script type="module" src="\/app.js">/)
   assert.ok(html.indexOf('/theme.js') < html.indexOf('/style.css'), 'o tema tem que ser aplicado antes do CSS pintar')
-  assert.deepEqual(linkHrefs, ['/favicon.svg', '/style.css'])
+  assert.deepEqual(linkHrefs, ['/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png', '/style.css'])
   assert.equal(/https?:\/\//.test(html), false)
 })
 
 test('nenhuma URL externa (CDN) em bin/ui; fontes servidas pelo próprio painel', () => {
   // O namespace XML do SVG (`http://www.w3.org/2000/svg`) não é uma busca de rede e fica de fora.
   // comentário (o cabeçalho de licença do Tailwind cita o site) não é busca de rede e fica de fora
-  for (const src of [html, js, css, builtCss, layout, theme, configModal, agentTarget, favicon]) {
+  for (const src of [html, js, css, builtCss, layout, theme, configModal, agentTarget, favicon, sidebar, confirmMod, actionsMod, commandsMod]) {
     const withoutSvgNs = src.replaceAll('http://www.w3.org/2000/svg', '').replace(/\/\*[\s\S]*?\*\//g, '')
     assert.equal(/https?:\/\//.test(withoutSvgNs), false)
   }
@@ -54,7 +62,7 @@ test('nenhuma URL externa (CDN) em bin/ui; fontes servidas pelo próprio painel'
 })
 
 test('sem caminho absoluto da máquina em bin/ui', () => {
-  for (const src of [html, js, css, layout, theme, configModal, agentTarget]) {
+  for (const src of [html, js, css, layout, theme, configModal, agentTarget, sidebar, confirmMod, actionsMod, commandsMod]) {
     assert.equal(/\/Users\/|\/Volumes\//.test(src), false)
   }
 })
@@ -141,6 +149,15 @@ test('style.css estiliza as 5 variantes de bolinha por data-variant e a legenda 
   }
 })
 
+test('cabeçalho da run usa o mesmo nome da lateral (titleOf do runId), e o wf fica no title do h1', () => {
+  const start = js.indexOf('function renderHeader(')
+  const body = js.slice(start, js.indexOf('\n}\n', start))
+  assert.match(body, /model\.runId \? titleOf\(\{ runId: model\.runId \}\) : shortWf\(model\.wf\)/)
+  assert.match(body, /setText\(h1\.lastChild, name\)/)
+  assert.match(body, /h1\.title = model\.wf/)
+  assert.doesNotMatch(body, /setText\(h1\.lastChild, id\)/)
+})
+
 test('empty-msg e conn não são filhos de run-header (renderHeader não pode apagá-los)', () => {
   const headerOpen = html.indexOf('<header id="run-header"')
   const headerClose = html.indexOf('</header>', headerOpen)
@@ -214,4 +231,242 @@ test('tokens do painel viram utilitários do Tailwind e dark: segue o switch de 
   assert.match(css, /@import 'tailwindcss'/)
   assert.match(css, /@custom-variant dark \(&:where\(\[data-theme='dark'\]/)
   for (const t of ['bg', 'fg', 'fg3', 'surface', 'line', 'accent', 'red']) assert.match(css, new RegExp(`--color-${t}: var\\(--${t}\\)`))
+})
+
+// ── I6: lista lateral organizada (sidebar.mjs, confirm.mjs) — docs/specs/2026-09-28-acoes-no-painel.md C13 ──
+
+test('sidebar.mjs e confirm.mjs existem em bin/ui/ e são servidos pela regra fechada dos módulos da UI (C10)', () => {
+  assert.ok(fs.existsSync(path.join(UI_DIR, 'sidebar.mjs')))
+  assert.ok(fs.existsSync(path.join(UI_DIR, 'confirm.mjs')))
+  assert.match(serverSrc, /UI_MODULE_RE\s*=\s*\/\^\\\/\(\[a-z0-9-\]\+\\\.mjs\)\$\//)
+})
+
+test('app.js importa sidebar.mjs e confirm.mjs, e não reimplementa a lógica de seção/ordenação', () => {
+  assert.match(js, /from '\.\/sidebar\.mjs'/)
+  assert.match(js, /from '\.\/confirm\.mjs'/)
+  assert.match(js, /buildSections\(/)
+  assert.match(js, /openConfirm\(/)
+})
+
+test('index.html tem o cabeçalho da lista (busca, filtro, novo grupo), #run-lists e o dialog#confirm', () => {
+  assert.match(html, /id="runs-search-btn"[^>]*aria-label="Buscar runs"/)
+  assert.match(html, /id="runs-filter-btn"[^>]*aria-haspopup="menu"/)
+  assert.match(html, /id="runs-new-group-btn"[^>]*aria-label="Novo grupo"/)
+  assert.match(html, /id="run-lists"/)
+  assert.match(html, /<dialog id="confirm"/)
+  assert.match(html, /id="confirm-typed"/)
+  assert.equal(/id="group-active"|id="group-done"/.test(html), false, 'as seções fixas antigas saíram; sidebar.mjs monta as seções dinamicamente')
+})
+
+test('sidebar.mjs exporta o contrato de C13/D4 §4.12', () => {
+  assert.match(sidebar, /export const PAGE = 10/)
+  assert.match(sidebar, /export const STEP = 20/)
+  assert.match(sidebar, /export const STRIP_MAX = 10/)
+  assert.match(sidebar, /export const DEFAULT_OPEN = /)
+  assert.match(sidebar, /export function sectionOf\(/)
+  assert.match(sidebar, /export function titleOf\(/)
+  assert.match(sidebar, /export function metaOf\(/)
+  assert.match(sidebar, /export function stripOf\(/)
+  assert.match(sidebar, /export function buildSections\(/)
+})
+
+test('confirm.mjs exporta openConfirm no formato de C13/D4 §4.8', () => {
+  assert.match(confirmMod, /export function openConfirm\(\{\s*title,\s*body,\s*typed = null,\s*check = null,\s*confirmText/)
+})
+
+test('accordion: seta com aria-expanded, giro em CSS e memória no localStorage (D4 §4.2)', () => {
+  assert.match(js, /aria-expanded/)
+  assert.match(js, /graph-eng-sections/)
+  assert.match(css, /\.sec-toggle\[aria-expanded='true'\] \.chev/)
+  assert.match(css, /\.chev\s*\{[^}]*transition: transform/)
+})
+
+test('run-row: bolinha + título + fileira, ⋯ no hover/foco, sem botão dentro de botão (D4 §4.4)', () => {
+  assert.match(js, /class="run-row"|'run-row'/)
+  assert.match(js, /row-dot/)
+  assert.match(css, /\.run-row:hover \.run-more,\s*\n\s*\.run-row:focus-within \.run-more/)
+  // .run-more nunca fica aninhado dentro de .run-btn (button dentro de button é inválido)
+  const rowRowBlock = js.slice(js.indexOf("el('div', 'run-row')"), js.indexOf('function updateRunRow'))
+  assert.doesNotMatch(rowRowBlock, /btn\.append\([^)]*more/)
+})
+
+test('drag and drop: dataTransfer com o mimetype do contrato (D4 §4.6)', () => {
+  assert.match(js, /application\/x-graph-eng-run/)
+})
+
+test('updateSectionEl grava s.kind: sem isso onSectionDrop nunca reconhece uma seção de grupo (arrastar para grupo desagrupa/desfixa em vez de mover)', () => {
+  const updateBlock = js.slice(js.indexOf('function updateSectionEl'), js.indexOf('function renderSectionActions'))
+  assert.match(updateBlock, /s\.kind\s*=\s*sec\.kind/)
+  const dropBlock = js.slice(js.indexOf('function onSectionDrop'), js.indexOf('function onSectionDrop') + 800)
+  assert.match(dropBlock, /s\.kind === 'group'/)
+})
+
+test('organização chama as rotas POST /api/org/\\* (C10 O1-O9), nunca PUT nem GET para escrever', () => {
+  for (const op of ['pin', '/api/org/groups', 'move', 'archive', 'delete', 'delete-finished']) {
+    assert.ok(js.includes(op), `rota/operação ${op} não encontrada em app.js`)
+  }
+  assert.match(js, /method: 'POST'/)
+})
+
+// ── I7: ações da run (actions.mjs, commands.mjs) — docs/specs/2026-09-28-acoes-no-painel.md C14 ──
+
+test('actions.mjs e commands.mjs existem em bin/ui/ e são servidos pela regra fechada dos módulos da UI (C10)', () => {
+  assert.ok(fs.existsSync(path.join(UI_DIR, 'actions.mjs')))
+  assert.ok(fs.existsSync(path.join(UI_DIR, 'commands.mjs')))
+})
+
+test('commands.mjs não importa bin/requests.mjs: no navegador isso resolveria para /requests.mjs (I5, pendência do I3)', () => {
+  assert.equal(/from ['"]\.\.\/requests\.mjs['"]/.test(commandsMod), false)
+  assert.match(commandsMod, /WF_RE\s*=\s*\/\^wf_/)
+  assert.match(commandsMod, /NODE_RE\s*=/)
+})
+
+test('app.js importa actions.mjs e chama initActions/render/renderNodeActions, sem reimplementar a fila', () => {
+  assert.match(js, /from '\.\/actions\.mjs'/)
+  assert.match(js, /Actions\.initActions\(/)
+  assert.match(js, /Actions\.render\(/)
+  assert.match(js, /Actions\.renderNodeActions\(/)
+})
+
+test('index.html tem #run-actions, #act-why, #req-status fora de run-header, e o campo do limiar de parada no modal', () => {
+  const headerOpen = html.indexOf('<header id="run-header"')
+  const headerClose = html.indexOf('</header>', headerOpen)
+  for (const id of ['run-actions', 'act-why', 'req-status']) {
+    const idx = html.indexOf(`id="${id}"`)
+    assert.ok(idx >= 0, `${id} não encontrado`)
+    assert.ok(idx < headerOpen || idx > headerClose, `${id} está dentro de run-header`)
+  }
+  assert.match(html, /id="cfg-stall"[^>]*type="number"/)
+  assert.match(html, /id="cfg-stall-err"[^>]*class="field-err"/)
+})
+
+test('config-modal.mjs lê e grava stallMinutes como os outros campos numéricos, com erro inline do PUT', () => {
+  assert.match(configModal, /cfg-stall/)
+  assert.match(configModal, /stallMinutes/)
+  assert.match(configModal, /els\.stall\.value = String\(config\.stallMinutes\)/)
+})
+
+test('textos-chave das ações estão presentes (D3 §8.2)', () => {
+  for (const text of [
+    'Retomar',
+    'Parar…',
+    'Refazer nó…',
+    'Refazer também os dependentes',
+    'Copiar para retomar',
+    'Copiar para parar',
+    'Copiar para refazer',
+    'sessão ouvindo',
+    'nenhuma sessão ouvindo',
+    'Artefatos',
+    'Considerar parada depois de',
+  ]) {
+    assert.ok((actionsMod + html).includes(text), `texto "${text}" não encontrado em actions.mjs/index.html`)
+  }
+})
+
+test('selo "retomado": chip-resumed só aparece com node.resumed === true (P3, herdado do I8)', () => {
+  assert.match(actionsMod, /chip-resumed/)
+  assert.match(actionsMod, /retomado/)
+  assert.match(actionsMod, /node\.resumed === true/)
+})
+
+test('style.css (fonte e gerado) tem as classes novas do item 1/4/5 (C14 §4.8)', () => {
+  for (const sel of ['.chip-listen', '.chip-reason', '#run-actions', 'pre.artifact', '.danger']) {
+    assert.ok(css.includes(sel), `falta ${sel} em bin/ui/src/style.css`)
+    assert.ok(builtCss.includes(sel.replace(/^\./, '.').replace('#', '#')) || builtCss.includes(sel), `falta ${sel} em bin/ui/style.css (rode npm run css:build)`)
+  }
+})
+
+test('clipboard: writeText dentro do handler de clique, com fallback textarea+execCommand e dialog final', () => {
+  assert.match(actionsMod, /navigator\.clipboard\.writeText/)
+  assert.match(actionsMod, /execCommand\('copy'\)/)
+  assert.match(actionsMod, /Copie o comando/)
+})
+
+test('dialogs de Parar e Refazer reaproveitam openConfirm (confirm.mjs), sem reimplementar o dialog', () => {
+  assert.match(actionsMod, /from '\.\/confirm\.mjs'/)
+  assert.match(actionsMod, /openConfirm\(\{/)
+  assert.match(actionsMod, /Parar a run\?/)
+  assert.match(actionsMod, /Refazer /)
+})
+
+// REPAIR (I7.md): o refresh de ~1 s não pode fechar "Saída do nó" nem descartar o arquivo escolhido na
+// gaveta de artefatos, #req-status não pode vazar o pedido de outra run, e falta o histórico (E2).
+
+test('renderDetail (app.js) escreve num wrapper próprio, sem apagar .node-actions-slot a cada refresh', () => {
+  // app.js não pode voltar a fazer `els.drawerBody.replaceChildren()` dentro de renderDetail: isso
+  // apagaria o bloco que actions.mjs mantém entre polls (details aberto + arquivo carregado).
+  assert.match(js, /function agentContentEl\s*\(/)
+  assert.match(js, /\.querySelector\('\.agent-content'\)/)
+  const renderDetailBody = js.slice(js.indexOf('function renderDetail(detail)'), js.indexOf('function renderDetail(detail)') + 400)
+  assert.doesNotMatch(renderDetailBody, /els\.drawerBody\.replaceChildren\(\)/)
+})
+
+test('openDetail (app.js) põe o "Carregando…" dentro de .agent-content, nunca solto em #drawer-body', () => {
+  // renderDetail só reescreve .agent-content; um .drawer-note filho direto de #drawer-body ficaria para
+  // sempre entre as ações e os agentes (regressão apontada no REPAIR do I7).
+  const start = js.indexOf('async function openDetail(')
+  assert.ok(start >= 0)
+  const openDetailBody = js.slice(start, js.indexOf('\n}\n', start))
+  assert.match(openDetailBody, /agentContentEl\(\)\.replaceChildren\(el\('p', 'drawer-note', 'Carregando…'\)\)/)
+  assert.doesNotMatch(openDetailBody, /els\.drawerBody\.(replaceChildren|append|prepend)\(el\(/)
+})
+
+test('openDetail (app.js) sai do modo run antes de montar a gaveta do nó', () => {
+  // Vindo dos Artefatos sem fechar a gaveta, o artifactsState seguia preenchido e cada refresh
+  // anexava a lista "Pedidos" (E2) na gaveta do nó (achado da última verificação do I7).
+  const start = js.indexOf('async function openDetail(')
+  const openDetailBody = js.slice(start, js.indexOf('\n}\n', start))
+  const leave = openDetailBody.indexOf('Actions.onDrawerClosed()')
+  assert.ok(leave > openDetailBody.indexOf("drawerMode = 'node'"), 'openDetail deveria chamar Actions.onDrawerClosed() depois de entrar no modo nó')
+  assert.ok(leave < openDetailBody.indexOf('await loadDetail('), 'e antes de carregar o detalhe')
+  assert.match(actionsMod, /export function onDrawerClosed\(\) \{\s*artifactsState = null/)
+})
+
+test('openArtifacts (actions.mjs) esconde o motivo do nó ao entrar no modo run', () => {
+  // O #drawer-reason é do nó (renderDetailHead): vindo da gaveta de um nó falho sem fechar, o motivo
+  // dele seguia no topo dos artefatos da run.
+  const start = actionsMod.indexOf('async function openArtifacts(')
+  const body = actionsMod.slice(start, actionsMod.indexOf('\n}\n', start))
+  assert.match(actionsMod, /drawerReason: \$\('drawer-reason'\)/)
+  assert.match(body, /refs\.drawerReason\.hidden = true/)
+})
+
+test('actions.mjs reaproveita .node-actions do mesmo nó em vez de recriar o bloco a cada renderNodeActions', () => {
+  assert.match(actionsMod, /node-actions-slot/)
+  assert.match(actionsMod, /const sameNode = current && current\.id === id/)
+  assert.match(actionsMod, /let block = slot\.querySelector\('\.node-actions'\)/)
+})
+
+test('gaveta de artefatos guarda o arquivo escolhido e não volta pro REPORT.md nem para "Carregando…" no refresh', () => {
+  assert.match(actionsMod, /artifactsState\.current/)
+  assert.match(actionsMod, /export function refreshArtifacts\s*\(\)\s*\{\s*\n\s*if \(artifactsState && artifactsState\.wf\) loadArtifacts\(artifactsState\.wf, false\)/)
+  assert.match(actionsMod, /function loadArtifacts\(wf, reset\)/)
+  // reset=false não pode substituir o corpo por "Carregando…"
+  const loadArtifactsBody = actionsMod.slice(actionsMod.indexOf('async function loadArtifacts'), actionsMod.indexOf('function renderArtifactsBody'))
+  assert.doesNotMatch(loadArtifactsBody, /if \(!reset\)[\s\S]{0,80}Carregando/)
+})
+
+test('#req-status não mistura o pedido de uma run com o de outra (lastRequest preso ao runKey)', () => {
+  assert.match(actionsMod, /lastRequest\.runKey !== runKey/)
+})
+
+test('E2: histórico dos 5 últimos pedidos na gaveta em modo run', () => {
+  assert.match(actionsMod, /function renderRequestsSection\(model\)/)
+  assert.match(actionsMod, /\.slice\(0, 5\)/)
+  assert.match(actionsMod, /artifact-requests/)
+  assert.match(actionsMod, /renderRequestsSection\(model\)/) // render() chama a cada refresh
+  assert.match(actionsMod, /renderRequestsSection\(lastModel\)/) // renderArtifactsBody também chama, na abertura
+})
+
+test('style.css: .btn-ghost e .btn-link ficam esmaecidos quando disabled, sem hover ativo (r2-G1)', () => {
+  for (const target of [css, builtCss]) {
+    assert.match(target, /\.btn-ghost:disabled,\s*\n?\s*\.btn-link:disabled\s*\{[^}]*opacity:\s*0?\.5[^}]*cursor:\s*default/)
+    assert.match(target, /\.btn-ghost:disabled:hover\s*\{[^}]*background:\s*none/)
+    assert.match(target, /\.btn-link:disabled:hover\s*\{[^}]*text-decoration:\s*none/)
+    assert.match(target, /\.btn-ghost\.danger:disabled:hover\s*\{[^}]*background:\s*none/)
+  }
+  // o hover do 'Parar…' desabilitado não pode manter o fundo vermelho
+  const dangerDisabledHover = css.slice(css.indexOf('.btn-ghost.danger:disabled:hover'))
+  assert.doesNotMatch(dangerDisabledHover.slice(0, dangerDisabledHover.indexOf('}')), /red-soft/)
 })

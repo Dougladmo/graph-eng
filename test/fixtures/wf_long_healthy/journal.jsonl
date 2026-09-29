@@ -1,0 +1,4 @@
+{"type": "launched"}
+{"type": "started", "key": "v2:1111111111111111111111111111111111111111111111111111111111111111", "agentId": "h0001healthyaaaaaa", "label": "plan", "phase": "Plan"}
+{"type": "result", "key": "v2:1111111111111111111111111111111111111111111111111111111111111111", "agentId": "h0001healthyaaaaaa", "result": {"goal": "Exemplo de run para teste de detecção de parada.", "complexity": "simple", "doneWhen": ["critério de exemplo"], "assumptions": [], "nodes": [{"id": "X", "title": "Nó de exemplo X", "kind": "implement", "brief": "Fazer exemplo X.", "deps": [], "risk": "medium", "acceptance": ["critério de exemplo"]}], "questions": []}}
+{"type": "started", "key": "v2:2222222222222222222222222222222222222222222222222222222222222222", "agentId": "h0002healthyaaaaaa", "label": "work:X", "phase": "Execute"}

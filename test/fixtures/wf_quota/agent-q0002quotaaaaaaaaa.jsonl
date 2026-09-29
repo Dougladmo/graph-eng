@@ -1,0 +1,1 @@
+{"type": "assistant", "timestamp": "2026-01-01T09:05:00.000Z", "isApiErrorMessage": true, "error": "rate_limit", "apiErrorStatus": 429, "quotaLimits": {"status": "rejected"}, "message": {"role": "assistant", "content": [{"type": "text", "text": "You've hit your org's monthly spend limit"}]}}

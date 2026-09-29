@@ -122,7 +122,7 @@ metade). A skill lê a config por um binário próprio, `bin/graph-config.mjs --
 de fora, que resolve a config e passa os valores como argumentos. Manter isso fora de `graph-watch.mjs` evita
 que o CLI de visualização (que já cresce a cada fase nova) dispute responsabilidade com o de config. O
 `PUT /api/config` **substitui** o arquivo inteiro (chave ausente no corpo volta ao padrão) em vez de fazer
-merge parcial, porque um merge implícito escondida do usuário do modal qual campo realmente mudou depois de
+merge parcial, porque um merge implícito esconderia do usuário do modal qual campo realmente mudou depois de
 uma edição anterior malformada.
 
 ### `Origin` obrigatório na escrita, sem CORS
@@ -176,6 +176,15 @@ por arquivo, não por run inteira: dois agentes escrevendo arquivos diferentes n
 verify, e o motor reserva o slot de verify de cada um antes de liberar o `work` concorrente (para o
 orçamento de um não roubar o do outro).
 
+Arquivos disjuntos não bastam: a árvore é uma só e nada da run está commitado. Por isso todo agente
+recebe no prefixo a proibição de `stash`, `reset`, `checkout`, `restore` e `clean`, e a linha de base
+se mede num `git worktree add --detach <tmp> HEAD`. A pilha de stash também é uma só, compartilhada por
+todos os worktrees do repo, então usar stash dentro do worktree descartável também não é seguro. Foi
+o que aconteceu na run `20260928-1146-acoes-no-painel`. Um executor fez stash e pop no repo para medir
+a linha de base, e o verificador de outro nó fez o mesmo no worktree dele. Os dois pops trocaram as
+entradas da pilha: o trabalho de 3 nós foi parar no worktree do verificador, e o repo ficou só com
+os 3 arquivos do outro nó.
+
 ### Síntese: `ceil(2/3 × implement)` polidores + 1 consolidador
 
 Vários nós `implement` em paralelo podem gerar inconsistência de estilo/interface entre arquivos que não
@@ -221,6 +230,148 @@ rodaria de qualquer forma, porque o motor só convertia `implement→design` em 
 (`READ_ONLY`). A correção calcula o modo real (`RMODE`) sobre o plano cru, antes de normalizar, e o
 `normalize` converte `implement→design` sempre que `RMODE !== 'implement'` — architecture produz decisão
 (ADR), nunca código.
+
+## Painel com ações sobre a run (0.5.0)
+
+Até a 0.4.0 o painel (`bin/ui-server.mjs` + `bin/ui/`) só lia arquivo, com a única exceção do
+`PUT /api/config`. A 0.5.0 (spec `docs/specs/2026-09-28-acoes-no-painel.md`) deixa o painel retomar
+uma run parada, parar uma run, refazer um nó, copiar o comando pronto e ver os artefatos — e organiza
+a lista lateral como no Claude Code. As decisões abaixo resumem o porquê; o detalhe contratual (formato
+de cada arquivo, máquina de estados, regex) está na spec.
+
+### Canal por fila em arquivo, nunca chamada direta
+
+O Workflow roda dentro da sessão do Claude Code, sem filesystem nem API do Node, e `resumeFromRunId` só
+vale na mesma sessão (doc da tool Workflow). O painel é outro processo e não tem como controlar o
+workflow. Por isso o painel **pede** — grava um pedido (`resume`, `stop` ou `rerun-node`) numa fila em
+arquivo, gravação atômica, com o mesmo padrão tmp+rename de `bin/config.mjs` — e a sessão **executa**,
+lendo a fila pelo `graph-watch events` que a skill já deixa rodando no Monitor
+(`skills/graph-eng/SKILL.md:219-226`). Cada linha do `events` vira um evento para o Claude (doc da tool
+Monitor), e é por isso que o pedido chega sem polling do lado da sessão.
+
+### Quem atende cada pedido: por projeto, exceto `stop`
+
+`resume` e `rerun-node` vão para a primeira sessão ouvindo **no mesmo projeto** (slug do cwd) que aceitar
+o pedido — o motor retomável (abaixo) dispensa `resumeFromRunId`, então qualquer sessão do projeto serve
+igual. `stop` só vai para a **sessão dona** da run, porque só ela pode chamar `TaskStop(task_id)` sobre a
+própria task (doc da tool Monitor: `TaskStop` só alcança task da própria sessão). Exceção de segurança: se
+a run está `parada` mas o motivo não é "interrompida" e a dona ainda está ouvindo, `resume`/`rerun-node`
+também vão só para a dona — porque "parada" pode ser falso positivo (ver abaixo) e disparar um 2º
+Workflow sobre um 1º ainda vivo duplicaria a execução; só a dona sabe parar o 1º antes de disparar o novo.
+
+### Detecção de parada com motivo, não só um `idleSec`
+
+O `"parada?"` de hoje mede o mtime do journal (`idleSec>600` em `graph-watch.mjs:584`), que só muda
+quando um agente começa ou termina — uma run saudável pode ficar 700s+ entre duas linhas sem estar morta.
+`computeStop()` passa a decidir por N minutos sem escrita no histórico do agente **em execução** (padrão
+5, configurável), ou sessão encerrada, ou orçamento esgotado, e devolve o motivo junto ("sem atividade há
+X min", "sessão encerrada", "orçamento esgotado") — o painel mostra o motivo, não só o selo. A linha
+"agora" (`buildNowBlock`) passou a contar também os pseudo-agentes `critic` e `synth`, que antes
+desapareciam da run corrente por não terem `kind` de nó comum.
+
+### Motor retomável por args, não por `resumeFromRunId`
+
+`workflows/graph-eng.js` passa a aceitar, pelos args, os nós já prontos (`args.resume.done`) e os que
+devem ser refeitos (com a opção de arrastar os dependentes). Um nó pronto que não está na lista de refazer
+não gera agente nenhum — o motor popula `RESULTS` com o resultado gravado, sem chamar `agent()`. É o que
+faz a retomada por outra sessão funcionar (P1 acima): o estado necessário vem nos args, não de um
+`resumeFromRunId` amarrado à sessão original. Os trilhos, o esforço e o teto continuam valendo, e o teto
+conta só os agentes que ainda vão rodar — sem isso, uma retomada de uma run de 42 nós com 35 prontos
+cortaria nós já prontos do plano em vez de ignorá-los (ver "Trilho `maxNodes` na retomada" abaixo).
+
+### Trilho `maxNodes` na retomada: nó pronto não conta contra o teto
+
+A classificação de nós prontos passa a rodar **antes** do corte pelo teto de nós, e o corte ganha uma
+lista de ids protegidos que nunca é cortada e não conta contra o teto — o teto vale só sobre os nós
+pendentes. Sem essa ordem, uma retomada com muitos nós prontos e poucos pendentes podia estourar o teto
+por causa de nós que já não iam gerar agente nenhum, cortando exatamente o nó que faltava refazer.
+
+### Artefatos da run, só leitura, sem sair do diretório da run
+
+A gaveta do painel lê o `REPORT.md`, o plano e a saída de cada nó direto de `.graph-runs/<run>/`. Cada
+caminho pedido é resolvido e conferido contra o diretório da run antes de servir (mesma lógica de
+contenção que `bin/organize.mjs` usa para apagar), porque o runId e o id do nó vêm de fora, validados só
+pela regex — sem essa checagem, um id malicioso poderia ler qualquer arquivo do disco que o processo
+enxergasse.
+
+### Organização da lista como no Claude Code: um lugar só por run
+
+Fixar, agrupar, arquivar e apagar seguem o mesmo padrão do sidebar do Claude Code: fixadas no topo,
+grupos do usuário, depois as seções por estado. Uma run fica **num lugar só** — fixada vence grupo, e
+grupo vence as seções de estado — porque múltiplos lugares tornariam a lista ambígua sobre onde clicar
+para agir sobre aquela run. Apagar um grupo devolve as runs dele para a seção do estado delas, em vez de
+apagar as runs junto: o grupo é só organização, nunca dono do ciclo de vida da run.
+
+A chave de organização é o **runId**, não o `wf`, porque uma run retomada nasce com outro `wf` e a
+organização (fixada, grupo, arquivada) precisa sobreviver à retomada — do contrário, retomar uma run
+fixada a "perderia" da seção Fixadas.
+
+### Finalizadas recolhida por padrão, e toda seção é accordion
+
+Finalizadas normalmente é a seção mais longa e a menos acionável — por isso começa fechada, com a
+contagem no cabeçalho, como o "Ungrouped" fechado do sidebar de referência do Claude Code (item 12 do
+pedido). A mesma mecânica de accordion (seta `⌄`/`›`, `aria-expanded`, estado lembrado no navegador) vale
+para todas as seções — Fixadas, cada grupo, Em andamento, Paradas e Finalizadas —, não só Finalizadas,
+porque um usuário com muitos grupos precisa poder fechar qualquer um deles, não só o balde de
+finalizadas.
+
+### Paradas fora de "Em andamento", numa seção própria
+
+Uma run com o selo "parada?" listada dentro de "Em andamento" mistura o que está progredindo com o que
+morreu — e o selo de hoje é falso positivo com frequência (seção anterior), então misturar as duas
+esconde tanto runs saudáveis quanto runs mortas dentro do mesmo grupo. Runs paradas (pelo `computeStop`
+com motivo) saem de "Em andamento" e ganham seção própria entre "Em andamento" e "Finalizadas". Uma run
+`planOnly` — só o planner rodou e nunca vai rodar mais nada — não conta como parada: ou é o plano de uma
+run real de mesmo runId (soma nela), ou conta como terminada, nunca como "parada" à espera de continuar.
+
+### Apagar exige o nome digitado, e nunca toca `~/.claude/projects`
+
+Apagar uma run remove só `.graph-runs/<run>/` — nunca os históricos de agente em `~/.claude/projects`,
+que pertencem à sessão do Claude Code, não ao plugin. A confirmação pede o nome da run digitado (padrão
+já usado em ações destrutivas de outros produtos), porque um clique duplo acidental num botão de lista
+apaga trabalho que não tem desfazer.
+
+### Motivo de cada nó, tirado só dos arquivos da run
+
+Um nó que não terminou verificado (`pulado`, `falhou`, `falhou (check)`, `bloqueado`, `sem
+reverificação`) ganha um motivo — mas o motivo nunca é inventado nem resumido por heurística: sai direto
+do journal, do veredito do verificador ou da revisão do design daquela run, na mesma ordem que o motor
+decide `closed(id)`. Estados saudáveis ou esperados (rodando, verificando, reparando, aguardando) ficam
+sem motivo, porque motivo é para quando algo não fechou como devia, não para narrar o fluxo normal. O
+motivo aparece em quatro lugares — `title`/`aria-label` da bolinha no grafo, a gaveta de detalhe do nó, a
+linha de marco final do `graph-watch events` e o bloco `motivos:` do `graph-watch snapshot` — porque são
+as quatro formas de olhar a run (painel, terminal ao vivo, terminal em foto) e nenhuma delas devia exigir
+abrir o journal a mão para saber por que um nó não passou.
+
+Quando o journal não separa duas causas, o motivo cita as duas em vez de escolher uma. O journal só
+guarda `started`/`result` de agente: o `log()` do motor e os trilhos não chegam nele. Um nó que o motor
+terminou sem rodar, com as dependências prontas, ficou sem vaga (`canSpend` mede contra o alvo do nível,
+que pode ter subido depois do plano, e guarda vagas para as fases finais, então pula antes do teto) ou foi
+cortado do plano por tamanho (`applyMaxNodes`), e os dois ficam iguais nos arquivos. O teto só é citado
+quando o gasto chegou nele. Já a revisão do design reprovada tem prova no journal, e o motor pula toda
+implementação do round 1 por ela antes de olhar dependência, então esse motivo vem primeiro. No reparo,
+"sem progresso" é conta do journal (o veredito seguinte não tem menos bloqueios, a mesma regra do
+motor). Com progresso, reparos esgotados e falta de vaga ficam iguais, e o motivo diz as duas coisas.
+
+### Favicon com PNG, porque SVG não roda em todo navegador
+
+O painel tinha só `favicon.svg`, e o Safari (desktop e iOS) não renderiza favicon SVG — a aba fica sem
+ícone. `/favicon.ico` também respondia 204 vazio, então nem o fallback padrão do navegador achava nada.
+A correção é gerar, uma vez e versionar, `favicon-32.png` (32×32, o tamanho que a maioria dos navegadores
+pede) e `apple-touch-icon.png` (ícone ao adicionar a página à tela de início), a partir do mesmo SVG do
+logo do cabeçalho (`bin/ui/index.html:15`) — sem depender de biblioteca de conversão em runtime, já que o
+plugin não tem `npm install` na instalação. `/favicon.ico` passa a devolver o PNG de 32px em vez do 204:
+não existe um `.ico` de verdade, mas todo navegador que bate nesse caminho aceita um PNG na resposta.
+
+### Resumo compacto das bolinhas na lista, acima de X nós
+
+A linha de cada run na lateral mostrava uma bolinha por nó do grafo, igual ao grafo grande — e numa run
+com muitos nós a fileira quebrava em 2 ou 3 linhas, desalinhando a lista inteira. Acima de `STRIP_MAX`
+nós (`bin/ui/sidebar.mjs`, hoje 10 — escolhido por ser a maior contagem que ainda cabe numa linha sem quebrar nas
+larguras testadas), a linha troca a fileira de bolinhas por um resumo por estado: uma bolinha com a
+contagem de nós com erro, rodando e concluídos. O texto por extenso continua indo para `title` e
+`aria-label`, porque o resumo visual comprime a informação, não a esconde de quem usa leitor de tela ou
+passa o mouse.
 
 ## Spec: quanto escrever antes do grafo
 

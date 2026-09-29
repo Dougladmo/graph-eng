@@ -84,7 +84,7 @@ function reprovedWithoutLaterRepair(dir, cutLine) {
 }
 
 const mod = await import('../bin/graph-watch.mjs').catch((e) => ({ __importError: e }))
-const { buildModel, normalizeNodes, estimateAgents, applyRails, GraphWatchError } = mod
+const { buildModel, normalizeNodes, estimateAgents, applyRails, GraphWatchError, computeStop, buildNowBlock } = mod
 const { estimateAgents: estimateTarget } = await import('../bin/ui/agent-target.mjs')
 const { runWorkflow, defaultScript } = await import('./helpers/run-workflow.mjs')
 
@@ -214,6 +214,116 @@ describe('fixtures dedicadas de estado', () => {
     assert.equal(model.status, 'parada?')
   })
 
+  test('wf_long_healthy: agente aberto sem escrita há 4 min segue rodando (N=5); a 12 min, parada só sem ouvinte', async () => {
+    // Copia (o git não preserva mtime) e envelhece journal + agent-*.jsonl separado, como o D1 §5 pede:
+    // "sessão dona ouvindo" triplica o limiar (3·5 = 15 min), e por isso 12 min ainda é saudável com ela.
+    function copyAged(name, journalAgeMin, agentAgeMin) {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `graph-watch-${name}-`))
+      fs.cpSync(fx(name), tmpDir, { recursive: true })
+      const journalOld = new Date(Date.now() - journalAgeMin * 60 * 1000)
+      fs.utimesSync(path.join(tmpDir, 'journal.jsonl'), journalOld, journalOld)
+      for (const f of fs.readdirSync(tmpDir)) {
+        if (!f.startsWith('agent-')) continue
+        const agentOld = new Date(Date.now() - agentAgeMin * 60 * 1000)
+        fs.utimesSync(path.join(tmpDir, f), agentOld, agentOld)
+      }
+      return tmpDir
+    }
+    const fresh = copyAged('wf_long_healthy', 40, 4)
+    const m1 = await buildModel({ runDir: fresh })
+    assert.equal(m1.status, 'rodando')
+    assert.equal(m1.stop, null)
+
+    const stale = copyAged('wf_long_healthy', 40, 12)
+    const m2 = await buildModel({ runDir: stale, ownerListening: true })
+    assert.equal(m2.status, 'rodando', 'com a dona ouvindo, o limiar vira 3·N = 15 min')
+    assert.equal(m2.stop, null)
+
+    const m3 = await buildModel({ runDir: stale })
+    assert.equal(m3.status, 'parada?')
+    assert.equal(m3.stop.reason, 'sem-atividade')
+    assert.equal(m3.stop.text, 'sem atividade há 12 min')
+    assert.equal(nodeById(m3, 'X').stop.reason, 'sem-atividade')
+  })
+
+  test('wf_dead: agente sem escrita há 20 min é sempre parada; motivo depende de ownerGone', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-wf-dead-'))
+    fs.cpSync(fx('wf_dead'), tmpDir, { recursive: true })
+    const old = new Date(Date.now() - 20 * 60 * 1000)
+    for (const f of fs.readdirSync(tmpDir)) fs.utimesSync(path.join(tmpDir, f), old, old)
+
+    const gone = await buildModel({ runDir: tmpDir, ownerGone: true })
+    assert.equal(gone.status, 'parada?')
+    assert.equal(gone.stop.reason, 'sessao-encerrada')
+    assert.equal(gone.stop.text, 'sessão encerrada')
+
+    const noProof = await buildModel({ runDir: tmpDir })
+    assert.equal(noProof.status, 'parada?')
+    assert.equal(noProof.stop.reason, 'sem-atividade')
+    assert.equal(noProof.stop.text, 'sem atividade há 20 min')
+  })
+
+  test('wf_quota: erro de cota/gasto dá parada na hora, sem esperar N', async () => {
+    const m = await buildModel({ runDir: fx('wf_quota') })
+    assert.equal(m.status, 'parada?')
+    assert.equal(m.stop.reason, 'orcamento')
+    assert.equal(m.stop.text, 'orçamento esgotado')
+  })
+
+  test('wf_interrupted_marker: "[Request interrupted by user]" dá parada na hora, motivo interrompida', async () => {
+    const m = await buildModel({ runDir: fx('wf_interrupted_marker') })
+    assert.equal(m.status, 'parada?')
+    assert.equal(m.stop.reason, 'interrompida')
+    assert.equal(m.stop.text, 'interrompida')
+  })
+
+  test('wf_parallel_one_alive: um agente vivo basta para a run seguir rodando; o nó velho ganha n.stop', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-parallel-'))
+    fs.cpSync(fx('wf_parallel_one_alive'), tmpDir, { recursive: true })
+    const old = new Date(Date.now() - 20 * 60 * 1000)
+    fs.utimesSync(path.join(tmpDir, 'agent-p0002paroldaaaaaaa.jsonl'), old, old)
+    const m = await buildModel({ runDir: tmpDir })
+    assert.equal(m.status, 'rodando')
+    assert.equal(m.stop, null)
+    assert.equal(nodeById(m, 'A').stop.reason, 'sem-atividade')
+    assert.equal(nodeById(m, 'B').stop, undefined)
+  })
+
+  test('wf_planonly: nunca é parada, mesmo com mtime de 3 dias; status terminado, planOnly true', async () => {
+    // Removido no fim: um dir "só plano" esquecido em os.tmpdir() é achado por findSiblingPlanOnly
+    // (varre o pai de qualquer runDir novo criado ali) e contaminaria outro teste com mkdtemp solto.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-planonly-'))
+    try {
+      fs.cpSync(fx('wf_planonly'), tmpDir, { recursive: true })
+      const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+      fs.utimesSync(path.join(tmpDir, 'journal.jsonl'), old, old)
+      const m = await buildModel({ runDir: tmpDir })
+      assert.equal(m.status, 'terminado')
+      assert.equal(m.planOnly, true)
+      assert.equal(m.stop, null)
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  test('linha "agora": critic:r1 e synth abertos aparecem (D1 §3.8, buildNowBlock hoje só olhava os nós)', async () => {
+    const critic = await buildModel({ runDir: fx('wf_critic_running') })
+    assert.deepEqual(critic.activePseudo, [{ label: 'critic:r1', agentId: 'c0004criticaaaaaaa' }])
+    assert.match(buildNowBlock(critic, fx('wf_critic_running')), /^agora: critic:r1 · agente c0004cri… · última tool call Read há \d+s$/)
+
+    const synth = await buildModel({ runDir: fx('wf_synth_running') })
+    assert.deepEqual(synth.activePseudo, [{ label: 'synth', agentId: 's0005synthaaaaaaaa' }])
+    assert.match(buildNowBlock(synth, fx('wf_synth_running')), /^agora: synth · agente s0005syn… · última tool call Write há \d+s$/)
+  })
+
+  test('computeStop: terminated ou planOnly nunca param; sem agente aberto usa o agent-*.jsonl mais novo', () => {
+    assert.equal(computeStop({ runDir: fx('wf_long_healthy'), openAgentIds: ['x'], terminated: true }), null)
+    assert.equal(computeStop({ runDir: fx('wf_long_healthy'), openAgentIds: ['x'], planOnly: true }), null)
+    // sem agente aberto e sem nenhum arquivo agent-*.jsonl: cai no journal, "vivo" -> só passa de L
+    const s = computeStop({ runDir: fx('wf_planonly'), openAgentIds: [], now: Date.now() + 61 * 60 * 1000, stallMinutes: 5 })
+    assert.equal(s.reason, 'sem-atividade')
+  })
+
   test('happy completo: synth pronto, todos os nós fecham', async () => {
     const model = await buildModel({ runDir: fx('happy'), economy: 'balanced', mode: 'implement' })
     assert.equal(model.synth, 'pronto')
@@ -239,6 +349,99 @@ describe('fixtures dedicadas de estado', () => {
     const q1 = nodeById(model, 'Q1')
     assert.equal(q1.orphan, true)
     assert.ok(model.warns.length > 0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Motivo do nó (7º pedido do PEDIDO.md, "motivo de cada nó"): `n.reason` só existe nos 5 estados que
+// não terminaram verificados (pulado, falhou, falhou-check, bloqueado, sem-reverificacao), nunca
+// inventado — sempre derivado do journal (veredito do verificador, check vermelho, resultado do
+// worker ou estado das dependências). Os fixtures pequenos abaixo já existiam para os testes de
+// estado (§6.2); aqui só se confere o `reason` sobre o mesmo journal.
+// ─────────────────────────────────────────────────────────────────────────
+describe('motivo do nó (n.reason)', () => {
+  test('estados saudáveis não ganham reason (happy: pronto e pronto-sem-verif)', async () => {
+    const model = await buildModel({ runDir: fx('happy'), economy: 'balanced', mode: 'implement' })
+    assert.equal(nodeById(model, 'R1').reason, undefined)
+    assert.equal(nodeById(model, 'R2').reason, undefined)
+    assert.equal(nodeById(model, 'I2').reason, undefined)
+  })
+
+  test('falhou (check): reason cita o comando e a saída do check (happy cortado em work:I1)', async () => {
+    const model = await buildModel({ runDir: fx('happy'), economy: 'balanced', mode: 'implement', cutLine: 11 })
+    const i1 = nodeById(model, 'I1')
+    assert.equal(i1.state, 'falhou-check')
+    assert.match(i1.reason, /^falhou \(check\): npm run exemplo:check/)
+    assert.match(i1.reason, /falha de exemplo no check/)
+  })
+
+  test('falhou: reason traz o primeiro bloqueio do verificador no título (happy cortado em verify:I1 reprovado)', async () => {
+    const model = await buildModel({ runDir: fx('happy'), economy: 'balanced', mode: 'implement', cutLine: 15 })
+    const i1 = nodeById(model, 'I1')
+    assert.equal(i1.state, 'falhou')
+    assert.match(i1.reason.split('\n')[0], /^falhou: reprovado na verificação — bloqueio de exemplo um/)
+  })
+
+  test('bloqueado: reason traz o que o worker disse (wf_work_failed, work terminou em failed)', async () => {
+    const model = await buildModel({ runDir: fx('wf_work_failed'), economy: 'balanced', mode: 'implement' })
+    const x = nodeById(model, 'X')
+    assert.equal(x.state, 'bloqueado')
+    assert.match(x.reason, /^bloqueado: /)
+  })
+
+  test('pulado: dependência bloqueada nomeada no reason (wf_blocked, I1/I2/I3 dependem de R2)', async () => {
+    const model = await buildModel({ runDir: fx('wf_blocked'), economy: 'balanced', mode: 'implement' })
+    for (const id of ['I1', 'I2', 'I3']) {
+      assert.equal(nodeById(model, id).reason, `pulado: não rodou porque a dependência R2 ficou bloqueada`)
+    }
+  })
+
+  test('sem reverificação: reason explica por que fechou (wf_repair_noverify, X fecha porque Y já começou)', async () => {
+    const model = await buildModel({ runDir: fx('wf_repair_noverify'), economy: 'balanced', mode: 'implement' })
+    const x = nodeById(model, 'X')
+    assert.equal(x.state, 'sem-reverificacao')
+    assert.match(x.reason, /^sem-reverificacao: reparado, mas sem nova verificação — o nó Y já começou/)
+  })
+
+  // Fixture real (fixação copiada e anonimizada de uma execução real desta própria run do graph-eng,
+  // wf_bf053007-f97: teto de 50 agentes esgotado com I3/I6 falhos na verificação e I5/I7/I8/I9 sem
+  // rodar). Cobre, com evidência real, os 3 sabores de "pulado" e os 2 de "falhou".
+  describe('fixture real: wf_reasons_real (execução anterior desta run, teto de 50 agentes)', () => {
+    test('I5 pulado por orçamento (nenhuma dependência dele ficou pulada/bloqueada)', async () => {
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const i5 = nodeById(model, 'I5')
+      assert.equal(i5.state, 'pulado')
+      assert.equal(i5.reason, 'pulado: sem orçamento — o teto de 50 agentes acabou antes deste nó')
+    })
+
+    test('I7, I8 e I9 pulados em cascata: reason aponta a dependência I5, que foi pulada', async () => {
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      for (const id of ['I7', 'I8', 'I9']) {
+        assert.equal(nodeById(model, id).state, 'pulado')
+        assert.equal(nodeById(model, id).reason, 'pulado: não rodou porque a dependência I5 foi pulada')
+      }
+    })
+
+    test('I3 e I6 falhos: reason com o bloqueio real do verificador e o destino do reparo', async () => {
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const i3 = nodeById(model, 'I3')
+      const i6 = nodeById(model, 'I6')
+      assert.equal(i3.state, 'falhou')
+      assert.equal(i6.state, 'falhou')
+      assert.match(i3.reason.split('\n')[0], /^falhou: reprovado na verificação — A janela de escuta/)
+      // repair:I3 baixou os bloqueios de 5 para 1 (houve progresso) e o motor parou porque o teto de 50 esgotou:
+      // "reparo sem progresso" seria falso. O journal não separa reparos esgotados de falta de vaga.
+      assert.equal(i3.reason.trim().split('\n').pop(), 'o último reparo baixou os bloqueios de 5 para 1, mas acabaram os reparos permitidos ou o orçamento')
+      assert.match(i6.reason.split('\n')[0], /^falhou: reprovado na verificação — Não dá para fechar a seção/)
+      assert.equal(i6.reason.trim().split('\n').pop(), 'sem orçamento para reparar') // nunca chegou a reparar
+    })
+
+    test('DS terminou pronto (verificado e aprovado na revisão do design): sem reason', async () => {
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const ds = nodeById(model, 'DS')
+      assert.equal(ds.state, 'pronto')
+      assert.equal(ds.reason, undefined)
+    })
   })
 })
 
@@ -577,5 +780,176 @@ describe('wf_phases: esqueleto de fases, effort/ceiling, revisão do design e po
     assert.equal(withArch.effort.mode, 'architecture')
     const withAuto = await buildModel({ runDir: fx('wf_phases'), mode: 'auto' })
     assert.equal(withAuto.effort.mode, 'implement')
+  })
+})
+
+// Retomada de uma run que passou pelo plan gate: o wf da retomada não chama o planner (o plano vem por
+// args) e tem, na mesma pasta de workflows, a irmã planOnly do gate. O resume/<rs>.json tem de vencer a
+// irmã: ela traz o plano de antes da aprovação e não sabe quais nós já estavam prontos.
+describe('run retomada com irmã planOnly do plan gate', () => {
+  const RS = 'rs-20260928-154129'
+  const line = (o) => JSON.stringify(o)
+  const ok = { status: 'done', summary: 'ok', confidence: 'high', checks: [] }
+  const pass = { pass: true, confidence: 'high', blocking: [] }
+
+  // Monta a pasta de workflows com a irmã do gate (plano antigo, mais velha) e o wf da retomada, que só
+  // roda `workNode`; o prefixo aponta o run dir e o rs, e o resume/<rs>.json traz o plano aprovado.
+  async function resumedModel({ plan, done, designReview, workNode, mode }) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-resume-gate-'))
+    const wfs = path.join(root, 'proj', '11111111-2222-4333-8444-555555555555', 'subagents', 'workflows')
+    const runDir = path.join(root, 'repo', '.graph-runs', '20260928-1146-exemplo')
+    try {
+      const gate = path.join(wfs, 'wf_gate0001')
+      fs.mkdirSync(gate, { recursive: true })
+      const oldPlan = { goal: 'plano antigo', effort: { level: 'high', why: 'x' }, nodes: [{ id: 'R1', title: 'Pesquisa antiga', kind: 'research', deps: [] }, { id: 'I1', title: 'Implementação antiga', kind: 'implement', deps: ['R1'], files: ['x.js'] }] }
+      fs.writeFileSync(path.join(gate, 'journal.jsonl'), [line({ type: 'launched' }), line({ type: 'started', key: 'g1', agentId: 'ag1', label: 'plan' }), line({ type: 'result', key: 'g1', agentId: 'ag1', result: oldPlan })].join('\n') + '\n')
+      const old = (Date.now() - 3_600_000) / 1000
+      fs.utimesSync(path.join(gate, 'journal.jsonl'), old, old)
+
+      const wf = path.join(wfs, 'wf_resume01')
+      fs.mkdirSync(wf, { recursive: true })
+      fs.writeFileSync(path.join(wf, 'journal.jsonl'), [line({ type: 'launched' }), line({ type: 'started', key: 'k1', agentId: 'aw1', label: `work:${workNode}`, phase: 'Execute' }), line({ type: 'result', key: 'k1', agentId: 'aw1', result: ok }), line({ type: 'started', key: 'k2', agentId: 'av1', label: `verify:${workNode}`, phase: 'Verify' }), line({ type: 'result', key: 'k2', agentId: 'av1', result: pass })].join('\n') + '\n')
+      fs.writeFileSync(path.join(wf, 'agent-aw1.jsonl'), line({ type: 'user', message: { role: 'user', content: `# Graph run 20260928-1146-exemplo\nMode: ${mode}\nRun dir (paper trail): ${runDir}\nResume: ${RS}\n` } }) + '\n')
+
+      fs.mkdirSync(path.join(runDir, 'resume'), { recursive: true })
+      fs.writeFileSync(path.join(runDir, 'resume', `${RS}.json`), JSON.stringify({ mode, plan, resume: { id: RS, from: ['wf_antigo'], done, rerun: [], designReview } }))
+      return await buildModel({ runDir: wf, economy: 'balanced', mode })
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }
+
+  // `effort` é obrigatório no schema do planner (workflows/graph-eng.js), e só o motor que o exige grava resume.
+  const effort = { level: 'high', why: 'teste' }
+
+  test('plano e prontos vêm de resume/<rs>.json, e a revisão do design que passou é herdada', async () => {
+    const plan = {
+      goal: 'plano aprovado',
+      mode: 'implement',
+      effort,
+      nodes: [
+        { id: 'R1', title: 'Pesquisa', kind: 'research', deps: [] },
+        { id: 'D1', title: 'Design', kind: 'design', deps: ['R1'] },
+        { id: 'I1', title: 'Parte um', kind: 'implement', deps: ['D1'], files: ['a.js'] },
+        { id: 'I2', title: 'Parte dois', kind: 'implement', deps: ['D1'], files: ['b.js'] },
+      ],
+    }
+    const done = { R1: { summary: 'r', verified: true }, D1: { summary: 'd', verified: false }, I1: { summary: 'i', verified: true } }
+    const model = await resumedModel({ plan, done, designReview: { pass: true, attempts: 2 }, workNode: 'I2', mode: 'implement' })
+    const st = Object.fromEntries(model.nodes.map((n) => [n.id, n.state]))
+    assert.deepEqual(st, { R1: 'pronto', D1: 'pronto', I1: 'pronto', I2: 'pronto' }, 'nenhum pronto da retomada pode sair como pulado')
+    assert.equal(model.nodes.find((n) => n.id === 'I1').title, 'Parte um', 'o plano é o aprovado, não o da irmã do gate')
+    assert.deepEqual(model.nodes.filter((n) => n.resumed).map((n) => n.id).sort(), ['D1', 'I1', 'R1'])
+    assert.ok(model.warns.some((w) => w.includes(`lidos de resume/${RS}`)))
+    assert.ok(!model.warns.some((w) => w.includes('run planOnly')), 'a irmã planOnly não pode ser usada')
+    assert.equal(model.designReview.state, 'pronto')
+    assert.equal(model.designReview.attempts, 2)
+    assert.equal(model.spent, 2, 'eventos sintéticos da retomada não contam no custo')
+  })
+
+  test('sem revisão do design (research), o nó não-implement verificado antes volta pronto, não "s/ verif."', async () => {
+    const plan = {
+      goal: 'pesquisa aprovada',
+      mode: 'research',
+      effort,
+      nodes: [
+        { id: 'R1', title: 'Fontes', kind: 'research', deps: [] },
+        { id: 'R2', title: 'Sem verificação', kind: 'research', deps: [] },
+        { id: 'R3', title: 'Síntese', kind: 'research', deps: ['R1', 'R2'] },
+      ],
+    }
+    const done = { R1: { summary: 'r1', verified: true }, R2: { summary: 'r2', verified: false } }
+    const model = await resumedModel({ plan, done, workNode: 'R3', mode: 'research' })
+    const st = Object.fromEntries(model.nodes.map((n) => [n.id, n.state]))
+    assert.equal(st.R1, 'pronto')
+    assert.equal(st.R2, 'pronto-sem-verif', 'o que não foi verificado antes continua sem verificação')
+    assert.equal(model.designReview, null)
+  })
+})
+
+// Motivos que saem das regras do motor (workflows/graph-eng.js), com journal sintético do formato novo.
+describe('motivo do nó: regras do motor para pulado e para o destino do reparo', () => {
+  const line = (o) => JSON.stringify(o)
+  const ok = { status: 'done', summary: 'ok', confidence: 'high', checks: [] }
+  const pass = { pass: true, confidence: 'high', blocking: [] }
+  const fail = (...issues) => ({ pass: false, confidence: 'high', blocking: issues.map((issue) => ({ issue, where: 'x', fix: 'y' })) })
+  const effort = { level: 'high', why: 'teste' }
+
+  // Cada wf numa pasta só dele: findSiblingPlanOnly varre a pasta mãe.
+  async function modelOf(plan, steps, opts = {}) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-motivos-'))
+    const wf = path.join(root, 'workflows', 'wf_motivos01')
+    fs.mkdirSync(wf, { recursive: true })
+    const ev = [line({ type: 'launched' }), line({ type: 'started', key: 'p', agentId: 'ap', label: 'plan' }), line({ type: 'result', key: 'p', agentId: 'ap', result: plan })]
+    steps.forEach(([label, result], i) => {
+      ev.push(line({ type: 'started', key: `k${i}`, agentId: `a${i}`, label }))
+      if (result !== undefined) ev.push(line({ type: 'result', key: `k${i}`, agentId: `a${i}`, result }))
+    })
+    fs.writeFileSync(path.join(wf, 'journal.jsonl'), ev.join('\n') + '\n')
+    try {
+      return await buildModel({ runDir: wf, mode: 'implement', ...opts })
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }
+  const reasonOf = (model, id) => model.nodes.find((n) => n.id === id).reason
+
+  test('revisão do design reprovada: toda implementação do round 1 sai com esse motivo, inclusive a que depende de outra', async () => {
+    const plan = {
+      goal: 'g', mode: 'implement', effort,
+      nodes: [
+        { id: 'R1', title: 'Pesquisa', kind: 'research', deps: [] },
+        { id: 'D1', title: 'Design', kind: 'design', deps: ['R1'] },
+        { id: 'I1', title: 'Parte um', kind: 'implement', deps: ['D1'], files: ['a.js'] },
+        { id: 'I2', title: 'Parte dois', kind: 'implement', deps: ['I1'], files: ['b.js'] },
+      ],
+    }
+    const drFail = { pass: false, confidence: 'high', blocking: [{ issue: 'contrato incompleto', where: 'D1.md', fix: 'z', node: 'D1' }], checked: ['D1'] }
+    const model = await modelOf(plan, [
+      ['work:R1', ok], ['verify:R1', pass], ['work:D1', ok], ['verify:D1', pass],
+      ['design-review:r1', drFail], ['design-repair:D1', ok], ['design-review:r2', drFail],
+      ['synth', { status: 'done', summary: 's', humanGate: [] }],
+    ])
+    for (const id of ['I1', 'I2']) {
+      assert.equal(model.nodes.find((n) => n.id === id).state, 'pulado')
+      assert.equal(reasonOf(model, id), 'pulado: a revisão do design reprovou, e a implementação não começa')
+    }
+  })
+
+  test('nó que o motor não rodou, com deps prontas e gasto abaixo do teto: as duas causas possíveis, não "a run terminou antes"', async () => {
+    const plan = {
+      goal: 'g', mode: 'implement', effort,
+      nodes: [
+        { id: 'R1', title: 'Pesquisa', kind: 'research', deps: [] },
+        { id: 'D1', title: 'Design', kind: 'design', deps: ['R1'] },
+        { id: 'I1', title: 'Parte um', kind: 'implement', deps: ['D1'], files: ['a.js'] },
+        { id: 'I2', title: 'Parte dois', kind: 'implement', deps: ['D1'], files: ['b.js'] },
+      ],
+    }
+    const model = await modelOf(plan, [
+      ['work:R1', ok], ['verify:R1', pass], ['work:D1', ok], ['verify:D1', pass], ['design-review:r1', { ...pass, checked: ['D1'] }],
+      ['work:I1', ok], ['verify:I1', pass],
+      ['critic:r1', { done: true, assessment: 'ok', gaps: [] }], ['synth', { status: 'done', summary: 's', humanGate: [] }],
+    ], { ceiling: 24 })
+    assert.equal(model.nodes.find((n) => n.id === 'I2').state, 'pulado')
+    assert.equal(reasonOf(model, 'I2'), 'pulado: não rodou — sem vaga no orçamento de agentes, ou cortado do plano por tamanho')
+  })
+
+  test('reparo que não baixou os bloqueios: "reparo sem progresso"', async () => {
+    const plan = {
+      goal: 'g', mode: 'implement', effort,
+      nodes: [
+        { id: 'R1', title: 'Pesquisa', kind: 'research', deps: [] },
+        { id: 'D1', title: 'Design', kind: 'design', deps: ['R1'] },
+        { id: 'I1', title: 'Parte um', kind: 'implement', deps: ['D1'], files: ['a.js'] },
+      ],
+    }
+    const model = await modelOf(plan, [
+      ['work:R1', ok], ['verify:R1', pass], ['work:D1', ok], ['verify:D1', pass], ['design-review:r1', { ...pass, checked: ['D1'] }],
+      ['work:I1', ok], ['verify:I1', fail('um', 'dois')], ['repair:I1', ok], ['verify:I1', fail('um', 'três')],
+      ['critic:r1', { done: true, assessment: 'ok', gaps: [] }], ['synth', { status: 'done', summary: 's', humanGate: [] }],
+    ])
+    assert.equal(model.nodes.find((n) => n.id === 'I1').state, 'falhou')
+    assert.equal(reasonOf(model, 'I1').trim().split('\n').pop(), 'reparo sem progresso')
   })
 })

@@ -16,7 +16,8 @@ const ROOT = path.join(__dirname, '..')
 const BIN = path.join(ROOT, 'bin', 'graph-watch.mjs')
 const MULTI = path.join(__dirname, 'fixtures', 'multi')
 
-const { ensurePanel } = await import('../bin/ui-server.mjs')
+const { ensurePanel, createRunIndex } = await import('../bin/ui-server.mjs')
+const { writeConfig } = await import('../bin/config.mjs')
 
 const RUNS = {
   'wf_aaaa0000-alfa-ativo': ['-exemplo-projeto-alfa', 'sess-alfa', 10], // rodando
@@ -34,6 +35,17 @@ function copyMulti() {
     for (const f of fs.readdirSync(d)) fs.utimesSync(path.join(d, f), t, t)
   }
   return dir
+}
+
+// Estado do painel (config.json, organize.json, fila…) sempre num dir temporário: nenhum teste lê nem
+// grava em ~/.claude (spec C1).
+function tmpState() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-eng-ui-state-'))
+  return { dir, configPath: path.join(dir, 'config.json') }
+}
+const tmpEnv = () => {
+  const { dir, configPath } = tmpState()
+  return { ...process.env, GRAPH_ENG_CONFIG: configPath, GRAPH_ENG_STATE_DIR: dir }
 }
 
 function runDirOf(projectsDir, wf) {
@@ -61,7 +73,7 @@ async function getJson(port, p) {
 
 // Sobe `graph-watch ui` como subprocesso e resolve quando a URL aparece no stdout (ou quando ele sai).
 function spawnUi(args) {
-  const child = spawn(process.execPath, [BIN, 'ui', '--no-open', ...args], { cwd: ROOT, env: { ...process.env } })
+  const child = spawn(process.execPath, [BIN, 'ui', '--no-open', ...args], { cwd: ROOT, env: tmpEnv() })
   let stdout = ''
   let stderr = ''
   child.stdout.on('data', (d) => (stdout += d))
@@ -91,7 +103,7 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
   let panel
   before(async () => {
     projectsDir = copyMulti()
-    panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100 })
+    panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath: tmpState().configPath })
   })
   after(async () => {
     await panel.close()
@@ -137,6 +149,38 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
         ['A3', 'aguardando'],
       ],
     )
+  })
+
+  // C6: a lista usa computeStop (mesma regra e motivo do buildModel), sem a janela fixa de 2 min.
+  test('/api/runs: status "parada?" vem de computeStop, com o motivo (stop.text) — sem ACTIVE_WINDOW_MS', async () => {
+    const r = await getJson(panel.port, '/api/runs')
+    const beta = r.json.runs.find((x) => x.wf === 'wf_bbbb0000-beta-ativo')
+    assert.equal(beta.status, 'parada?')
+    assert.equal(beta.stop.reason, 'sem-atividade')
+    assert.match(beta.stop.text, /^sem atividade há \d+ min$/)
+    assert.equal(beta.planOnly, false)
+    const ativo = r.json.runs.find((x) => x.wf === 'wf_aaaa0000-alfa-ativo')
+    assert.equal(ativo.stop, null)
+    const feito = r.json.runs.find((x) => x.wf === 'wf_aaaa0000-alfa-feito')
+    assert.equal(feito.stop, null)
+    // /api/runs/:wf: o Modelo (buildModel) dá o mesmo motivo que a lista, para o mesmo wf
+    const m = await getJson(panel.port, '/api/runs/wf_bbbb0000-beta-ativo')
+    assert.equal(m.json.stop.reason, beta.stop.reason)
+  })
+
+  test('/api/runs: o limiar vem da config (stallMinutes), não de uma janela fixa em código', async () => {
+    // wf_aaaa0000-alfa-ativo está com 10 s de idade (RUNS acima): com stallMinutes:1 (L = 60 s) segue
+    // rodando; a prova de que não há mais ACTIVE_WINDOW_MS é o teste anterior, com beta a 1 h de idade.
+    const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-stall-cfg-'))
+    const configPath = path.join(cfgDir, 'config.json')
+    writeConfig(configPath, { stallMinutes: 1 })
+    const index = createRunIndex(projectsDir, { configPath })
+    const runs = await index.scan()
+    const ativo = runs.find((r) => r.wf === 'wf_aaaa0000-alfa-ativo')
+    assert.equal(ativo.status, 'rodando')
+    const beta = runs.find((r) => r.wf === 'wf_bbbb0000-beta-ativo')
+    assert.equal(beta.status, 'parada?')
+    assert.equal(beta.stop.text, 'sem atividade há 60 min')
   })
 
   test('/api/runs/:wf: 200 com o modelo do buildModel (nós, deps, estado) e o modo inferido do plan', async () => {
@@ -237,6 +281,8 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
     for (const [p, type] of [
       ['/theme.js', /javascript/],
       ['/favicon.svg', /image\/svg\+xml/],
+      ['/favicon-32.png', /image\/png/],
+      ['/apple-touch-icon.png', /image\/png/],
       ['/fonts/geist-latin.woff2', /font\/woff2/],
       ['/fonts/geist-mono-latin.woff2', /font\/woff2/],
     ]) {
@@ -248,6 +294,13 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
     for (const p of ['/fonts/OFL.txt', '/fonts/x.woff2', '/../graph-watch.mjs', '/%2e%2e/graph-watch.mjs', '/x.js', '/ui/app.js', '/graph-watch.mjs', '/..%2fgraph-watch.mjs']) {
       assert.equal((await get(panel.port, p)).status, 404, `esperava 404 para ${p}`)
     }
+  })
+
+  test('/favicon.ico devolve um ícone de verdade (o PNG de 32px), não mais 204 vazio (7º pedido do PEDIDO.md)', async () => {
+    const r = await get(panel.port, '/favicon.ico')
+    assert.equal(r.status, 200)
+    assert.match(r.headers['content-type'], /image\/png/)
+    assert.ok(r.body && r.body.length > 0)
   })
 
   test('só GET: POST → 405 e nada muda', async () => {
@@ -328,7 +381,7 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
     assert.equal(r.json.source.ceiling, 'default')
     assert.equal(r.json.limits.ceiling.min, 8)
     assert.equal(r.json.limits.ceiling.max, 100)
-    assert.deepEqual(r.json.defaults, { effort: 'auto', ceiling: 24, economy: 'balanced', planGate: false, maxRounds: 3, maxRepairs: 2 })
+    assert.deepEqual(r.json.defaults, { effort: 'auto', ceiling: 24, economy: 'balanced', planGate: false, maxRounds: 3, maxRepairs: 2, stallMinutes: 5 })
     assert.deepEqual(r.json.warnings, [])
     assert.equal(fs.existsSync(configPath), false, 'GET não grava nada')
   })
@@ -348,6 +401,11 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
     assert.equal(l.status, 200, l.body)
     assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { ceiling: 40 })
     assert.equal(l.json.source.effort, 'default')
+    // C6: stallMinutes (padrão de parada) grava e volta como número
+    const s = await put({ stallMinutes: 12 })
+    assert.equal(s.status, 200, s.body)
+    assert.equal(s.json.config.stallMinutes, 12)
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { stallMinutes: 12 })
   })
 
   test('PUT com Origin ausente, null, de fora ou de outra porta → 403 e o arquivo fica igual', async () => {
@@ -400,6 +458,9 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
     const unknown = await put({ foo: 1, ceiling: 30 })
     assert.equal(unknown.status, 400)
     assert.deepEqual(unknown.json.fields, { foo: 'campo desconhecido' })
+    // C6: stallMinutes (padrão de parada) segue a mesma trava do resto da config
+    assert.equal((await put({ stallMinutes: 0 })).json.fields.stallMinutes, 'de 1 a 60')
+    assert.equal((await put({ stallMinutes: 61 })).json.fields.stallMinutes, 'de 1 a 60')
     const many = await put({ effort: 'xhigh', maxRounds: 9, planGate: 'sim' })
     assert.deepEqual(Object.keys(many.json.fields).sort(), ['effort', 'maxRounds', 'planGate'])
     assert.deepEqual(snapshot(), before, 'nada gravado em caminho de erro')
@@ -478,7 +539,7 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
 describe('painel web: SSE /api/events (item 6)', () => {
   test('emite `runs` ao conectar e `run` com o wf depois de um append no journal', async () => {
     const projectsDir = copyMulti()
-    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100 })
+    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath: tmpState().configPath })
     const events = []
     let req
     try {
@@ -571,16 +632,44 @@ describe('painel web: CLI `ui` e instância única (itens 1, 2)', () => {
     assert.notEqual(code, 0)
     assert.match(ui.out().stderr, /graph-eng: /)
   })
+
+  test('--detach sai 0 com o servidor de pé em outro processo, e --stop derruba ele', async () => {
+    const state = tmpState()
+    const run = (args) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [BIN, 'ui', '--no-open', ...args], { cwd: ROOT, env: { ...process.env, GRAPH_ENG_CONFIG: state.configPath, GRAPH_ENG_STATE_DIR: state.dir } })
+        let stdout = ''
+        child.stdout.on('data', (d) => (stdout += d))
+        child.on('close', (code) => resolve({ code, stdout, pid: child.pid }))
+      })
+    const up = await run(['--detach', '--port', '0', '--projects-dir', copyMulti()])
+    assert.equal(up.code, 0)
+    const port = Number(up.stdout.match(/graph-eng: painel: http:\/\/127\.0\.0\.1:(\d+)/)[1])
+    const health = (await getJson(port, '/api/health')).json
+    assert.equal(health.app, 'graph-watch')
+    assert.notEqual(health.pid, up.pid)
+    assert.match(fs.readFileSync(path.join(state.dir, 'painel.log'), 'utf8'), /graph-eng: painel:/)
+
+    const again = await run(['--detach', '--port', String(port)])
+    assert.equal(again.code, 0)
+    assert.match(again.stdout, new RegExp(`graph-eng: painel: http://127\\.0\\.0\\.1:${port}\\b`))
+
+    const down = await run(['--stop', '--port', String(port)])
+    assert.equal(down.code, 0)
+    assert.match(down.stdout, new RegExp(`painel parado \\(pid ${health.pid}\\)`))
+    await new Promise((r) => setTimeout(r, 300))
+    assert.throws(() => process.kill(health.pid, 0))
+  })
 })
 
 describe('`live --svg` vira alias do painel (item 9)', () => {
   test('imprime a URL com ?run=<wf> e segue como live, sem D2', async () => {
     const projectsDir = copyMulti()
     // porta ocupada por um graph-watch já de pé: o live --svg reaproveita e não sobe outro.
-    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100 })
+    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath: tmpState().configPath })
     try {
       const runDir = runDirOf(projectsDir, 'wf_aaaa0000-alfa-ativo')
-      const child = spawn(process.execPath, [BIN, 'live', '--svg', '--run-dir', runDir, '--port', String(panel.port), '--projects-dir', projectsDir, '--no-color'], { cwd: ROOT })
+      const child = spawn(process.execPath, [BIN, 'live', '--svg', '--run-dir', runDir, '--port', String(panel.port), '--projects-dir', projectsDir, '--no-color'], { cwd: ROOT, env: tmpEnv() })
       let out = ''
       child.stdout.on('data', (d) => (out += d))
       child.stderr.on('data', (d) => (out += d))

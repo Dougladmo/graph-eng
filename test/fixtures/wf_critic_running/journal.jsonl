@@ -1,0 +1,8 @@
+{"type": "launched"}
+{"type": "started", "key": "v2:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "agentId": "c0001criticaaaaaaa", "label": "plan", "phase": "Plan"}
+{"type": "result", "key": "v2:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "agentId": "c0001criticaaaaaaa", "result": {"goal": "Exemplo de run para teste de detecção de parada.", "complexity": "simple", "doneWhen": ["critério de exemplo"], "assumptions": [], "nodes": [{"id": "X", "title": "Nó de exemplo X", "kind": "implement", "brief": "Fazer exemplo X.", "deps": [], "risk": "medium", "acceptance": ["critério de exemplo"]}], "questions": []}}
+{"type": "started", "key": "v2:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "agentId": "c0002criticaaaaaaa", "label": "work:X", "phase": "Execute"}
+{"type": "result", "key": "v2:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "agentId": "c0002criticaaaaaaa", "result": {"status": "done", "summary": "feito", "confidence": "high", "artifact": "<run dir>/X.md", "evidence": ["ev"], "checks": []}}
+{"type": "started", "key": "v2:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "agentId": "c0003criticaaaaaaa", "label": "verify:X", "phase": "Verify"}
+{"type": "result", "key": "v2:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "agentId": "c0003criticaaaaaaa", "result": {"pass": true, "confidence": "high", "blocking": []}}
+{"type": "started", "key": "v2:1010101010101010101010101010101010101010101010101010101010101010", "agentId": "c0004criticaaaaaaa", "label": "critic:r1", "phase": "Critic"}

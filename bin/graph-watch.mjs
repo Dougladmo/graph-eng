@@ -7,7 +7,19 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { estimateAgents as estimateTarget, targetFor } from './ui/agent-target.mjs'
+import { defaultStateDir, ownerPathInfo, listRequests, isEligible, isPendingExpired, markSeen, requestEventLine, writeHeartbeat, readListeners, ownerPresence, HEARTBEAT_MS, hasTerminatedMarker, markTerminated } from './requests.mjs'
+
+const PLUGIN_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+function pluginVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version || null
+  } catch {
+    return null
+  }
+}
 
 // ── Erros ──
 export class GraphWatchError extends Error {
@@ -28,6 +40,175 @@ const PRESETS = {
 const LABEL_RE = /^(plan|work|verify|escalate|repair|draft-[ab]|judge|critic|synth|design-review|design-repair|polish)(:|$)/
 // `id` depois de ':' não é nó real para estes rótulos: fica fora de `per` (D3 §3.1).
 const PSEUDO_LABELS = new Set(['critic', 'design-review', 'polish'])
+
+// ── Detecção de parada (spec docs/specs/2026-09-28-acoes-no-painel.md C6, D1 §3.3) ──
+// Rótulos pseudo-agente que a linha "agora" (buildNowBlock) e `model.activePseudo` também contam,
+// além de plan e synth (o pedido cita só critic e synth; os outros têm o mesmo defeito e custam zero).
+const STOP_PSEUDO_KINDS = new Set(['plan', 'critic', 'synth', 'design-review', 'polish'])
+
+const STOP_REASON_TEXT = {
+  orcamento: 'orçamento esgotado',
+  interrompida: 'interrompida',
+  'sessao-encerrada': 'sessão encerrada',
+}
+
+function stopReasonText(reason, idleSec) {
+  return STOP_REASON_TEXT[reason] || `sem atividade há ${Math.max(1, Math.floor(idleSec / 60))} min`
+}
+
+// ── Motivo do nó (spec C.., 7º pedido do PEDIDO.md: "motivo de cada nó") ──
+// Só os 5 estados abaixo — "não terminou verificado" — ganham `n.reason`, calculado em buildModel a
+// partir do journal (nunca inventado). Os demais (pronto, pronto-sem-verif[?], trabalhando,
+// verificando, reparando, aguardando, erro) ficam sem motivo: são estados saudáveis/esperados, ou
+// (erro) fora do pedido literal.
+const REASON_STATES = new Set(['pulado', 'falhou', 'falhou-check', 'bloqueado', 'sem-reverificacao'])
+
+// Primeira linha de um texto livre, achatado e cortado em `max` chars (usada no title da bolinha e
+// como resumo; a gaveta e as linhas do events/snapshot mostram o `reason` inteiro, com quebras).
+function firstLine(s, max = 160) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim()
+  if (!t) return ''
+  return t.length > max ? t.slice(0, max - 1) + '…' : t
+}
+
+// Última linha JSON válida de um texto com uma tentativa por linha (linhas truncadas ou vazias no
+// meio da cauda lida são ignoradas: a última válida é a que importa).
+function lastValidJsonLine(text) {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i].trim()
+    if (!l) continue
+    try {
+      return JSON.parse(l)
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+// Lê só os últimos 64 KB de `agent-<id>.jsonl` (D1 §3.3 passo 3, §4 "custo de leitura"): a run some
+// tem só agentes já terminados quando `openAgentIds` está vazio.
+function readAgentTail(runDir, agentId, maxBytes = 65536) {
+  const file = path.join(runDir, `agent-${agentId}.jsonl`)
+  let st
+  try {
+    st = fs.statSync(file)
+  } catch {
+    return { mtimeMs: null, tail: null }
+  }
+  const start = Math.max(0, st.size - maxBytes)
+  const len = st.size - start
+  let text = ''
+  if (len > 0) {
+    const fd = fs.openSync(file, 'r')
+    try {
+      const buf = Buffer.alloc(len)
+      fs.readSync(fd, buf, 0, len, start)
+      text = buf.toString('utf8')
+    } finally {
+      fs.closeSync(fd)
+    }
+  }
+  return { mtimeMs: st.mtimeMs, tail: lastValidJsonLine(text) }
+}
+
+function newestAgentFile(runDir) {
+  let files
+  try {
+    files = fs.readdirSync(runDir)
+  } catch {
+    return null
+  }
+  let best = null
+  for (const f of files) {
+    const m = /^agent-(.+)\.jsonl$/.exec(f)
+    if (!m) continue
+    let st
+    try {
+      st = fs.statSync(path.join(runDir, f))
+    } catch {
+      continue
+    }
+    if (!best || st.mtimeMs > best.mtimeMs) best = { agentId: m[1], mtimeMs: st.mtimeMs }
+  }
+  return best
+}
+
+// `orcamento` (cota/gasto esgotado) e `interrompida` ([Request interrupted by user…], Esc ou Parar)
+// valem na hora, sem esperar o limiar de silêncio; qualquer outra última linha é `vivo`.
+export function classifyTail(tail) {
+  if (!tail) return 'vivo'
+  if (tail.isApiErrorMessage === true) {
+    const q = tail.quotaLimits
+    if (tail.error === 'rate_limit' || tail.apiErrorStatus === 429 || (q && q.status === 'rejected')) return 'orcamento'
+  }
+  if (tail.type === 'user') {
+    const content = tail.message && tail.message.content
+    const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
+    if (blocks.some((b) => b && b.type === 'text' && typeof b.text === 'string' && b.text.startsWith('[Request interrupted by user'))) {
+      return 'interrompida'
+    }
+  }
+  return 'vivo'
+}
+
+// Avalia um agente aberto (started sem result/failed): parado?, motivo, idleSec. Sem `agent-<id>.jsonl`
+// (agente ainda não escreveu nada), usa o mtime do journal como aproximação (D1 §3.3 passo 3).
+function evalOpenAgent(runDir, agentId, journalMtimeMs, now, L, ownerGone, ownerListening) {
+  const { mtimeMs, tail } = readAgentTail(runDir, agentId)
+  const effectiveMtime = mtimeMs === null ? journalMtimeMs : mtimeMs
+  const kind = classifyTail(tail)
+  const idleSec = Math.max(0, Math.round((now - effectiveMtime) / 1000))
+  const stopped = kind !== 'vivo' || idleSec > L
+  if (!stopped) return { stopped, idleSec }
+  const reason = kind === 'orcamento' || kind === 'interrompida' ? kind : !ownerListening && ownerGone ? 'sessao-encerrada' : 'sem-atividade'
+  return { stopped, idleSec, reason }
+}
+
+// Regra única de parada (D1 §3.3, spec C6), usada por `buildModel` e pela lista de runs do servidor
+// (`bin/ui-server.mjs`): nenhum dos dois calcula isso à parte mais.
+export function computeStop({
+  runDir,
+  openAgentIds = [],
+  terminated = false,
+  planOnly = false,
+  now = Date.now(),
+  stallMinutes = 5,
+  ownerListening = false,
+  ownerGone = false,
+} = {}) {
+  if (terminated || planOnly) return null
+  const L = stallMinutes * 60 * (ownerListening ? 3 : 1)
+  let journalMtimeMs = now
+  try {
+    journalMtimeMs = fs.statSync(path.join(runDir, 'journal.jsonl')).mtimeMs
+  } catch {
+    /* sem journal legível: now é o melhor palpite */
+  }
+
+  if (openAgentIds.length) {
+    const evals = openAgentIds.map((id) => evalOpenAgent(runDir, id, journalMtimeMs, now, L, ownerGone, ownerListening))
+    // Numa fase paralela, um agente ainda vivo basta para a run seguir viva (D1 §3.3 passo 5).
+    if (evals.some((e) => !e.stopped)) return null
+    const idleSec = Math.max(...evals.map((e) => e.idleSec))
+    const priority = ['orcamento', 'interrompida', 'sessao-encerrada', 'sem-atividade']
+    const reason = priority.find((r) => evals.some((e) => e.reason === r)) || 'sem-atividade'
+    return { reason, text: stopReasonText(reason, idleSec), idleSec }
+  }
+
+  // Sem agente aberto: entre agentes, ou o workflow morreu entre um e outro (D1 §3.3 passo 6).
+  const newest = newestAgentFile(runDir)
+  const mtime = newest ? newest.mtimeMs : journalMtimeMs
+  const idleSec = Math.max(0, Math.round((now - mtime) / 1000))
+  const tail = newest ? readAgentTail(runDir, newest.agentId).tail : null
+  const kind = classifyTail(tail)
+  const stopped = (kind !== 'vivo' && idleSec > 60) || idleSec > L
+  if (!stopped) return null
+  const reason = kind === 'orcamento' || kind === 'interrompida' ? kind : !ownerListening && ownerGone ? 'sessao-encerrada' : 'sem-atividade'
+  return { reason, text: stopReasonText(reason, idleSec), idleSec }
+}
+
 // Ids reservados pelo motor para os nós injetados pelos trilhos (D1 §5, D3 §3.3).
 const RESERVED_NODE_IDS = ['research-base', 'design-base']
 
@@ -53,6 +234,52 @@ export function readJournalTolerant(journalPath) {
     }
   })
   return { events, illegible, missing: false }
+}
+
+// ── Retomada (I8, spec C8/D2 §5.3.9 "loadResume"): leitura tolerante de <runDir>/resume/<rs>.json,
+// gravado por bin/graph-resume.mjs de forma atômica (tmp wx 0600 + rename). Usada pelo CLI e pelo
+// fallback de buildModel abaixo (`readWfPrefixInfo`), para não criar ciclo de import com graph-resume.mjs.
+export function loadResume(runDir, rs) {
+  if (typeof runDir !== 'string' || !runDir || typeof rs !== 'string' || !/^rs-\d{8}-\d{6}(-\d+)?$/.test(rs)) return null
+  try {
+    const text = fs.readFileSync(path.join(runDir, 'resume', `${rs}.json`), 'utf8')
+    const data = JSON.parse(text)
+    return data && typeof data === 'object' ? data : null
+  } catch {
+    return null
+  }
+}
+
+// Lê só `Run dir (paper trail): <dir>` e `Resume: <rs>` do início do prompt do próprio wf (mesmas linhas
+// do SHARED de workflows/graph-eng.js), sem repetir o `inferHeader` inteiro de bin/ui-server.mjs (que fica
+// do lado do servidor, e importaria este módulo, criando ciclo).
+function readWfPrefixInfo(dir) {
+  let files
+  try {
+    files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith('agent-') && f.endsWith('.jsonl'))
+      .sort()
+  } catch {
+    return {}
+  }
+  for (const f of files.slice(0, 3)) {
+    let fd
+    try {
+      fd = fs.openSync(path.join(dir, f), 'r')
+      const buf = Buffer.alloc(65536)
+      const n = fs.readSync(fd, buf, 0, buf.length, 0)
+      const text = buf.toString('utf8', 0, n)
+      const d = text.match(/(?:^|\\n|\n)[ \t]*Run dir \(paper trail\): ([^\\"\n]{1,1024})/)
+      const rs = text.match(/(?:^|\\n|\n)[ \t]*Resume: (rs-\d{8}-\d{6}(?:-\d+)?)/)
+      if (d || rs) return { runDirRaw: d ? d[1].trim() || undefined : undefined, resumeId: rs ? rs[1] : undefined }
+    } catch {
+      /* transcrição ausente ou ilegível: tenta a próxima */
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd)
+    }
+  }
+  return {}
 }
 
 // ── normalize() (graph-eng.js:314-349), como função pura e testável ──
@@ -251,7 +478,19 @@ function findSiblingPlanOnly(runDir) {
 
 // ── Modelo (§6.1) a partir de um journal já achado ──
 export async function buildModel(opts = {}) {
-  const { runDir, siblingPlanOnlyDir, economy, mode, cutLine, effort, ceiling } = opts
+  const {
+    runDir,
+    siblingPlanOnlyDir,
+    economy,
+    mode,
+    cutLine,
+    effort,
+    ceiling,
+    now = Date.now(),
+    stallMinutes = 5,
+    ownerListening = false,
+    ownerGone = false,
+  } = opts
   const journalPath = path.join(runDir, 'journal.jsonl')
   let stat
   try {
@@ -322,8 +561,60 @@ export async function buildModel(opts = {}) {
   const planStarted = events.some((e) => e.type === 'started' && e.label === 'plan')
   let planRes = null
   const orphans = []
+  let resumeMeta = null // { id, from } (C11/I8): wf retomado sem `plan` no journal
+  const resumeSynthEvents = [] // eventos sintéticos p/ desenhar resume.done como pronto (I8, D2 §8)
 
+  // Run retomada (I8, D2 §8): o wf retomado não chama o planner de novo (o motor recebe args.plan). O
+  // prefixo do próprio wf traz `Resume: <rs>`, e o plano e o estado prontos saem de
+  // `<runDir do header>/resume/<rs>.json`. Vem antes da irmã planOnly: numa run com plan gate, a irmã
+  // tem o plano de antes da aprovação e não sabe quais nós já estavam prontos — com ela na frente, todo
+  // nó pronto da retomada saía como pulado.
   if (!planStarted) {
+    const { runDirRaw, resumeId } = readWfPrefixInfo(runDir)
+    if (runDirRaw && resumeId) {
+      const rd = loadResume(runDirRaw, resumeId)
+      if (rd && rd.plan && Array.isArray(rd.plan.nodes)) {
+        planRes = rd.plan
+        applyPlanEffortAndMode(planRes)
+        const first = doNormalize(planRes.nodes, { round: 1 })
+        applyRoundOneRails(first)
+        const doneMap = (rd.resume && rd.resume.done) || {}
+        const rerunSet = new Set((rd.resume && rd.resume.rerun) || [])
+        resumeMeta = { id: resumeId, from: Array.isArray(rd.resume && rd.resume.from) ? rd.resume.from : [] }
+        let n = 0
+        for (const id of Object.keys(doneMap)) {
+          if (rerunSet.has(id)) continue
+          const node = NODES.get(id)
+          if (!node) continue
+          node.resumed = true
+          const entry = doneMap[id] || {}
+          const key = `resume:${++n}:${id}`
+          resumeSynthEvents.push({ type: 'started', key, agentId: null, label: `work:${id}`, phase: 'Execute', synthetic: true })
+          resumeSynthEvents.push({ type: 'result', key, result: { status: 'done', summary: entry.summary || '', artifact: entry.artifact || '', filesChanged: entry.filesChanged || [] } })
+          if (node.kind === 'implement' || entry.verified === true) {
+            const vkey = `resume:${++n}:v:${id}`
+            resumeSynthEvents.push({ type: 'started', key: vkey, agentId: null, label: `verify:${id}`, phase: 'Verify', synthetic: true })
+            resumeSynthEvents.push({ type: 'result', key: vkey, result: { pass: true, confidence: 'high', blocking: [] } })
+          }
+        }
+        // Revisão do design herdada: o motor não roda outra quando a da execução anterior passou. Sem ela,
+        // a coluna ficava "aguardando" e os nós de design, "pronto s/ verif.".
+        const dr = rd.resume && rd.resume.designReview
+        const drInJournal = events.some((e) => e.type === 'started' && /^design-review:/.test(e.label || ''))
+        if (dr && dr.pass === true && !drInJournal) {
+          const att = Number.isInteger(dr.attempts) && dr.attempts > 0 ? dr.attempts : 1
+          const dkey = `resume:${++n}:dr`
+          resumeSynthEvents.push({ type: 'started', key: dkey, agentId: null, label: `design-review:r${att}`, phase: 'Design review', synthetic: true })
+          resumeSynthEvents.push({ type: 'result', key: dkey, result: { pass: true, confidence: 'high', blocking: [] } })
+        }
+        warns.push(`plano e estado prontos lidos de resume/${resumeId} (sem plan neste journal)`)
+      } else {
+        warns.push(`Resume: ${resumeId} sem resume/${resumeId}.json legível`)
+      }
+    }
+  }
+
+  if (!planStarted && !planRes) {
     const sibDir = siblingPlanOnlyDir || findSiblingPlanOnly(runDir)
     if (sibDir) {
       const { events: sibEvents } = readJournalTolerant(path.join(sibDir, 'journal.jsonl'))
@@ -362,12 +653,13 @@ export async function buildModel(opts = {}) {
   let drAttempts = 0
   let drLastPass = null
   let drLastBlocking = []
+  let drLastBlockingRaw = [] // itens crus (com .issue), p/ motivo por nó — drLastBlocking fica só com ids
   let drLastFailed = false
   const polishState = new Map() // k -> { state }
 
-  for (const e of events.slice(cut)) {
+  for (const e of [...events.slice(cut), ...resumeSynthEvents]) {
     if (e.type === 'started') {
-      spent++
+      if (!e.synthetic) spent++
       const s = { label: e.label, done: false, seq: spent, agentId: e.agentId }
       byKey.set(e.key, s)
       const label = e.label || ''
@@ -435,6 +727,7 @@ export async function buildModel(opts = {}) {
         drLastFailed = e.type === 'failed'
         drLastPass = drLastFailed ? false : !!r.pass
         drLastBlocking = (r.blocking || []).map((b) => String((b && b.node) || b))
+        drLastBlockingRaw = r.blocking || []
       }
       if (s.label && s.label.startsWith('design-repair:')) designRepairOpenCount--
       if (s.label && s.label.startsWith('polish:')) {
@@ -474,36 +767,88 @@ export async function buildModel(opts = {}) {
     return !!(critic && n && critic.r >= (n.round || 1))
   }
 
+  // Por que `closed(id)` deu true, na mesma ordem que ela confere (usado só para o motivo de
+  // sem-reverificacao: nunca muda o valor de `closed`, só explica em pt-BR qual dos ramos bateu).
+  function closedCause(id) {
+    if (ended) return 'a run terminou antes de reverificar'
+    if (NEW && HAS_DR && designReviewModel && designReviewModel.state !== 'aguardando') {
+      const n0 = NODES.get(id)
+      if (n0 && n0.round === 1 && n0.kind !== 'implement') return 'a revisão do design já fechou este round'
+    }
+    for (const n of NODES.values()) {
+      if (n.deps && n.deps.includes(id) && START.has(n.id)) return `o nó ${n.id} já começou antes da reverificação`
+    }
+    const n = NODES.get(id)
+    if (critic && n && critic.r >= (n.round || 1)) return 'a crítica avançou para o próximo round'
+    return 'motivo não determinado no journal'
+  }
+
   const DEAD = new Set(['bloqueado', 'pulado'])
   const kindOf = (l) => l.split(':')[0]
   const isDraft = (k) => k === 'draft-a' || k === 'draft-b'
   const MEMO = new Map()
-  function state(id) {
+  // `full(id)` memoiza { state, reason }; `state(id)` (usada pelo resto do arquivo, inclusive
+  // recursivamente aqui dentro para os deps) segue devolvendo só a string, como sempre devolveu.
+  function full(id) {
     if (!MEMO.has(id)) MEMO.set(id, computeState(id))
     return MEMO.get(id)
+  }
+  function state(id) {
+    return full(id).state
   }
 
   function computeState(id) {
     const xs = per.get(id) || []
     const n = NODES.get(id)
     if (!xs.length) {
-      const dead = n && n.deps && n.deps.some((d) => DEAD.has(state(d)))
-      if (dead || ended) return 'pulado'
-      return 'aguardando'
+      // Revisão do design reprovada: o motor pula toda implementação do round 1 de uma vez, antes de
+      // olhar dependência (graph-eng.js, nota "revisão do design reprovada").
+      if (ended && NEW && HAS_DR && designReviewModel && designReviewModel.state === 'falhou' && n && n.kind === 'implement' && (n.round || 1) === 1) {
+        return { state: 'pulado', reason: 'pulado: a revisão do design reprovou, e a implementação não começa' }
+      }
+      // `badDep` usa o mesmo DEAD (bloqueado/pulado) que decide `dead` — uma dependência que só
+      // "falhou" não entra aqui (o motor não trata isso como cascata; ela conta como orçamento).
+      const badDep = n && n.deps && n.deps.find((d) => DEAD.has(state(d)))
+      const dead = !!badDep
+      if (dead || ended) {
+        let reason
+        if (badDep) {
+          const ds = state(badDep)
+          reason = ds === 'pulado'
+            ? `pulado: não rodou porque a dependência ${badDep} foi pulada`
+            : `pulado: não rodou porque a dependência ${badDep} ficou bloqueada`
+        } else if (typeof ceiling === 'number' && Number.isFinite(ceiling) && spent >= ceiling) {
+          reason = `pulado: sem orçamento — o teto de ${ceiling} agentes acabou antes deste nó`
+        } else if (NEW) {
+          // Fora os dois casos acima, o motor só termina sem rodar um nó por falta de vaga (canSpend, que
+          // mede contra o alvo do nível e guarda vagas para as fases finais, então pula antes do teto) ou
+          // porque o cortou do plano por tamanho (applyMaxNodes). Nenhum dos dois chega ao journal, e o
+          // alvo pode ter subido depois do plano: o motivo cita as duas causas em vez de escolher uma.
+          reason = 'pulado: não rodou — sem vaga no orçamento de agentes, ou cortado do plano por tamanho'
+        } else {
+          reason = 'pulado: não rodou: a run terminou antes'
+        }
+        return { state: 'pulado', reason }
+      }
+      return { state: 'aguardando', reason: null }
     }
     const open = xs.filter((x) => !x.done)
     if (open.length) {
       const k = kindOf(open[open.length - 1].label)
-      if (k === 'verify' || k === 'escalate') return 'verificando'
-      if (k === 'repair' || k === 'design-repair') return 'reparando'
-      return 'trabalhando'
+      if (k === 'verify' || k === 'escalate') return { state: 'verificando', reason: null }
+      if (k === 'repair' || k === 'design-repair') return { state: 'reparando', reason: null }
+      return { state: 'trabalhando', reason: null }
     }
     const last = xs[xs.length - 1]
     const lk = kindOf(last.label)
     const drafts = xs.filter((x) => isDraft(kindOf(x.label)))
     if (last.failed) {
-      if (lk === 'work' || lk === 'judge' || (drafts.length === 2 && drafts.every((x) => x.failed))) return 'bloqueado'
-      return 'erro'
+      if (lk === 'work' || lk === 'judge' || (drafts.length === 2 && drafts.every((x) => x.failed))) {
+        const r = last.result || {}
+        const msg = firstLine(r.summary || r.assessment || r.error || '', 200)
+        return { state: 'bloqueado', reason: `bloqueado: ${msg || 'o agente não voltou com resultado utilizável'}` }
+      }
+      return { state: 'erro', reason: null }
     }
     // Adiamento (§4.2): numa run nova, LEVEL substitui o preset --economy (P.defer).
     const deferred = NEW && LEVEL
@@ -512,12 +857,13 @@ export async function buildModel(opts = {}) {
     let verdict = null
     let pendingAfter = null
     let verifiedEver = false
+    let countBeforeRepair = null
     for (const x of xs) {
       if (x.failed) continue
       const k = kindOf(x.label)
       const r = x.result || {}
       if (k === 'verify' || k === 'escalate') {
-        verdict = { pass: !!r.pass && !(r.blocking || []).length, via: 'verify' }
+        verdict = { pass: !!r.pass && !(r.blocking || []).length, via: 'verify', blocking: r.blocking || [], count: (r.blocking || []).length }
         pendingAfter = null
         verifiedEver = true
         continue
@@ -529,11 +875,17 @@ export async function buildModel(opts = {}) {
         continue
       }
       if (!asWork && k !== 'repair' && k !== 'design-repair') continue
-      if (asWork && r.status === 'blocked') return 'bloqueado'
-      const red = (r.checks || []).some((c) => c && c.ok === false)
+      // Bloqueios do veredito que disparou este reparo: o motor para quando o seguinte não tem menos.
+      if ((k === 'repair' || k === 'design-repair') && verdict) countBeforeRepair = verdict.count
+      if (asWork && r.status === 'blocked') {
+        const msg = firstLine(r.summary || r.assessment || '', 200)
+        return { state: 'bloqueado', reason: `bloqueado: ${msg || 'o worker sinalizou bloqueio, sem detalhe no resultado'}` }
+      }
+      const failedCheck = (r.checks || []).find((c) => c && c.ok === false)
+      const red = !!failedCheck
       const gated = k === 'repair' || k === 'design-repair' || (NEW && LEVEL ? !deferred : P ? !deferred : x !== last)
       if (red && gated) {
-        verdict = { pass: false, via: 'check' }
+        verdict = { pass: false, via: 'check', check: failedCheck, count: (r.checks || []).filter((c) => c && c.ok === false).length }
         pendingAfter = null
         verifiedEver = true
         continue
@@ -541,36 +893,77 @@ export async function buildModel(opts = {}) {
       pendingAfter = k === 'repair' || k === 'design-repair' ? 'repair' : 'work'
       verdict = null
     }
-    if (pendingAfter === 'draft') return closed(id) ? 'bloqueado' : 'trabalhando'
-    if (verdict) return verdict.pass ? 'pronto' : verdict.via === 'check' ? 'falhou-check' : 'falhou'
-    if (pendingAfter === 'repair') return closed(id) ? 'sem-reverificacao' : 'reparando'
+    if (pendingAfter === 'draft') {
+      if (!closed(id)) return { state: 'trabalhando', reason: null }
+      const bothFailed = drafts.length === 2 && drafts.every((x) => x.failed)
+      const reason = bothFailed ? 'bloqueado: os dois rascunhos falharam' : 'bloqueado: os rascunhos não fecharam antes da run terminar'
+      return { state: 'bloqueado', reason }
+    }
+    if (verdict) {
+      if (verdict.pass) return { state: 'pronto', reason: null }
+      if (verdict.via === 'check') {
+        const c = verdict.check || {}
+        const out = String(c.output || '').replace(/\s+/g, ' ').trim()
+        const reason = `falhou (check): ${c.cmd || '(comando desconhecido)'}` + (out ? `\n${out.slice(0, 300)}` : '')
+        return { state: 'falhou-check', reason }
+      }
+      const reps = xs.filter((x) => kindOf(x.label) === 'repair' || kindOf(x.label) === 'design-repair').length
+      const items = (verdict.blocking || []).map((b) => firstLine(String((b && b.issue) || b), 220)).filter(Boolean)
+      const first = items[0] || '(sem detalhe de bloqueio no resultado)'
+      const lines = [`falhou: reprovado na verificação — ${first}`, ...items.slice(1).map((i) => `- ${i}`)]
+      // Com reparo, o motor para por três causas: sem progresso (o veredito seguinte não tem menos
+      // bloqueios, conta que o journal mostra), ou, com progresso, reparos esgotados ou sem vaga para o
+      // próximo, que o journal não separa. Sem reparo nenhum numa run que chegou à síntese, só falta de vaga.
+      if (reps > 0 && !ended) lines.push('reparo tentado, segue sem verificação aprovada')
+      else if (reps > 0 && countBeforeRepair != null && verdict.count < countBeforeRepair) {
+        lines.push(`o último reparo baixou os bloqueios de ${countBeforeRepair} para ${verdict.count}, mas acabaram os reparos permitidos ou o orçamento`)
+      } else if (reps > 0) lines.push('reparo sem progresso')
+      else if (ended) lines.push('sem orçamento para reparar')
+      return { state: 'falhou', reason: lines.join('\n') }
+    }
+    if (pendingAfter === 'repair') {
+      if (!closed(id)) return { state: 'reparando', reason: null }
+      return { state: 'sem-reverificacao', reason: `sem-reverificacao: reparado, mas sem nova verificação — ${closedCause(id)}` }
+    }
     if (!verifiedEver && (deferred || closed(id) || (NEW && LEVEL ? false : !P))) {
       const flagsUnknown = NEW && LEVEL ? false : !P || (mode === undefined && n && n.rawKind === 'implement')
       if (flagsUnknown) {
         warns.push(`${id}: deferido ou reprovado? passe --economy e --mode`)
-        return 'pronto-sem-verif?'
+        return { state: 'pronto-sem-verif?', reason: null }
       }
-      return 'pronto-sem-verif'
+      return { state: 'pronto-sem-verif', reason: null }
     }
-    return 'verificando'
+    return { state: 'verificando', reason: null }
   }
 
   const nodes = [...NODES.values()].map((n) => {
-    let st = state(n.id)
+    const f0 = full(n.id)
+    let st = f0.state
+    let reason = f0.reason
     const xs = per.get(n.id) || []
     const reps = xs.filter((x) => kindOf(x.label) === 'repair' || kindOf(x.label) === 'design-repair').length
     // Revisão do design verificou o nó não-implement do round 1: sobrescreve o veredito do próprio
     // nó (§4.2). "falhou" vale mesmo sobre um verify próprio que passou; "pronto" só troca estados
     // sem verificação, porque um verify próprio que já reprovou continua valendo.
     if (NEW && HAS_DR && designReviewModel && n.round === 1 && n.kind !== 'implement') {
-      if (designReviewModel.state === 'falhou' && ended && designReviewModel.blocking.includes(n.id)) st = 'falhou'
-      else if (designReviewModel.state === 'pronto' && ['pronto-sem-verif', 'pronto-sem-verif?', 'sem-reverificacao'].includes(st)) st = 'pronto'
+      if (designReviewModel.state === 'falhou' && ended && designReviewModel.blocking.includes(n.id)) {
+        st = 'falhou'
+        const item = drLastBlockingRaw.find((b) => b && (b.node === n.id || String(b.node || b) === n.id))
+        const issue = item && item.issue ? firstLine(String(item.issue), 220) : ''
+        reason = `falhou: reprovado na revisão do design${issue ? ' — ' + issue : ''}`
+      } else if (designReviewModel.state === 'pronto' && ['pronto-sem-verif', 'pronto-sem-verif?', 'sem-reverificacao'].includes(st)) {
+        st = 'pronto'
+        reason = null
+      }
     }
     const out = { id: n.id, kind: n.kind, risk: n.risk, round: n.round || 1, title: n.title, deps: n.deps || [], explore: !!n.explore, state: st, reps, closed: closed(n.id) }
     if (n.orphan) out.orphan = true
+    if (n.resumed) out.resumed = true
     if (n.injected) {
       out.injected = true
       out.reason = n.reason || ''
+    } else if (REASON_STATES.has(st) && reason) {
+      out.reason = reason
     }
     if (ACTIVE_STATES.has(st)) {
       const open = xs.filter((x) => !x.done)
@@ -580,8 +973,33 @@ export async function buildModel(opts = {}) {
     return out
   })
 
-  const idleSec = Math.max(0, Math.round((Date.now() - stat.mtimeMs) / 1000))
-  const status = synth === 'pronto' ? 'terminado' : idleSec > 600 ? 'parada?' : 'rodando'
+  const idleSec = Math.max(0, Math.round((now - stat.mtimeMs) / 1000))
+  const synthDone = synth === 'pronto'
+
+  // `openAgentIds`: agentId de todo `started` ainda sem `result`/`failed`, nós e pseudo (C6/D1 §3.3).
+  const openAgentIds = [...byKey.values()].filter((s) => !s.done && s.agentId).map((s) => s.agentId)
+  // planOnly (D1 §3.5): só houve `plan`, com resultado, e nenhum agente segue aberto.
+  const attemptLabels = [...byKey.values()].map((s) => s.label)
+  const planOnly = attemptLabels.length > 0 && attemptLabels.every((l) => l === 'plan') && openAgentIds.length === 0
+
+  const stop = computeStop({ runDir, openAgentIds, terminated: synthDone, planOnly, now, stallMinutes, ownerListening, ownerGone })
+  const status = synthDone || planOnly ? 'terminado' : stop ? 'parada?' : 'rodando'
+
+  // Nó parado (D1 §3.3 "Nó parado"): mesmo que a run siga viva por outro nó paralelo, o nó cujo
+  // agente está parado ganha `n.stop`, com o mesmo motivo/idleSec do agente dele.
+  if (!synthDone && !planOnly) {
+    const L = stallMinutes * 60 * (ownerListening ? 3 : 1)
+    for (const n of nodes) {
+      if (!n.running || !n.running.agentId) continue
+      const ev = evalOpenAgent(runDir, n.running.agentId, stat.mtimeMs, now, L, ownerGone, ownerListening)
+      if (ev.stopped) n.stop = { reason: ev.reason, text: stopReasonText(ev.reason, ev.idleSec), idleSec: ev.idleSec }
+    }
+  }
+
+  // Linha "agora" (D1 §3.8): pseudo-agentes ainda abertos (plan, critic, synth, design-review, polish).
+  const activePseudo = [...byKey.values()]
+    .filter((s) => !s.done && s.agentId && STOP_PSEUDO_KINDS.has((s.label || '').split(':')[0]))
+    .map((s) => ({ label: s.label, agentId: s.agentId }))
 
   const model = {
     wf: path.basename(runDir),
@@ -593,6 +1011,11 @@ export async function buildModel(opts = {}) {
     critic,
     synth: synth || 'aguardando',
     spent,
+    stop,
+    planOnly,
+    activePseudo,
+    openAgentIds,
+    resume: resumeMeta,
   }
 
   if (NEW) {
@@ -916,7 +1339,8 @@ function renderCompact(model, layers, color, rows, cols) {
       const indent = '  '.repeat(k)
       const arrow = k ? '└▶ ' : ''
       const deps = n.deps && n.deps.length ? n.deps.join(' ') : n.orphan ? '?' : 'plan'
-      const line = `${indent}${arrow}[${marker}] ${n.id} ${label}  ← ${deps}`
+      const reasonSuffix = n.reason ? `  · ${firstLine(n.reason, 80)}` : ''
+      const line = `${indent}${arrow}[${marker}] ${n.id} ${label}  ← ${deps}${reasonSuffix}`
       lines.push({ id, c, text: paint(cutCols(line, cols), c, color) })
     }
   })
@@ -955,6 +1379,16 @@ export function graphText(model, opts = {}) {
   const full = !hasOrphan && layers.every((L) => L.length * (BOX_W + 2) + Math.max(0, L.length - 1) * GAP <= cols)
   if (full && layers.length) {
     out.push(...renderBoxLayers(model, layers, color))
+    // O layout em caixas (diferente do compacto, que traz o motivo embutido na linha via
+    // `reasonSuffix`) não tem espaço para o texto dentro da caixa — por isso ele sai aqui, num
+    // bloco à parte, uma linha por nó com `n.reason` (REPAIR do I11: os dois layouts do snapshot
+    // precisam trazer o motivo, não só o compacto).
+    const withReason = model.nodes.filter((n) => n.reason)
+    if (withReason.length) {
+      out.push('')
+      out.push(cutCols('motivos:', cols))
+      for (const n of withReason) out.push(cutCols(`  ${n.id}: ${firstLine(n.reason, cols)}`, cols))
+    }
   } else {
     out.push(...renderCompact(model, layers, color, rows, cols))
   }
@@ -1012,17 +1446,19 @@ function lastToolUse(runDir, agentId) {
 // ── Bloco "agora" (§5 de render-design.md; só o `snapshot` acrescenta, não faz parte do golden) ──
 export function buildNowBlock(model, runDir, opts = {}) {
   const now = opts.now || Date.now()
-  const active = model.nodes.filter((n) => n.running)
+  // D1 §3.8: além dos nós rodando, conta todo pseudo-agente aberto (plan, critic, synth,
+  // design-review, polish) — hoje o bloco só olhava `model.nodes`, e critic/synth ficavam de fora.
+  const active = [...model.nodes.filter((n) => n.running).map((n) => n.running), ...(model.activePseudo || [])]
   if (active.length) {
     return active
-      .map((n) => {
-        const shortId = String(n.running.agentId).slice(0, 8) + '…'
-        const call = lastToolUse(runDir, n.running.agentId)
+      .map((r) => {
+        const shortId = String(r.agentId).slice(0, 8) + '…'
+        const call = lastToolUse(runDir, r.agentId)
         if (call && call.ts) {
           const ageSec = Math.max(0, Math.round((now - Date.parse(call.ts)) / 1000))
-          return `agora: ${n.running.label} · agente ${shortId} · última tool call ${call.name} há ${ageSec}s`
+          return `agora: ${r.label} · agente ${shortId} · última tool call ${call.name} há ${ageSec}s`
         }
-        return `agora: ${n.running.label} · agente ${shortId} · sem tool call ainda`
+        return `agora: ${r.label} · agente ${shortId} · sem tool call ainda`
       })
       .join('\n')
   }
@@ -1193,7 +1629,92 @@ export async function runEventsMode(runDir, opts = {}) {
   let paradaEmitted = false
   let synthEmitted = false
 
-  const snap = (cutLine) => buildModel({ runDir, economy, mode: modeFlag, effort, ceiling, cutLine })
+  // ── Sinal de vida e fila de pedidos (spec C1-C4). Só existem quando o caminho do wf tem a forma
+  // <slug>/<sessão>/subagents/workflows/<wf> (ownerPathInfo): um watcher sobre um --run-dir solto,
+  // como os testes de hoje, não grava listener nem entra em "listen" (C3).
+  const clock = () => (opts.now ? opts.now() : Date.now())
+  const stateDir = opts.stateDir || defaultStateDir()
+  const owner = ownerPathInfo(runDir)
+  const startedAtIso = new Date(clock()).toISOString()
+  let exitedHeartbeat = false
+  // 'run' até o TERMINADO; vira 'listen' só na fase de escuta pós-TERMINADO (P2, C3). --run
+  // (explicitRun) só escolhe a run a acompanhar num rearme e não tem relação com esta fase.
+  let heartbeatMode = 'run'
+  let listenUntilIso = null
+
+  function beat(exitedAt = null) {
+    if (!owner) return
+    try {
+      writeHeartbeat(stateDir, {
+        session: owner.session,
+        project: owner.project,
+        cwd: opts.cwd ?? process.cwd(),
+        pid: process.pid,
+        wf: owner.wf,
+        runId: opts.runId ?? null,
+        mode: heartbeatMode,
+        startedAt: startedAtIso,
+        beatAt: new Date(clock()).toISOString(),
+        listenUntil: listenUntilIso,
+        exitedAt,
+        plugin: pluginVersion(),
+      })
+    } catch {
+      /* sinal de vida é melhor esforço: nunca derruba o watcher */
+    }
+  }
+
+  function beatExit() {
+    if (exitedHeartbeat || !owner) return
+    exitedHeartbeat = true
+    beat(new Date(clock()).toISOString())
+  }
+
+  let heartbeatTimer = null
+  if (owner) {
+    beat()
+    heartbeatTimer = setInterval(beat, opts.heartbeatMs || HEARTBEAT_MS)
+    if (heartbeatTimer.unref) heartbeatTimer.unref()
+  }
+
+  const seenLocally = new Set()
+  function checkRequests() {
+    if (!owner) return
+    const now = clock()
+    for (const req of listRequests(stateDir)) {
+      if (req.state !== 'pendente' || seenLocally.has(req.id)) continue
+      if (isPendingExpired(req, now)) continue
+      if (!isEligible(req, { session: owner.session, project: owner.project })) continue
+      seenLocally.add(req.id)
+      if (!markSeen(stateDir, req.id, owner.session)) continue
+      console.log(requestEventLine(req, { root: PLUGIN_ROOT, session: owner.session }))
+    }
+  }
+
+  const onSignal = () => {
+    beatExit()
+    if (heartbeatTimer) clearInterval(heartbeatTimer)
+    process.exit(0)
+  }
+  if (owner) {
+    process.once('SIGINT', onSignal)
+    process.once('SIGTERM', onSignal)
+  }
+
+  // Presença da dona (C3, "no I3 o events passa a ler os listeners"): o próprio watcher É a dona
+  // ouvindo (ou rearmando), então sua janela de parada é 3·N (computeStop) em vez de N.
+  function presenceFlags() {
+    if (!owner) return { ownerListening: false, ownerGone: false }
+    const now = clock()
+    let presence
+    try {
+      presence = ownerPresence(readListeners(stateDir, now), owner.session, now)
+    } catch {
+      return { ownerListening: false, ownerGone: false }
+    }
+    return { ownerListening: presence === 'ouvindo', ownerGone: presence === 'encerrada' }
+  }
+  const snap = (cutLine) => buildModel({ runDir, economy, mode: modeFlag, effort, ceiling, cutLine, ...presenceFlags() })
 
   function checkParada(model) {
     if (paradaEmitted || model.status !== 'parada?') return
@@ -1222,7 +1743,8 @@ export async function runEventsMode(runDir, opts = {}) {
       const isFinal = FINAL_ALWAYS.has(n.state) || (FINAL_CLOSED.has(n.state) && n.closed)
       if (isFinal && emittedFinal.get(n.id) !== n.state) {
         emittedFinal.set(n.id, n.state)
-        console.log(eventLine(curModel, `${n.id} ${stateLabel(n)[0]}`))
+        const text = `${n.id} ${stateLabel(n)[0]}` + (n.reason ? ` — ${firstLine(n.reason, 140)}` : '')
+        console.log(eventLine(curModel, text))
       }
     }
     if (curModel.designReview) {
@@ -1255,9 +1777,59 @@ export async function runEventsMode(runDir, opts = {}) {
     }
   }
 
+  function finish(code) {
+    beatExit()
+    if (heartbeatTimer) clearInterval(heartbeatTimer)
+    process.removeListener('SIGINT', onSignal)
+    process.removeListener('SIGTERM', onSignal)
+    return code
+  }
+
+  function hhmm(ms) {
+    const d = new Date(ms)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+
+  // P2 (spec C3/C4): depois do TERMINADO, com dona e --listen-min > 0 (padrão 120), o watcher
+  // segue ouvindo o painel até terminadoEm + listenMin, em vez de sair na hora. --listen-min 0
+  // (ou sem dona) mantém o comportamento de hoje: sai assim que emite o TERMINADO.
+  //
+  // `terminadoEm` vem de markTerminated (persistido em stateDir/terminated/<wf>.json), não de
+  // `clock()` direto: cada rearme do Monitor (timeout de 30 min, doc da tool) é um *processo novo*
+  // de `graph-watch events --run`, e sem essa persistência `terminatedAt` recomeçava a cada arme,
+  // empurrando `listenUntil` + 2h a cada vez e sem nunca chegar em "escuta do painel encerrada"
+  // (C4). `rearmContinuing` só controla a linha impressa (`ouvindo…` em vez de
+  // `ouvindo o painel até HH:MM`, C4) — a janela em si já é a persistida, rearme ou não.
+  const listenMin = opts.listenMin != null ? Number(opts.listenMin) : 120
+  async function afterTerminated({ rearmContinuing = false } = {}) {
+    if (!owner || !(listenMin > 0)) return finish(0)
+    const terminatedAt = markTerminated(stateDir, owner.wf, clock())
+    const until = terminatedAt + listenMin * 60000
+    listenUntilIso = new Date(until).toISOString()
+    heartbeatMode = 'listen'
+    beat()
+    if (clock() >= until) {
+      // Rearme depois da janela já ter passado: nem entra em listen, só fecha o episódio (C4).
+      console.log(`graph-eng ${owner.wf} · escuta do painel encerrada`)
+      return finish(0)
+    }
+    console.log(rearmContinuing ? `graph-eng ${owner.wf} · ouvindo…` : `graph-eng ${owner.wf} · ouvindo o painel até ${hhmm(until)}`)
+    while (clock() < until) {
+      await sleep(150)
+      try {
+        checkRequests()
+      } catch {
+        /* leitura transitória: tenta de novo no próximo tick */
+      }
+    }
+    console.log(`graph-eng ${owner.wf} · escuta do painel encerrada`)
+    return finish(0)
+  }
+
   let total = countReadyEvents(journalPath)
   const retomandoModel = await snap(total)
   console.log(eventLine(retomandoModel, `retomando: ${summarizeActive(retomandoModel)}`))
+  checkRequests()
 
   let previous = retomandoModel
   if (explicitRun) {
@@ -1265,8 +1837,12 @@ export async function runEventsMode(runDir, opts = {}) {
     // (§5.2). Não repete marco nenhum: só confere se a run já terminou.
     if (retomandoModel.synth === 'pronto') {
       synthEmitted = true
-      console.log(eventLine(retomandoModel, 'TERMINADO'))
-      return 0
+      // Já tem marcador de término (C4): este `--run` é um rearme de um episódio que outro
+      // processo já anunciou. Não repete o `TERMINADO` — só a linha `ouvindo…` (dentro de
+      // afterTerminated).
+      const rearmContinuing = !!owner && listenMin > 0 && hasTerminatedMarker(stateDir, owner.wf)
+      if (!rearmContinuing) console.log(eventLine(retomandoModel, 'TERMINADO'))
+      return afterTerminated({ rearmContinuing })
     }
     checkParada(retomandoModel)
   } else {
@@ -1276,13 +1852,23 @@ export async function runEventsMode(runDir, opts = {}) {
       emitDiff(previous, cur)
       previous = cur
     }
-    if (synthEmitted) return 0
+    if (synthEmitted) return afterTerminated()
     if (!previous) previous = retomandoModel
     checkParada(previous)
   }
 
+  let sinceReqCheck = 0
   for (;;) {
     await sleep(150)
+    sinceReqCheck += 150
+    if (sinceReqCheck >= 1000) {
+      sinceReqCheck = 0
+      try {
+        checkRequests()
+      } catch {
+        /* leitura transitória: tenta de novo no próximo tick */
+      }
+    }
     let now
     try {
       now = countReadyEvents(journalPath)
@@ -1296,7 +1882,7 @@ export async function runEventsMode(runDir, opts = {}) {
         previous = cur
       }
       total = now
-      if (synthEmitted) return 0
+      if (synthEmitted) return afterTerminated()
     } else {
       try {
         checkParada(await snap(total))
@@ -1402,7 +1988,7 @@ export async function runLive(runDir, opts = {}) {
 }
 
 // ── CLI ──
-const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n', '--port', '--ceiling', '--effort'])
+const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n', '--port', '--ceiling', '--effort', '--state-dir', '--listen-min'])
 
 function parseArgs(rest) {
   const opts = {}
@@ -1426,6 +2012,29 @@ export function parsePort(v, fallback, env = process.env.GRAPH_ENG_PORT) {
   return n
 }
 
+async function detachPanel(port, projectsDir) {
+  const log = path.join(defaultStateDir(), 'painel.log')
+  fs.mkdirSync(path.dirname(log), { recursive: true })
+  const out = fs.openSync(log, 'w')
+  const args = [fileURLToPath(import.meta.url), 'ui', '--no-open', '--port', String(port), '--projects-dir', projectsDir]
+  const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', out, out] })
+  fs.closeSync(out)
+  let exitCode = null
+  child.on('exit', (code) => (exitCode = code ?? 1))
+  child.unref()
+  for (let i = 0; i < 100; i++) {
+    const text = fs.readFileSync(log, 'utf8')
+    const m = text.match(/^graph-eng: painel: (\S+)$/m)
+    if (m) return m[1]
+    if (exitCode !== null) {
+      process.stderr.write(text)
+      process.exit(exitCode || 1)
+    }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  throw new GraphWatchError(1, `o painel não subiu em 10s; log em ${log}`)
+}
+
 async function main() {
   const argv = process.argv.slice(2)
   const mode = argv[0]
@@ -1443,10 +2052,31 @@ async function main() {
 
   if (mode === 'ui') {
     // Painel web (docs/specs/2026-09-27-painel-web.md): sobe ou reaproveita o servidor e fica de pé.
-    const { ensurePanel, openBrowser, DEFAULT_PORT } = await import('./ui-server.mjs')
-    const panel = await ensurePanel({ port: parsePort(opts['--port'], DEFAULT_PORT), projectsDir })
+    const { ensurePanel, openBrowser, probePanel, DEFAULT_PORT } = await import('./ui-server.mjs')
+    const port = parsePort(opts['--port'], DEFAULT_PORT)
+    const shouldOpen = opts['--open'] || (process.stdout.isTTY && !opts['--no-open'])
+    if (opts['--stop']) {
+      const who = await probePanel(port)
+      if (who === 'livre') {
+        console.log(`graph-eng: painel já estava parado (porta ${port})`)
+        process.exit(0)
+      }
+      if (who === 'outro') throw new GraphWatchError(5, `porta ${port} ocupada por outro programa, não é o painel`)
+      const { pid } = await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()
+      if (!pid) throw new GraphWatchError(1, `o painel na porta ${port} é de uma versão sem --stop; encerre o processo dele com kill`)
+      process.kill(pid, 'SIGTERM')
+      console.log(`graph-eng: painel parado (pid ${pid})`)
+      process.exit(0)
+    }
+    if (opts['--detach']) {
+      const url = (await probePanel(port)) === 'graph-watch' ? `http://127.0.0.1:${port}` : await detachPanel(port, projectsDir)
+      console.log(`graph-eng: painel: ${url}`)
+      if (shouldOpen) openBrowser(url)
+      process.exit(0)
+    }
+    const panel = await ensurePanel({ port, projectsDir })
     console.log(`graph-eng: painel: ${panel.url}`)
-    if (opts['--open'] || (process.stdout.isTTY && !opts['--no-open'])) openBrowser(panel.url)
+    if (shouldOpen) openBrowser(panel.url)
     if (panel.reused) process.exit(0)
     for (const sig of ['SIGINT', 'SIGTERM']) {
       process.once(sig, () => {
@@ -1477,7 +2107,8 @@ async function main() {
   if (mode === 'snapshot') {
     const model = await buildModel({ runDir, economy, mode: modeFlag, effort: effortFlag, ceiling: ceilingFlag })
     const lines = [graphText(model, { cols, rows, color }), buildNowBlock(model, runDir)]
-    if (terminated) lines.push(`aviso: sem --run, usando ${model.wf} (terminada)`)
+    // `terminated` vem do findRun também com --run/--run-id; o aviso é só para a run escolhida sozinha.
+    if (terminated && !opts['--run'] && !opts['--run-id']) lines.push(`aviso: sem --run, usando ${model.wf} (terminada)`)
     console.log(lines.join('\n'))
     process.exit(0)
   } else if (mode === 'agent') {
@@ -1491,7 +2122,9 @@ async function main() {
     console.log(view.text)
     process.exit(0)
   } else if (mode === 'events') {
-    const code = await runEventsMode(runDir, { economy, modeFlag, effort: effortFlag, ceiling: ceilingFlag, explicitRun: !!opts['--run'] })
+    const stateDir = opts['--state-dir']
+    const listenMin = opts['--listen-min'] != null ? Number(opts['--listen-min']) : undefined
+    const code = await runEventsMode(runDir, { economy, modeFlag, effort: effortFlag, ceiling: ceilingFlag, explicitRun: !!opts['--run'], stateDir, listenMin })
     process.exit(code)
   } else if (mode === 'live') {
     // `--svg` virou alias do painel web: garante o painel (instância única) e segue como `live`.

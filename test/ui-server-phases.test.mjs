@@ -49,7 +49,9 @@ describe('painel web: pseudo-nós da fase (design-review, polish-<k>) sobre wf_p
 
   before(async () => {
     ;({ projectsDir } = copyPhases())
-    panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100 })
+    // estado do painel num dir temporário: nunca ~/.claude (spec C1)
+    const configPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'graph-eng-ui-state-')), 'config.json')
+    panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath })
     port = panel.port
   })
   after(async () => {

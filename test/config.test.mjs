@@ -15,6 +15,7 @@ import {
   LIMITS,
   MAX_BODY,
   defaultConfigPath,
+  defaultStateDir,
   validateConfig,
   readConfig,
   writeConfig,
@@ -28,7 +29,7 @@ const CLI = path.join(__dirname, '..', 'bin', 'graph-config.mjs')
 
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'graph-eng-config-'))
 
-const FACTORY = { effort: 'auto', ceiling: 24, economy: 'balanced', planGate: false, maxRounds: 3, maxRepairs: 2 }
+const FACTORY = { effort: 'auto', ceiling: 24, economy: 'balanced', planGate: false, maxRounds: 3, maxRepairs: 2, stallMinutes: 5 }
 const ALL_DEFAULT = Object.fromEntries(CONFIG_KEYS.map((k) => [k, 'default']))
 
 function cli(args, { file } = {}) {
@@ -57,10 +58,21 @@ describe('config: padrões e caminho', () => {
     assert.equal(defaultConfigPath({ GRAPH_ENG_CONFIG: '/tmp/x.json' }, '/casa/u'), '/tmp/x.json')
   })
 
-  test('LIMITS: teto de 8 a 100 e as listas de esforço e economia', () => {
+  // C1: defaultStateDir(env, home) = GRAPH_ENG_STATE_DIR, senão dirname(defaultConfigPath(env, home)) —
+  // que já respeita GRAPH_ENG_CONFIG. Nenhum teste toca ~/.claude real (home sempre injetado).
+  test('defaultStateDir: ao lado do config.json por padrão; GRAPH_ENG_STATE_DIR e GRAPH_ENG_CONFIG sobrepõem', () => {
+    assert.equal(defaultStateDir({}, '/casa/u'), path.join('/casa/u', '.claude', 'graph-eng'))
+    assert.equal(defaultStateDir({ GRAPH_ENG_CONFIG: '/tmp/x/config.json' }, '/casa/u'), '/tmp/x')
+    assert.equal(defaultStateDir({ GRAPH_ENG_STATE_DIR: '/tmp/state' }, '/casa/u'), '/tmp/state')
+    // GRAPH_ENG_STATE_DIR vence mesmo com GRAPH_ENG_CONFIG setado também
+    assert.equal(defaultStateDir({ GRAPH_ENG_STATE_DIR: '/tmp/state', GRAPH_ENG_CONFIG: '/tmp/x/config.json' }, '/casa/u'), '/tmp/state')
+  })
+
+  test('LIMITS: teto de 8 a 100, listas de esforço e economia, e o limiar de parada de 1 a 60', () => {
     assert.deepEqual(LIMITS.ceiling, { min: 8, max: 100 })
     assert.deepEqual(LIMITS.maxRounds, { min: 1, max: 5 })
     assert.deepEqual(LIMITS.maxRepairs, { min: 1, max: 3 })
+    assert.deepEqual(LIMITS.stallMinutes, { min: 1, max: 60 })
     assert.deepEqual(LIMITS.effort, ['manual', 'auto', 'low', 'medium', 'high', 'max'])
     assert.deepEqual(LIMITS.economy, ['lean', 'balanced', 'max'])
     assert.equal(MAX_BODY, 4096)
@@ -155,6 +167,10 @@ describe('config: validateConfig (estrita, sem coerção)', () => {
     assert.deepEqual(err({ maxRounds: 6 }), { maxRounds: 'de 1 a 5' })
     assert.deepEqual(err({ maxRepairs: 0 }), { maxRepairs: 'de 1 a 3' })
     assert.deepEqual(err({ maxRepairs: 4 }), { maxRepairs: 'de 1 a 3' })
+    assert.deepEqual(err({ stallMinutes: 0 }), { stallMinutes: 'de 1 a 60' })
+    assert.deepEqual(err({ stallMinutes: 61 }), { stallMinutes: 'de 1 a 60' })
+    assert.deepEqual(err({ stallMinutes: '5' }), { stallMinutes: 'de 1 a 60' })
+    assert.equal(validateConfig({ stallMinutes: 5 }).ok, true)
     assert.deepEqual(err({ foo: 1 }), { foo: 'campo desconhecido' })
     const proto = validateConfig(JSON.parse('{"__proto__": {"ceiling": 5}}'))
     assert.equal(proto.ok, false)

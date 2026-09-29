@@ -1,11 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <style>
-.bg{fill:#1D1D1F}.fg{fill:#FFFFFF}
-@media (prefers-color-scheme: dark){.bg{fill:#F5F5F7}.fg{fill:#0A0A0B}}
+.bg{fill:#1D1D1F}.line{stroke:#FFFFFF;stroke-opacity:.5}.fg{fill:#FFFFFF}.ring{fill:#1D1D1F;stroke:#FFFFFF}
+@media (prefers-color-scheme: dark){.bg{fill:#F5F5F7}.line{stroke:#0A0A0B;stroke-opacity:.45}.fg{fill:#0A0A0B}.ring{fill:#F5F5F7;stroke:#0A0A0B}}
 </style>
-<rect class="bg" width="64" height="64" rx="14"/>
-<circle class="fg" cx="17" cy="32" r="7"/>
-<circle class="fg" cx="32" cy="18" r="7"/>
-<circle class="fg" cx="32" cy="46" r="7" fill-opacity=".45"/>
-<circle cx="47" cy="32" r="7" fill="#0A84FF"/>
+<rect class="bg" width="64" height="64" rx="15"/>
+<path class="line" d="M17 32 32 19 47 32 32 45Z" stroke-width="2.5" stroke-linejoin="round" fill="none"/>
+<circle class="fg" cx="17" cy="32" r="5"/>
+<circle class="fg" cx="32" cy="19" r="5"/>
+<circle class="ring" cx="32" cy="45" r="3.8" stroke-width="2.5"/>
+<circle cx="47" cy="32" r="5" fill="#0A84FF"/>
 </svg>

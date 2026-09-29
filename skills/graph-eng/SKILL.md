@@ -22,6 +22,70 @@ Esse é o esqueleto de `implement`. `architecture` não tem implementação (a c
 `research`/`review` vão de pesquisa direto para a crítica. Na síntese de `implement` rodam
 `ceil(2/3 × nós implement)` polidores e depois 1 consolidador.
 
+## Ações sobre uma run (painel ou comando colado)
+
+O painel web (`bin/ui-server.mjs`) age sobre as runs por uma fila em arquivo (`bin/requests.mjs`) que o
+`graph-watch events` desta seção lê e emite como uma linha de pedido, e pelo texto que os botões "Copiar"
+do painel colocam no clipboard. Contrato completo:
+[docs/specs/2026-09-28-acoes-no-painel.md](../../docs/specs/2026-09-28-acoes-no-painel.md) C1-C9.
+
+- **Gatilhos**: uma linha `graph-eng pedido <id> · resume|stop|rerun-node · run <runId> (<wf>) · …` que o
+  Monitor entrega (o `events` armado na etapa 6.2 já as emite); ou os args desta skill começando com
+  `retomar`, `refazer` ou `parar` (aliases `resume`, `rerun`, `stop`) — é o texto que "Copiar para
+  retomar/refazer/parar" do painel gera, para colar aqui.
+- **Regra**: a confirmação já foi dada — no dialog do painel, ou pelo próprio ato de colar o comando.
+  **Nunca** use AskUserQuestion, não faça triagem, scout nem plan gate para estes pedidos. Responda em
+  até 3 linhas.
+- **Pedido da fila**: aceite primeiro pelo CLI da fila, `node "${CLAUDE_PLUGIN_ROOT}/bin/requests.mjs"
+  accept <id> --session <sessionId>`. Se outra sessão já aceitou (saída 3), ignore em silêncio — ela está
+  cuidando. Em qualquer falha depois disso, grave `falhou` com o motivo:
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/requests.mjs" fail <id> --session <sessionId> --reason "<motivo>"`, e
+  diga isso em 1 linha.
+
+**Antes de todo `resume` e `rerun-node`** (pedido da fila ou texto colado), a trava contra dois
+Workflows no mesmo run dir:
+
+1. Se esta sessão tem no contexto a task do `Workflow(...)` de `<wf>` (é a dona da run), chame
+   `TaskStop(<task>)` antes de seguir. Uma resposta de que a task já terminou conta como ok.
+2. Se o pedido veio da fila com `route: "owner"` e esta sessão **não** acha a task de `<wf>` no
+   contexto, grave `falhou` com o motivo `"esta sessão não achou a task do workflow <wf>; pare pelo
+   /workflows e retome de novo"` e não dispare nada.
+3. Rode o CLI de retomada:
+   ```
+   node "${CLAUDE_PLUGIN_ROOT}/bin/graph-resume.mjs" --run-dir "<runDir>" [--rerun <nó> [--rerun <nó> ...]] [--dependents] [--owner-ok]
+   ```
+   Passe `--owner-ok` **só** se o passo 1 rodou nesta sessão (ela é a dona e já parou a task antiga).
+   Se ele sair com **4** (outra sessão pode ainda estar dona da run viva), não dispare nada: grave
+   `falhou` com a 1ª linha do stderr (pedido da fila) ou devolva essa linha em 1 frase (texto colado) —
+   "A sessão dona desta run ainda está ativa: pare a run nela (Copiar para parar) e cole este comando de
+   novo." Qualquer outro código de erro (1) também vira `falhou`/recusa, com o motivo do stderr.
+4. Só com o CLI em código **0**, leia `args` da saída JSON e dispare
+   `Workflow({ name: 'graph-eng:graph-eng', args })` — os mesmos passos 5 e 6 da etapa "Executar" abaixo,
+   com o `<wf>` novo.
+
+| Pedido | Passos | `feito` quando |
+| --- | --- | --- |
+| `resume` (`retomar`) | 1-4 acima, sem `--rerun`. | O `Workflow(...)` disparou; grave `done --wf <novo>` (fila) ou responda `↻ RETOMANDO` (colado). |
+| `rerun-node <nó>` (`refazer <nó>` [`--dependentes`]) | 1-4 acima, com `--rerun <nó>` e `--dependents` se pedido. | Igual ao `resume`. |
+| `stop` (`parar`) | Se esta sessão não tem a task de `<wf>` no contexto (não é a dona), grave `falhou` — "esta sessão não é a dona da run" (fila) ou, no texto colado, diga em 1 linha para colar na sessão dona ou usar `/workflows` dela. Sendo a dona, rode `TaskStop(<task>)`. | O `TaskStop` voltou ok; grave `done` (fila) ou responda `⏹ PARADA — graph-eng <runId> · veja em <painel>` (colado), e **siga ouvindo o painel** — não derrube o listener da fila. |
+
+- Ao disparar a retomada, abra a resposta com `↻ RETOMANDO — graph-eng <runId> · <k> prontos ·
+  refazendo <ids ou "o que faltou"> · novo wf <wf>`, e daí em diante siga o fluxo normal desta skill
+  (⏳ RODANDO … ✅ TERMINADO), com o `<wf>` novo em todo comando de `graph-watch`.
+- **Formato exato do texto que os botões "Copiar" colocam no clipboard** (funciona colado em qualquer
+  sessão nova, sem pergunta — o `runDir` absoluto torna o cwd irrelevante):
+
+  | Botão | Texto |
+  | --- | --- |
+  | Copiar para retomar | `/graph-eng:graph-eng retomar --run-dir "<runDir>"` |
+  | Copiar para refazer `<nó>` | `/graph-eng:graph-eng refazer <nó> --run-dir "<runDir>"` |
+  | idem, com "refazer também os dependentes" | `/graph-eng:graph-eng refazer <nó> --dependentes --run-dir "<runDir>"` |
+  | Copiar para parar | `/graph-eng:graph-eng parar --run <wf>` |
+
+  O "parar" só funciona colado na sessão dona (só ela tem a task do Workflow); o título do botão avisa
+  disso. "Retomar"/"refazer" colados passam pela mesma trava do passo 3: se a dona ainda pode ter o
+  Workflow vivo e esta sessão não é ela, a sessão recusa em 1 linha, como descrito ali.
+
 ## Seleção de agentes
 
 Quem escolhe os nós é o **planner**, a partir da tarefa **e do alvo de agentes** (esforço × teto — ver
@@ -183,6 +247,10 @@ tocar em auth, dinheiro, dados/migrations, config de produção ou API pública:
 
 ## 6. Executar
 
+**Antes de cada `Workflow(...)`** (o disparo inicial ou o de uma retomada/refazer da seção "Ações sobre
+uma run"), grave `args` com a ferramenta Write em `<runDir>/args.json`: é dali que
+`bin/graph-resume.mjs` monta a retomada quando nenhum `resume/<rs>.json` ainda existe (D2 §5.1).
+
 ```js
 Workflow({ name: 'graph-eng:graph-eng', args: { task, mode, effort, ceiling, economy, spec, doneWhen, runDir, runsRoot, runId, context, checks } })
 ```
@@ -190,18 +258,21 @@ Workflow({ name: 'graph-eng:graph-eng', args: { task, mode, effort, ceiling, eco
 Passe `args` como objeto JSON, não como string. O workflow roda em **background**: o retorno da
 chamada **não** é o fim da run.
 
-O retorno da chamada traz o id da run (`wf_…`, na linha antes de `Script file:`). Guarde-o como
-`<wf>`: **todo** comando abaixo leva `--run <wf>`. Se o retorno não trouxer o id, use
+O retorno da chamada traz o id da run (`wf_…`, na linha antes de `Script file:`) **e o id da task** em
+background que o executa. Guarde os dois junto do `<wf>`: **todo** comando de `graph-watch` abaixo leva
+`--run <wf>`, e o id da task é o que "Ações sobre uma run" usa no `TaskStop` de um `parar` ou de um
+`retomar`/`refazer` disparado nesta mesma sessão. Se o retorno não trouxer o id do wf, use
 `--run-id <runId>` no lugar de `--run <wf>`. Nunca rode o graph-watch sem um dos dois.
 `<preset>` e `<mode>` são os mesmos `args.economy` e `args.mode` passados ao Workflow; passe também
 `--effort <effort> --ceiling <ceiling>` nos comandos do graph-watch abaixo para o cabeçalho e a
 estimativa mostrarem o alvo certo.
 
-0. Suba o painel web em background, **idempotente** (uma instância só por máquina; se já houver
-   uma no ar na porta padrão, o comando sai na hora reaproveitando ela em vez de abrir outra):
+0. Suba o painel web desacoplado da sessão, **idempotente** (uma instância só por máquina; se já houver
+   uma no ar na porta padrão, o comando sai na hora reaproveitando ela em vez de abrir outra). Rode
+   **sem** `run_in_background`: o `--detach` solta o servidor num processo próprio e sai na hora, e é
+   isso que faz o painel seguir no ar quando a tarefa ou a sessão fecha:
    ```
-   Bash({ run_in_background: true,
-          command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" ui --no-open' })
+   Bash({ command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" ui --detach --no-open' })
    ```
    Leia a porta real na linha `graph-eng: painel: http://127.0.0.1:<porta>` da saída — **nunca
    chute a porta**: o padrão é 4477, mas o usuário pode ter trocado com `GRAPH_ENG_PORT` (o comando
@@ -261,13 +332,20 @@ estimativa mostrarem o alvo certo.
      opções `Sim` · `Não`.
 4. Em implement, mostre o `git diff --stat` contra o baseline da etapa 2.
 5. **Nunca** faça commit, push, deploy ou migration remota por conta própria. Isso é o gate, e é do usuário.
+6. **Depois do TERMINADO, a sessão segue ouvindo o painel por até 2 h**, para atender um `resume` ou
+   `rerun-node` desta run sem o usuário precisar colar nada: rearme o `events` da etapa 6.2 até 4 vezes,
+   em silêncio (sem avisar o usuário a cada rearme). Depois do 4º, ou se o Monitor sumir por mais de
+   2 min sem rearme (por qualquer motivo, não só o timeout), o painel passa a mostrar "nenhuma sessão
+   ouvindo" para esta run, e só o "Copiar comando" (seção "Ações sobre uma run") continua valendo.
 
 ## Recuperação
 
-- **Interrompido:** `Workflow({scriptPath, resumeFromRunId})`, com os mesmos args. O cache é por prefixo
-  das chamadas, não por nó: se a interrupção veio antes de algum nó terminar, quase tudo volta do cache;
-  depois do primeiro fan-out paralelo, a ordem das chamadas muda na retomada e boa parte do que já rodou
-  roda de novo. Por isso, não pare uma run paralela só para mudar args: deixe seguir e corrija depois.
+- **Interrompido:** use `bin/graph-resume.mjs` (a mesma trava e o mesmo `Workflow(...)` da seção "Ações
+  sobre uma run", passo 3-4), **em qualquer sessão** — inclusive uma nova. É o caminho recomendado: ele
+  não refaz nó pronto. `Workflow({scriptPath, resumeFromRunId})` com os mesmos args **só** continua
+  valendo na mesma sessão, com o mesmo script, e antes do primeiro fan-out paralelo: o cache é por
+  prefixo das chamadas, não por nó, e depois do fan-out a ordem muda na retomada, refazendo boa parte do
+  que já rodou (não pare uma run paralela só para mudar args por essa via; deixe seguir e corrija depois).
 - **Esc no turno principal derruba a run em background.** Mandar mensagem sem Esc não interrompe.
 - **Resultado estranho:** rode
   `node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" snapshot --run <wf> --economy <preset> --mode <mode> --effort <effort> --ceiling <ceiling> --no-color`

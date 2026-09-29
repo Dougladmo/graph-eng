@@ -1,12 +1,12 @@
 {
   "name": "graph-eng",
-  "version": "0.4.0",
-  "description": "Graph engineering enxuto para o Claude Code: esqueleto de fases por modo, planner que dimensiona pelo esforço (manual/auto/low/medium/high/max) e por um teto configurável (padrão 24), revisão do design antes de implementar, implementação em paralelo quando os arquivos são disjuntos, verificação cruzada, síntese por polidores + consolidador e relatório com gate humano.",
+  "version": "0.1.0",
+  "description": "Graph engineering enxuto para o Claude Code: esqueleto de fases por modo, planner que dimensiona pelo esforço (manual/auto/low/medium/high/max) e por um teto configurável (padrão 24), revisão do design antes de implementar, implementação em paralelo quando os arquivos são disjuntos, verificação cruzada, síntese por polidores + consolidador e relatório com gate humano. O painel web também age sobre as runs — retomar, parar, refazer nó, copiar comando — e organiza a lista como no Claude Code (fixadas, grupos, arquivadas, finalizadas recolhidas).",
   "author": {
     "name": "Douglas Oliveira",
     "url": "https://github.com/Dougladmo"
   },
   "repository": "https://github.com/Dougladmo/graph-eng",
   "license": "MIT",
-  "keywords": ["workflow", "multi-agent", "orchestration", "graph", "verification"]
+  "keywords": ["workflow", "multi-agent", "orchestration", "graph", "verification", "panel"]
 }

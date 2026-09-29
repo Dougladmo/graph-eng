@@ -118,6 +118,28 @@ test('graphText() do motor: nó sem resultado ainda sai como aguardando, sem mar
   assert.equal(out, '[ ] solo aguardando  ← plan')
 })
 
+// REPAIR do I11: o layout em caixas (cols largo o bastante para não cair no compacto) precisa
+// trazer o motivo tanto quanto o compacto, só que num bloco "motivos:" à parte (a caixa não tem
+// espaço pro texto dentro dela). wf_blocked tem R2 bloqueado e I1/I2/I3 pulados em cascata.
+test('graphText() (layout em caixas, cols largo): bloco "motivos:" traz o motivo de cada nó parado', async () => {
+  const model = await buildModel({ runDir: path.join(FIXTURES, 'wf_blocked'), economy: 'balanced', mode: 'implement' })
+  const text = watchGraphText(model, { cols: 200 })
+  assert.match(text, /┌───/, 'esperava o layout em caixas em cols=200')
+  assert.match(text, /^motivos:$/m)
+  assert.match(text, /^ {2}R2: bloqueado: /m)
+  assert.match(text, /^ {2}I1: pulado: não rodou porque a dependência R2 ficou bloqueada$/m)
+  assert.match(text, /^ {2}I2: pulado: não rodou porque a dependência R2 ficou bloqueada$/m)
+  assert.match(text, /^ {2}I3: pulado: não rodou porque a dependência R2 ficou bloqueada$/m)
+})
+
+test('graphText() (layout compacto, cols estreito): o motivo continua embutido no sufixo da linha, sem bloco "motivos:"', async () => {
+  const model = await buildModel({ runDir: path.join(FIXTURES, 'wf_blocked'), economy: 'balanced', mode: 'implement' })
+  const text = watchGraphText(model, { cols: 60 })
+  assert.doesNotMatch(text, /┌───/, 'esperava o layout compacto em cols=60')
+  assert.doesNotMatch(text, /^motivos:$/m)
+  assert.match(text, /← R2 {2}· pulado: não rodou porque a depe/)
+})
+
 // D3 §10 "Outros": um caso sobre a fixture wf_phases, com o sufixo "(injetada)" e a linha da
 // revisão do design.
 test('graphText() da fixture wf_phases: nó injetado com sufixo e linha "revisão do design"', async () => {

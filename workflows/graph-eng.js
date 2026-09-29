@@ -312,23 +312,33 @@ const SYNTH = {
 // SHARED abre todo prompt, idêntico em todos os agentes: o prefixo comum vira cache hit. Effort/Ceiling/Target
 // vêm dos args de entrada e não mudam durante a run (o valor resolvido pelo planner vai no PLAN_BLOCK, à parte,
 // para não invalidar o cache de quem já rodou antes do plano).
-const SHARED = [
-  `# Graph run ${RUN_ID}`,
-  `Task: ${TASK}`,
-  `Mode: ${MODE}`,
-  `Economy: ${ECONOMY}`,
-  `Effort: ${LEVEL0 || 'auto'}`,
-  `Ceiling: ${CEILING}`,
-  LEVEL0 ? `Target: ${targetFor(LEVEL0, CEILING, MODE)}` : `Target: auto ${TARGET_RANGE.min}-${TARGET_RANGE.max}`,
-  `Run dir (paper trail): ${RUN_DIR}`,
-  SPEC && `Spec (source of truth for WHAT; the graph owns HOW): ${SPEC}. Read the parts your node needs.`,
-  CONTEXT && `Scouted context:\n${CONTEXT}`,
-  'Rules for every node:',
-  '- You are ONE node of a graph. Do only your job; other nodes cover the rest. Do not spawn subagents.',
-  '- Never commit, push, deploy, open PRs, touch remote databases or send messages. Code edits only in implement nodes.',
-  '- Every claim needs evidence (file:line, URL, or command + result). Without evidence, label it "unverified".',
-  '- Be terse. Full output goes to files; the structured return is a short summary.',
-].filter(Boolean).join('\n') + '\n'
+// RESUME_LINE fica vazia até o bloco de retomada (perto do normalize de `first`) calcular o fecho de
+// refazer; buildShared() é reinvocada depois disso para que a linha "Resume:" apareça já no prefixo
+// que os nós de pesquisa/design/implementação recebem (workPrompt etc. leem SHARED por closure, e só
+// rodam depois dessa reatribuição).
+let RESUME_LINE = ''
+function buildShared() {
+  return [
+    `# Graph run ${RUN_ID}`,
+    `Task: ${TASK}`,
+    `Mode: ${MODE}`,
+    `Economy: ${ECONOMY}`,
+    `Effort: ${LEVEL0 || 'auto'}`,
+    `Ceiling: ${CEILING}`,
+    LEVEL0 ? `Target: ${targetFor(LEVEL0, CEILING, MODE)}` : `Target: auto ${TARGET_RANGE.min}-${TARGET_RANGE.max}`,
+    `Run dir (paper trail): ${RUN_DIR}`,
+    RESUME_LINE || false,
+    SPEC && `Spec (source of truth for WHAT; the graph owns HOW): ${SPEC}. Read the parts your node needs.`,
+    CONTEXT && `Scouted context:\n${CONTEXT}`,
+    'Rules for every node:',
+    '- You are ONE node of a graph. Do only your job; other nodes cover the rest. Do not spawn subagents.',
+    '- Never commit, push, deploy, open PRs, touch remote databases or send messages. Code edits only in implement nodes.',
+    '- The working tree is shared with the nodes running in parallel, and nothing in this run is committed. Never use git\'s stash, reset, checkout, restore or clean commands: they discard the other nodes\' work, and the stash stack is shared by every worktree of the repo, so this holds inside a worktree too. For a baseline, run the checks in a throwaway `git worktree add --detach <tmp> HEAD` (no stash there either) and remove it after.',
+    '- Every claim needs evidence (file:line, URL, or command + result). Without evidence, label it "unverified".',
+    '- Be terse. Full output goes to files; the structured return is a short summary.',
+  ].filter(Boolean).join('\n') + '\n'
+}
+let SHARED = buildShared()
 let PLAN_BLOCK = ''
 
 const MODE_HINT = {
@@ -646,26 +656,35 @@ function requiredKinds(mode) {
 // obrigatório) exceder maxNodes, mantém 1 nó por kind mesmo acima do teto e registra no log. Limpa
 // deps para os IDs cortados — quem chama reaplica applyRails para recuperar pesquisa/design entre
 // os ancestrais. Nunca passa um plano acima do teto adiante sem essa proteção.
-function applyMaxNodes(nodes, maxNodes, mode) {
-  if (nodes.length <= maxNodes) return { nodes, cut: [], floorNote: null }
-  const byId = new Map(nodes.map((n) => [n.id, n]))
+//
+// C7 (trilho maxNodes na retomada): protectedIds (os nós READY de uma retomada) nunca é cortado e
+// não conta para o teto — o teto vale só para quem ainda vai rodar (pending). Sem retomada,
+// protectedIds vem vazio e o comportamento é idêntico ao de antes.
+function applyMaxNodes(nodes, maxNodes, mode, protectedIds) {
+  const protectedSet = protectedIds instanceof Set ? protectedIds : new Set(protectedIds || [])
+  const protectedNodes = nodes.filter((n) => protectedSet.has(n.id))
+  const pending = nodes.filter((n) => !protectedSet.has(n.id))
+  if (pending.length <= maxNodes) return { nodes, cut: [], floorNote: null }
+  const byId = new Map(pending.map((n) => [n.id, n]))
   const required = requiredKinds(mode)
+  const protectedNote = protectedNodes.length ? ` (+ ${protectedNodes.length} nó(s) pronto(s) da retomada, fora do teto)` : ''
 
   if (required.length > maxNodes) {
     const kept = []
     for (const k of required) {
-      const found = nodes.find((n) => n.kind === k)
+      const found = pending.find((n) => n.kind === k)
       if (found) kept.push(found)
     }
-    const keptIds = new Set(kept.map((n) => n.id))
-    for (const n of kept) n.deps = n.deps.filter((d) => keptIds.has(d))
-    const cut = nodes.filter((n) => !keptIds.has(n.id)).map((n) => n.id)
-    const floorNote = `piso de 1 nó por kind obrigatório (${required.join(', ')} = ${required.length}) excede maxNodes (${maxNodes}); mantendo ${kept.length} nó(s), 1 por kind`
-    return { nodes: kept, cut, floorNote }
+    const keptIds = new Set([...protectedNodes, ...kept].map((n) => n.id))
+    const finalNodes = nodes.filter((n) => keptIds.has(n.id))
+    for (const n of finalNodes) n.deps = n.deps.filter((d) => keptIds.has(d))
+    const cut = pending.filter((n) => !keptIds.has(n.id)).map((n) => n.id)
+    const floorNote = `piso de 1 nó por kind obrigatório (${required.join(', ')} = ${required.length}) excede maxNodes (${maxNodes}); mantendo ${kept.length} nó(s) pendente(s), 1 por kind${protectedNote}`
+    return { nodes: finalNodes, cut, floorNote }
   }
 
   const floorFor = (kind) => (required.includes(kind) ? 1 : 0)
-  const keepIds = new Set(nodes.map((n) => n.id))
+  const keepIds = new Set(pending.map((n) => n.id))
   const cut = []
   while (keepIds.size > maxNodes) {
     const depended = new Set()
@@ -687,9 +706,10 @@ function applyMaxNodes(nodes, maxNodes, mode) {
     keepIds.delete(victim)
     cut.push(victim)
   }
-  const kept = nodes.filter((n) => keepIds.has(n.id))
-  for (const n of kept) n.deps = n.deps.filter((d) => keepIds.has(d))
-  return { nodes: kept, cut, floorNote: null }
+  const finalIds = new Set([...protectedNodes.map((n) => n.id), ...keepIds])
+  const finalNodes = nodes.filter((n) => finalIds.has(n.id))
+  for (const n of finalNodes) n.deps = n.deps.filter((d) => finalIds.has(d))
+  return { nodes: finalNodes, cut, floorNote: protectedNodes.length ? `${protectedNodes.length} nó(s) pronto(s) da retomada, fora do teto` : null }
 }
 
 function mermaid() {
@@ -989,7 +1009,10 @@ async function runDesignReview() {
 
 function areasForPolish() {
   if (RMODE !== 'implement') return []
-  const implDone = first.filter((n) => n.kind === 'implement' && (RESULTS.get(n.id) || {}).status === 'done').map((n) => n.id)
+  // Numa retomada, o nó pronto (resumed:true) não rodou nesta execução: os polidores olham só as
+  // áreas de quem de fato rodou agora (C7, "Os polidores só olham as áreas das implementações que
+  // rodaram nesta execução").
+  const implDone = first.filter((n) => n.kind === 'implement' && (RESULTS.get(n.id) || {}).status === 'done' && !(RESULTS.get(n.id) || {}).resumed).map((n) => n.id)
   if (!implDone.length) return []
   const fileSets = new Map()
   for (const id of implDone) {
@@ -1039,6 +1062,18 @@ Area (only these files): ${area.files.join(', ')}. Before editing, copy each of 
 Return status, summary, filesChanged, checks, confidence.`,
     { label: 'polish:' + (i + 1), phase: 'Synthesize', schema: WORK, model: MDL.worker || undefined, effort: REASON_EFFORT })))
   return results.filter(Boolean).map((w, i) => ({ k: i + 1, files: w.filesChanged || [], status: w.status, summary: w.summary }))
+}
+
+// ── Resume (validação sem gastar agente, C7) ──
+// A retomada exige o plano pronto (senão o planner rodaria de novo, gastando um agente à toa) e não
+// combina com planOnly (que só devolve o plano, sem executar nada). O id vem pronto do CLI (o motor
+// não tem Date.now), então só confere a forma.
+const RESUME = A.resume && typeof A.resume === 'object' ? A.resume : null
+const RESUME_ID_RE = /^rs-\d{8}-\d{6}(-\d+)?$/
+if (RESUME) {
+  if (!(A.plan && Array.isArray(A.plan.nodes))) return { error: 'resume exige args.plan (o motor não replaneja numa retomada)', runDir: RUN_DIR }
+  if (A.planOnly) return { error: 'resume não combina com planOnly', runDir: RUN_DIR }
+  if (!RESUME_ID_RE.test(String(RESUME.id || ''))) return { error: `resume.id inválido: ${RESUME.id}`, runDir: RUN_DIR }
 }
 
 // ── Plan ──
@@ -1112,23 +1147,71 @@ applyLevel(LEVEL)
 MANDATORY = { designReview: RMODE === 'implement' || RMODE === 'architecture', critic: true, synth: true }
 
 let first = normalize(plan.nodes, '', 1, { rails: true })
+// ── Resume: classifica pronto/refazer sobre o plano cru, ANTES do bump e do corte do maxNodes (C7) ──
+// READY = done ∩ plano − RERUN (RERUN já é o fecho de descendentes, pelas deps NORMALIZADAS, quando
+// dependents=true — os trilhos já rodaram em normalize() acima). Classifica primeiro para que o bump
+// de esforço e o corte do maxNodes, logo abaixo, saibam quais nós já estão prontos: pronto nunca é
+// cortado e não entra na conta do teto, que vale só para quem ainda vai rodar (C7 §"Trilho maxNodes
+// na retomada").
+const resumeReadyIds = new Set()
+const resumeReadyData = new Map()
+let resumeRerunIds = []
+if (RESUME) {
+  const idsAll = new Set(first.map((n) => n.id))
+  const rerunRaw = Array.isArray(RESUME.rerun) ? [...new Set(RESUME.rerun.map(String))] : []
+  const unknownRerun = rerunRaw.filter((id) => !idsAll.has(id))
+  if (unknownRerun.length) return { error: `resume.rerun com nó desconhecido: ${unknownRerun.join(', ')}`, runDir: RUN_DIR }
+  const childrenOf = new Map()
+  for (const n of first) for (const d of n.deps) {
+    if (!childrenOf.has(d)) childrenOf.set(d, [])
+    childrenOf.get(d).push(n.id)
+  }
+  const rerunSet = new Set(rerunRaw)
+  if (RESUME.dependents) {
+    const stack = [...rerunRaw]
+    while (stack.length) {
+      const id = stack.pop()
+      for (const c of (childrenOf.get(id) || [])) if (!rerunSet.has(c)) { rerunSet.add(c); stack.push(c) }
+    }
+  }
+  resumeRerunIds = [...rerunSet]
+  const doneMap = (RESUME.done && typeof RESUME.done === 'object') ? RESUME.done : {}
+  for (const rawId of Object.keys(doneMap)) {
+    const id = String(rawId)
+    const d = doneMap[rawId] || {}
+    if (!idsAll.has(id)) { log(`resume: done.${id} desconhecido, nó não existe no plano, ignorado`); continue }
+    if (rerunSet.has(id)) continue // no fecho de refazer: roda de novo
+    const art = d.artifact ? normPath(String(d.artifact)) : ''
+    if (art && (art.includes('..') || !(art === RUN_DIR || art.startsWith(RUN_DIR + '/')))) {
+      log(`resume: done.${id} com artifact fora do run dir (${d.artifact}), ignorado; nó roda`)
+      continue
+    }
+    resumeReadyIds.add(id)
+    resumeReadyData.set(id, d)
+  }
+}
+
 // No automático, o tamanho do grafo é decisão do planner: se o plano não cabe no nível que ele
 // mesmo escolheu, o nível sobe até caber (nunca acima do teto), em vez de cortar entrega. O corte
-// abaixo fica para o nível fixado pelo usuário, ou para quando nem o max comporta o plano.
-if (!LEVEL0 && first.length > C.maxNodes) {
+// abaixo fica para o nível fixado pelo usuário, ou para quando nem o max comporta o plano. Na
+// retomada, conta só quem vai rodar, pela mesma razão do corte.
+const toRun = first.length - resumeReadyIds.size
+if (!LEVEL0 && toRun > C.maxNodes) {
   const from = LEVEL
   const fromMax = C.maxNodes
   const higher = EFFORTS_LEVEL.slice(EFFORTS_LEVEL.indexOf(from) + 1)
-  const to = higher.find((l) => sizing(targetFor(l, CEILING, RMODE), RMODE).maxNodes >= first.length) || 'max'
+  const to = higher.find((l) => sizing(targetFor(l, CEILING, RMODE), RMODE).maxNodes >= toRun) || 'max'
   if (to !== from) {
     applyLevel(to)
-    const detail = `esforço subiu de ${from} para ${to}: o plano tem ${first.length} nó(s) e ${from} comporta ${fromMax}`
+    const readyNote = resumeReadyIds.size ? ` para rodar (+ ${resumeReadyIds.size} pronto(s) da retomada)` : ''
+    const detail = `esforço subiu de ${from} para ${to}: o plano tem ${toRun} nó(s)${readyNote} e ${from} comporta ${fromMax}`
     LEVEL_WHY += ` (${detail})`
     railLog('effort', 'plan', 'bump', detail)
   }
 }
+
 {
-  const capped = applyMaxNodes(first, C.maxNodes, RMODE)
+  const capped = applyMaxNodes(first, C.maxNodes, RMODE, resumeReadyIds)
   if (capped.cut.length) {
     railLog('maxNodes', capped.cut.join(','), 'cut', `plano tinha ${first.length} nó(s), cortado(s) ${capped.cut.join(', ')} para caber no teto de ${C.maxNodes} nós do nível ${LEVEL}` + (capped.floorNote ? ` (${capped.floorNote})` : ''))
     first = capped.nodes
@@ -1136,12 +1219,48 @@ if (!LEVEL0 && first.length > C.maxNodes) {
   }
 }
 first.forEach((n) => NODES.set(n.id, n))
+// Um refazer cortado pelo teto não roda, então não aparece na linha Resume: nem no resumeInfo.
+resumeRerunIds = resumeRerunIds.filter((id) => NODES.has(id))
+
+// ── Resume: aplica a classificação acima (C7) ──
+// Cada pronto vai direto para RESULTS com resumed:true, sem gastar agente; nenhum nó fora da lista é
+// tocado aqui. resumeReadyIds nunca foi cortado pelo maxNodes (protegido acima), então todo id aqui
+// ainda existe em NODES.
+let resumeInfo = null
+if (RESUME) {
+  for (const id of resumeReadyIds) {
+    const d = resumeReadyData.get(id) || {}
+    const art = d.artifact ? normPath(String(d.artifact)) : ''
+    RESULTS.set(id, {
+      status: 'done',
+      work: {
+        status: 'done',
+        summary: String(d.summary || ''),
+        artifact: art || undefined,
+        filesChanged: Array.isArray(d.filesChanged) ? d.filesChanged.map(String) : undefined,
+        confidence: 'high',
+      },
+      verified: !!d.verified,
+      attempts: Number.isFinite(d.attempts) && d.attempts > 0 ? Math.floor(d.attempts) : 1,
+      resumed: true,
+    })
+  }
+  const readyIds = [...resumeReadyIds]
+  RESUME_LINE = `Resume: ${RESUME.id}` + (resumeRerunIds.length ? ` · refazer: ${resumeRerunIds.join(',')}` : '')
+  SHARED = buildShared()
+  resumeInfo = { id: RESUME.id, ready: readyIds, rerun: resumeRerunIds, ran: [], designReviewSkipped: false }
+  log(`resume ${RESUME.id}: ${readyIds.length} nó(s) pronto(s) (${readyIds.join(', ') || '(nenhum)'}), refazer ${resumeRerunIds.length ? resumeRerunIds.join(', ') : '(nenhum)'}`)
+}
+
 PLAN_BLOCK = `Goal: ${plan.goal}\n` +
   (ASSUMPTIONS.length ? `Assumptions (treat as decided): ${ASSUMPTIONS.join(' | ')}\n` : '') +
   `Sizing: effort ${LEVEL} (${EFFORT_SOURCE}) -> target ${TARGET} of ceiling ${CEILING}, width ${C.width}, max nodes ${C.maxNodes}; mode ${RMODE}\n` +
   `Graph: ${first.map((n) => `${n.id} "${n.title}" (${n.kind})${n.deps.length ? ' <- ' + n.deps.join(',') : ''}`).join(' | ')}\n`
 
-const estimate = estimateAgents(first, { mode: RMODE, level: LEVEL })
+// C7: a estimativa do log conta só quem vai rodar nesta execução — pronto da retomada não gasta
+// agente, então não entra no "~N agentes no caminho feliz".
+const estimateNodes = resumeReadyIds.size ? first.filter((n) => !resumeReadyIds.has(n.id)) : first
+const estimate = estimateAgents(estimateNodes, { mode: RMODE, level: LEVEL })
 
 // Gate humano opcional antes de gastar: devolve plano, perguntas e estimativa; reinvoque com args.plan.
 if (A.planOnly) {
@@ -1165,12 +1284,20 @@ log(graphText())
 // ── Esqueleto: Research/Design -> Design review -> Execute -> Verify/Critic -> Synthesize ──
 // Sem atalho trivial: todo modo roda as fases obrigatórias do seu esqueleto (D1 §4).
 phase('Research')
-const nonImpl1 = first.filter((n) => n.kind !== 'implement')
-const impl1 = first.filter((n) => n.kind === 'implement')
+const nonImpl1 = first.filter((n) => n.kind !== 'implement' && !RESULTS.has(n.id))
+const impl1 = first.filter((n) => n.kind === 'implement' && !RESULTS.has(n.id))
 await executeGraph(nonImpl1)
 
 let designReview = null
-if (MANDATORY.designReview || RMODE === 'implement' || RMODE === 'architecture') {
+// Retomada com revisão já aprovada, e nenhum nó de pesquisa/design do round 1 rodando agora: o
+// veredito herdado vale, sem gastar agente de novo (C7, "Revisão do design").
+const resumeReviewInherited = !!(RESUME && RESUME.designReview && RESUME.designReview.pass === true && nonImpl1.length === 0)
+if (resumeReviewInherited) {
+  designReview = { pass: true, attempts: Number.isFinite(RESUME.designReview.attempts) ? RESUME.designReview.attempts : 1, blocking: [] }
+  MANDATORY.designReview = false
+  if (resumeInfo) resumeInfo.designReviewSkipped = true
+  log(`resume ${RESUME.id}: revisão do design herdada (aprovada), não roda de novo`)
+} else if (MANDATORY.designReview || RMODE === 'implement' || RMODE === 'architecture') {
   phase('Design review')
   designReview = await runDesignReview()
   if (designReview.pass) {
@@ -1251,6 +1378,7 @@ const nodesOut = () => [...NODES.values()].map((n) => {
     artifact: r.work ? artifactOf(n.id, r) : undefined,
     blocking: r.verdict && !r.verdict.pass ? r.verdict.blocking : undefined,
     note: r.note,
+    resumed: !!r.resumed,
   }, n.injected === true ? { injected: true, reason: n.reason } : {})
 })
 
@@ -1292,6 +1420,7 @@ const finalNodes = nodesOut()
 // Nó implement 'partial' (done sem verify por falta de orçamento) rebaixa o status final: a run
 // não pode fechar 'done' com uma implementação sem verificação cruzada (§6).
 const hasUnverifiedImpl = finalNodes.some((n) => n.kind === 'implement' && n.status === 'partial')
+if (resumeInfo) resumeInfo.ran = finalNodes.filter((n) => !n.resumed && n.status !== 'not run').map((n) => n.id)
 
 return {
   task: TASK,
@@ -1315,5 +1444,6 @@ return {
   polish,
   nodes: finalNodes,
   graph,
+  resume: resumeInfo,
   stats: Object.assign({ agents: spent, dropped }, stats),
 }
