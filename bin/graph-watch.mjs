@@ -7,6 +7,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { estimateAgents as estimateTarget, targetFor } from './ui/agent-target.mjs'
 import { defaultStateDir, ownerPathInfo, listRequests, isEligible, isPendingExpired, markSeen, requestEventLine, writeHeartbeat, readListeners, ownerPresence, HEARTBEAT_MS, hasTerminatedMarker, markTerminated } from './requests.mjs'
@@ -2011,6 +2012,29 @@ export function parsePort(v, fallback, env = process.env.GRAPH_ENG_PORT) {
   return n
 }
 
+async function detachPanel(port, projectsDir) {
+  const log = path.join(defaultStateDir(), 'painel.log')
+  fs.mkdirSync(path.dirname(log), { recursive: true })
+  const out = fs.openSync(log, 'w')
+  const args = [fileURLToPath(import.meta.url), 'ui', '--no-open', '--port', String(port), '--projects-dir', projectsDir]
+  const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', out, out] })
+  fs.closeSync(out)
+  let exitCode = null
+  child.on('exit', (code) => (exitCode = code ?? 1))
+  child.unref()
+  for (let i = 0; i < 100; i++) {
+    const text = fs.readFileSync(log, 'utf8')
+    const m = text.match(/^graph-eng: painel: (\S+)$/m)
+    if (m) return m[1]
+    if (exitCode !== null) {
+      process.stderr.write(text)
+      process.exit(exitCode || 1)
+    }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  throw new GraphWatchError(1, `o painel não subiu em 10s; log em ${log}`)
+}
+
 async function main() {
   const argv = process.argv.slice(2)
   const mode = argv[0]
@@ -2028,10 +2052,31 @@ async function main() {
 
   if (mode === 'ui') {
     // Painel web (docs/specs/2026-09-27-painel-web.md): sobe ou reaproveita o servidor e fica de pé.
-    const { ensurePanel, openBrowser, DEFAULT_PORT } = await import('./ui-server.mjs')
-    const panel = await ensurePanel({ port: parsePort(opts['--port'], DEFAULT_PORT), projectsDir })
+    const { ensurePanel, openBrowser, probePanel, DEFAULT_PORT } = await import('./ui-server.mjs')
+    const port = parsePort(opts['--port'], DEFAULT_PORT)
+    const shouldOpen = opts['--open'] || (process.stdout.isTTY && !opts['--no-open'])
+    if (opts['--stop']) {
+      const who = await probePanel(port)
+      if (who === 'livre') {
+        console.log(`graph-eng: painel já estava parado (porta ${port})`)
+        process.exit(0)
+      }
+      if (who === 'outro') throw new GraphWatchError(5, `porta ${port} ocupada por outro programa, não é o painel`)
+      const { pid } = await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()
+      if (!pid) throw new GraphWatchError(1, `o painel na porta ${port} é de uma versão sem --stop; encerre o processo dele com kill`)
+      process.kill(pid, 'SIGTERM')
+      console.log(`graph-eng: painel parado (pid ${pid})`)
+      process.exit(0)
+    }
+    if (opts['--detach']) {
+      const url = (await probePanel(port)) === 'graph-watch' ? `http://127.0.0.1:${port}` : await detachPanel(port, projectsDir)
+      console.log(`graph-eng: painel: ${url}`)
+      if (shouldOpen) openBrowser(url)
+      process.exit(0)
+    }
+    const panel = await ensurePanel({ port, projectsDir })
     console.log(`graph-eng: painel: ${panel.url}`)
-    if (opts['--open'] || (process.stdout.isTTY && !opts['--no-open'])) openBrowser(panel.url)
+    if (shouldOpen) openBrowser(panel.url)
     if (panel.reused) process.exit(0)
     for (const sig of ['SIGINT', 'SIGTERM']) {
       process.once(sig, () => {

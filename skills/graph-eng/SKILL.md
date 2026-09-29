@@ -267,11 +267,12 @@ background que o executa. Guarde os dois junto do `<wf>`: **todo** comando de `g
 `--effort <effort> --ceiling <ceiling>` nos comandos do graph-watch abaixo para o cabeçalho e a
 estimativa mostrarem o alvo certo.
 
-0. Suba o painel web em background, **idempotente** (uma instância só por máquina; se já houver
-   uma no ar na porta padrão, o comando sai na hora reaproveitando ela em vez de abrir outra):
+0. Suba o painel web desacoplado da sessão, **idempotente** (uma instância só por máquina; se já houver
+   uma no ar na porta padrão, o comando sai na hora reaproveitando ela em vez de abrir outra). Rode
+   **sem** `run_in_background`: o `--detach` solta o servidor num processo próprio e sai na hora, e é
+   isso que faz o painel seguir no ar quando a tarefa ou a sessão fecha:
    ```
-   Bash({ run_in_background: true,
-          command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" ui --no-open' })
+   Bash({ command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/graph-watch.mjs" ui --detach --no-open' })
    ```
    Leia a porta real na linha `graph-eng: painel: http://127.0.0.1:<porta>` da saída — **nunca
    chute a porta**: o padrão é 4477, mas o usuário pode ter trocado com `GRAPH_ENG_PORT` (o comando

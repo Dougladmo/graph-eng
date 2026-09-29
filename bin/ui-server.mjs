@@ -13,7 +13,7 @@
 // resposta leva `Access-Control-Allow-*`, e o preflight `OPTIONS` recebe 405. Erros vêm como JSON
 // `{ "error": "<texto pt-BR>" }`.
 //
-// GET /api/health → 200 `{ "app": "graph-watch", "version": 1 }`
+// GET /api/health → 200 `{ "app": "graph-watch", "version": 1, "pid": <pid do servidor> }`
 //
 // GET /api/config → 200 ConfigPublica, sempre (arquivo ausente = padrões; campo inválido no arquivo volta
 //   ao padrão e vira `warnings`) | 500 (erro de E/S na leitura que não seja arquivo ausente).
@@ -1409,7 +1409,7 @@ export function createPanelServer(opts = {}) {
     }
     const parts = pathname.split('/').slice(1)
     if (parts[0] !== 'api') return sendError(res, 404, 'não encontrado')
-    if (parts.length === 2 && parts[1] === 'health') return send(res, 200, { app: 'graph-watch', version: 1 })
+    if (parts.length === 2 && parts[1] === 'health') return send(res, 200, { app: 'graph-watch', version: 1, pid: process.pid })
     if (parts.length === 2 && parts[1] === 'events') return openEvents(req, res)
     if (parts.length === 2 && parts[1] === 'runs') return send(res, 200, listBody(await index.scanAll(now())))
     if (parts.length === 2 && parts[1] === 'listeners') return getListeners(res)

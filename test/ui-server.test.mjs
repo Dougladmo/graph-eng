@@ -632,6 +632,34 @@ describe('painel web: CLI `ui` e instância única (itens 1, 2)', () => {
     assert.notEqual(code, 0)
     assert.match(ui.out().stderr, /graph-eng: /)
   })
+
+  test('--detach sai 0 com o servidor de pé em outro processo, e --stop derruba ele', async () => {
+    const state = tmpState()
+    const run = (args) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [BIN, 'ui', '--no-open', ...args], { cwd: ROOT, env: { ...process.env, GRAPH_ENG_CONFIG: state.configPath, GRAPH_ENG_STATE_DIR: state.dir } })
+        let stdout = ''
+        child.stdout.on('data', (d) => (stdout += d))
+        child.on('close', (code) => resolve({ code, stdout, pid: child.pid }))
+      })
+    const up = await run(['--detach', '--port', '0', '--projects-dir', copyMulti()])
+    assert.equal(up.code, 0)
+    const port = Number(up.stdout.match(/graph-eng: painel: http:\/\/127\.0\.0\.1:(\d+)/)[1])
+    const health = (await getJson(port, '/api/health')).json
+    assert.equal(health.app, 'graph-watch')
+    assert.notEqual(health.pid, up.pid)
+    assert.match(fs.readFileSync(path.join(state.dir, 'painel.log'), 'utf8'), /graph-eng: painel:/)
+
+    const again = await run(['--detach', '--port', String(port)])
+    assert.equal(again.code, 0)
+    assert.match(again.stdout, new RegExp(`graph-eng: painel: http://127\\.0\\.0\\.1:${port}\\b`))
+
+    const down = await run(['--stop', '--port', String(port)])
+    assert.equal(down.code, 0)
+    assert.match(down.stdout, new RegExp(`painel parado \\(pid ${health.pid}\\)`))
+    await new Promise((r) => setTimeout(r, 300))
+    assert.throws(() => process.kill(health.pid, 0))
+  })
 })
 
 describe('`live --svg` vira alias do painel (item 9)', () => {

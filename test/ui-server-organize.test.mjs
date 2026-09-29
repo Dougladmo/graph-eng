@@ -517,7 +517,7 @@ describe('regra fechada dos módulos .mjs (C10)', () => {
 
 // Guarda de isolamento (C1): nenhum painel de teste sobe sem configPath/stateDir, e nenhum processo `ui`
 // ou `live` do BIN sobe sem GRAPH_ENG_STATE_DIR no env. Lê o fonte: olhar o ~/.claude real antes e depois
-// ficaria instável (um painel 0.5.0 instalado grava lá a cada 10 s).
+// ficaria instável (um painel instalado grava lá a cada 10 s).
 test('guarda: todo painel e todo `ui`/`live` dos testes usam estado em dir temporário', () => {
   const me = path.basename(fileURLToPath(import.meta.url))
   const files = []
