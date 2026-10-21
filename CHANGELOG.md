@@ -2,85 +2,85 @@
 
 ## 1.0.0 — 2026-10-21
 
-A 1.0 troca o motor 0.1 por uma **orquestração bidirecional adaptativa**. O plano é executado como grafo, e o feedback dos revisores volta por ele com quatro decisões, todas com evidência:
+1.0 replaces the 0.1 engine with an **adaptive bidirectional orchestration**. The plan runs as a graph, and reviewer feedback flows back through it with four decisions, all backed by evidence:
 
-- `FIX_LOCAL`: reparo dentro do nó afetado.
-- `REPLAN`: replanejamento, no máximo 2 por run.
-- `BLOCK`: parada com motivo legível.
-- `DONE`: só com checks reais aprovados, critic aprovado e identidade de contrato atual.
+- `FIX_LOCAL`: repair inside the affected node.
+- `REPLAN`: a new plan, at most 2 per run.
+- `BLOCK`: stop with a readable reason.
+- `DONE`: only with passing real checks, an approving critic and the current contract identity.
 
-### Novo
+### New
 
-- **Cinco comandos num runner só:** `plan`, `clarify`, `tasks`, `implemente` e `init`.
-  - Cada repositório tem um slot de plano e um de tarefas (a feature corrente).
-  - O reuso de artefato é conferido; quando é recusado, o motivo fica no journal.
-- **Esforço só `--effort low|medium|max`.** O orçamento é contado por papel (`bin/budget-policy.mjs`).
-- **Papéis e modelos fixos por host**, sem flag pública:
-  - Claude: Opus para planner, plan/design reviewer e critic; Haiku para executor, verifier e synth.
-  - Codex: `gpt-6.1-sol` nos papéis fortes, `gpt-6-luna` nos operacionais.
-- **Contratos do motor:**
-  - a retomada não dá crédito de orçamento;
-  - os contadores nunca diminuem;
-  - o replan tem teto 2;
-  - o DONE é negado sem checks reais, critic e identidade atual.
-- **Checks confiáveis:**
-  - só `node --test`, com seleção por `inputs`, `outputs` e `files` aprovados;
-  - a suíte completa roda no gate final, com concorrência 2.
-- **Manifestos de nó validados:**
-  - os caminhos precisam ser relativos ao repositório;
-  - um input externo precisa existir e ter fingerprint (`external_inputs_unfingerprintable`);
-  - um output precisa estar dentro de `files`.
-- **Janela de proveniência com causa:** `provenance_unsealed_window:<id> (causa: …)`.
-- **Integridade da runDir, lock de workspace e memória entre runs**, com seleção por nó e contrato.
-- **Host Claude isolado:**
-  - `--strict-mcp-config`, `--disable-slash-commands`, `--setting-sources project,local` e `--permission-mode dontAsk`;
-  - escrita só no cwd (`Edit(./**)`);
-  - cwd sob `.claude` é recusado com `CWD_PROTECTED_PATH`;
-  - as negações de permissão voltam no resultado.
-- **Smoke real com prova de escrita** (`write-probe.txt` com nonce). Ele detecta executor que não consegue gravar.
-- **Benchmark real** (`bin/graph-benchmark.mjs`):
-  - compara a lógica v1 normalizada com a adaptativa;
-  - avalia com testes de aceitação externos;
-  - mede custo e tokens por chamada.
-- **Plugin portátil** para Claude Code (`.claude-plugin/`) e Codex (`.codex-plugin/`).
+- **Five commands in a single runner:** `plan`, `clarify`, `tasks`, `implemente` and `init`.
+  - Each repository has one plan slot and one tasks slot (the current feature).
+  - Artifact reuse is checked; when it is refused, the reason goes to the journal.
+- **Effort is only `--effort low|medium|max`.** The budget is counted per role (`bin/budget-policy.mjs`).
+- **Roles and models fixed per host**, with no public flag:
+  - Claude: Opus for planner, plan/design reviewer and critic; Haiku for executor, verifier and synth.
+  - Codex: `gpt-6.1-sol` for the strong roles, `gpt-6-luna` for the operational ones.
+- **Engine contracts:**
+  - resuming gives no budget credit;
+  - counters never go down;
+  - replans are capped at 2;
+  - DONE is denied without real checks, critic and current identity.
+- **Trusted checks:**
+  - only `node --test`, selected by the approved `inputs`, `outputs` and `files`;
+  - the whole suite runs at the final gate, with concurrency 2.
+- **Validated node manifests:**
+  - paths must be relative to the repository;
+  - an external input must exist and have a fingerprint (`external_inputs_unfingerprintable`);
+  - an output must be inside `files`.
+- **Provenance window with a cause:** `provenance_unsealed_window:<id> (cause: …)`.
+- **runDir integrity, workspace lock and memory across runs**, selected by node and contract.
+- **Isolated Claude host:**
+  - `--strict-mcp-config`, `--disable-slash-commands`, `--setting-sources project,local` and `--permission-mode dontAsk`;
+  - writes only inside the cwd (`Edit(./**)`);
+  - a cwd under `.claude` is refused with `CWD_PROTECTED_PATH`;
+  - permission denials come back in the result.
+- **Real smoke test with write proof** (`write-probe.txt` with a nonce). It detects an executor that cannot write.
+- **Real benchmark** (`bin/graph-benchmark.mjs`):
+  - compares the normalized v1 logic with the adaptive one;
+  - grades with external acceptance tests;
+  - measures cost and tokens per call.
+- **Portable plugin** for Claude Code (`.claude-plugin/`) and Codex (`.codex-plugin/`).
 
-### Corrigido
+### Fixed
 
-- O executor Claude não gravava nada: o `dontAsk` sem `allowedTools` negava toda escrita.
-- O smoke dava falso PASS com worker só de leitura.
-- O contexto vazava do ambiente do usuário para cada chamada (cerca de 75k tokens por turno). Com o isolamento caiu para cerca de 6,5k, e o benchmark passou de US$ 88 para cerca de US$ 1.
-- `APPROVE` com `affectedNodes` preenchido era rejeitado: o schema agora declara a regra.
-- Pesquisa sem shell ficava `partial` para sempre: o aceite de pesquisa e de design não exige mais rodar comandos.
-- Texto livre nos manifestos virava "input mudou" (`provenance_unsealed_window`).
-- Erro do Claude sem `result` (`is_error`) perdia o motivo e o custo. Agora o erro guarda subtype, mensagens, uso e modelo, e o benchmark registra tudo.
-- No polish, uma área reprovada sem selo deixava a próxima mascarar o motivo real. Agora as áreas seguintes param com o motivo da primeira.
-- O planner podia devolver um esforço diferente do pedido (`plan_effort_mismatch`). O schema só aceita o esforço do usuário.
-- O nó refeito por `FIX_LOCAL` do critic não recebia o motivo do critic. Agora recebe no prompt.
-- Sem acesso à web, o aceite de pesquisa podia exigir URL externa e ficar `partial` para sempre. A capability `agentWeb` tira essa exigência do planner e do worker.
-- A correção e o replan do plano podiam reescrever o `doneWhen` (`original_plan_criteria_changed`). O `doneWhen` agora é travado no prompt e no schema em todos os caminhos, e a mesma lista em outra ordem é aceita.
-- O critic podia aprovar (`DONE`) respondendo só parte dos critérios (`critic_done_evidence_invalid`). O schema agora exige um item por critério, com o texto travado.
-- O verificador do nó reprovava por falta de evidência de `npm test`, que só roda no gate final. Agora o prompt diz que a suíte inteira fica para o gate final e que o nó é julgado pelos checks locais.
-- Um implement reprovado deixava a janela sem selo, e o polish das outras áreas mascarava o motivo com `provenance_frontier_changed_before_window`. Agora o polish não roda e mostra qual nó não concluiu.
-- No polish de uma área com mais de um nó, cada nó era conferido contra o diff da área inteira, e o arquivo do vizinho contava como fora do grant. Agora a janela é conferida contra o grant da área, e cada nó só pelos arquivos dele.
-- Um dependente fora da área, revalidado no polish, herdava o selo da janela antiga e o registro dele vencia no fim (`node_record_stale_at_completion`). Agora a revalidação descarta o selo herdado e sela a janela nova.
+- The Claude executor wrote nothing: `dontAsk` without `allowedTools` denied every write.
+- The smoke test gave a false PASS with a read-only worker.
+- Context leaked from the user's environment into every call (about 75k tokens per turn). Isolation brought it down to about 6.5k, and the benchmark went from $88 to about $1.
+- `APPROVE` with `affectedNodes` filled in was rejected: the schema now states the rule.
+- Research without a shell stayed `partial` forever: research and design acceptance no longer require running commands.
+- Free text in manifests turned into "input changed" (`provenance_unsealed_window`).
+- A Claude error without `result` (`is_error`) lost the reason and the cost. The error now keeps subtype, messages, usage and model, and the benchmark records all of it.
+- In polish, a failed area without a seal let the next one hide the real reason. The following areas now stop with the first one's reason.
+- The planner could return an effort different from the one requested (`plan_effort_mismatch`). The schema only accepts the user's effort.
+- A node redone by the critic's `FIX_LOCAL` did not get the critic's reason. It now gets it in the prompt.
+- Without web access, research acceptance could require an external URL and stay `partial` forever. The `agentWeb` capability removes that requirement from the planner and the worker.
+- Plan fixes and replans could rewrite `doneWhen` (`original_plan_criteria_changed`). `doneWhen` is now locked in the prompt and the schema on every path, and the same list in a different order is accepted.
+- The critic could approve (`DONE`) answering only some of the criteria (`critic_done_evidence_invalid`). The schema now requires one item per criterion, with the text locked.
+- The node verifier failed nodes for missing `npm test` evidence, which only runs at the final gate. The prompt now says the whole suite is left for the final gate and the node is judged by its local checks.
+- A failed implement left the window unsealed, and polish in the other areas hid the reason behind `provenance_frontier_changed_before_window`. Polish now does not run and shows which node did not finish.
+- In polish of an area with more than one node, each node was checked against the whole area's diff, and a neighbor's file counted as outside the grant. The window is now checked against the area's grant, and each node only by its own files.
+- A dependent outside the area, revalidated in polish, inherited the old window's seal and its record won at the end (`node_record_stale_at_completion`). Revalidation now drops the inherited seal and seals the new window.
 
-### Removido
+### Removed
 
-- Fluxo 0.1 de `effort × ceiling`: `manual`, `auto`, `high`, `maxAgents` e `economy`.
-- CLI `graph-config` e CLI `graph-resume`.
-- Fila de ações do painel: pedidos, sessão ouvindo e as rotas `POST /api/requests*`. O painel agora é só visualização ao vivo.
-  - Saíram `bin/requests.mjs`, `bin/ui/actions.mjs`, `bin/ui/commands.mjs`, `GET /api/listeners` e o consumo de pedidos no `graph-watch`. A parada da run passa a ser só por silêncio, e `events` sai logo depois do TERMINADO.
-  - A gaveta de artefatos continua, só leitura (`bin/ui/artifacts.mjs`).
-- Skill e comando antigos `graph-eng:graph-eng` e `/graph-eng:painel`. Use `init`.
+- The 0.1 `effort × ceiling` flow: `manual`, `auto`, `high`, `maxAgents` and `economy`.
+- The `graph-config` and `graph-resume` CLIs.
+- The panel action queue: requests, listening session and the `POST /api/requests*` routes. The panel is now a live view only.
+  - Removed `bin/requests.mjs`, `bin/ui/actions.mjs`, `bin/ui/commands.mjs`, `GET /api/listeners` and request consumption in `graph-watch`. The run now stops only on silence, and `events` exits right after FINISHED.
+  - The artifacts drawer stays, read only (`bin/ui/artifacts.mjs`).
+- The old `graph-eng:graph-eng` skill and `/graph-eng:painel` command. Use `init`.
 
 ### Benchmark
 
-- Rodada real f366 (Claude): `DONE` com aceite externo 10/10 e sem falso DONE, em 21 chamadas, por US$ 0,80. O modelo forte responde por cerca de 95% do custo. Detalhe em `docs/validation/graph-eng-2-benchmark.md`.
+- Real run f366 (Claude): `DONE` with 10/10 external acceptance and no false DONE, in 21 calls, for $0.80. The strong model accounts for about 95% of the cost. Details in `docs/validation/graph-eng-2-benchmark.md`.
 
-### Limites conhecidos
+### Known limits
 
-- O host Codex real (smoke e benchmark) ainda não foi validado. Só o Claude tem evidência real.
+- The real Codex host (smoke and benchmark) has not been validated yet. Only Claude has real evidence.
 
 ## 0.1.0
 
-Primeira versão: motor 0.1 com painel web.
+First release: 0.1 engine with a web panel.

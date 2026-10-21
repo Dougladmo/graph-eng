@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "graph-eng",
   "version": "1.0.0",
-  "description": "graph-eng: planeje ou implemente tarefas complexas com esforço controlado, checks verificáveis e evidências locais.",
+  "description": "graph-eng: plan or implement complex tasks with controlled effort, verifiable checks and local evidence.",
   "author": {
     "name": "Douglas Oliveira",
     "url": "https://github.com/Dougladmo"

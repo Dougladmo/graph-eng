@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "graph-eng",
-  "description": "Graph engineering enxuto para Claude Code e Codex.",
+  "description": "Lean graph engineering for Claude Code and Codex.",
   "owner": {
     "name": "Douglas Oliveira",
     "url": "https://github.com/Dougladmo"
@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "graph-eng",
-      "description": "Orquestra tarefa complexa como um grafo pequeno de agentes, com executor barato, revisor forte e loop até os critérios de pronto fecharem.",
+      "description": "Runs a complex task as a small graph of agents: a strong model plans and reviews, a cheap model executes, and the run only ends DONE with evidence.",
       "source": "./",
       "category": "productivity"
     }
