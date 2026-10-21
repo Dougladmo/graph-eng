@@ -84,10 +84,10 @@ Requisitos: `node` 22 no `PATH`. O pacote não tem dependência de runtime.
 
 ## Os cinco comandos
 
-O caminho normal é da esquerda para a direita. Cada passo reaproveita o anterior enquanto ele ainda vale.
+O caminho normal é de cima para baixo. Cada passo reaproveita o anterior enquanto ele ainda vale.
 
 ```mermaid
-flowchart LR
+flowchart TD
   I([init<br/>sobe o painel]) -.-> P
   P[plan<br/>gera o plano] --> Q{tem perguntas?}
   Q -- sim --> C[clarify<br/>responde as perguntas] --> T
@@ -160,16 +160,13 @@ Todo revisor responde com uma destas, sempre com evidência:
 ### Como um nó vira pronto
 
 ```mermaid
-sequenceDiagram
-  participant E as ⚙️ Executor
-  participant S as 🧪 Supervisor
-  participant V as 🔍 Verificador
-  E->>S: altera só os arquivos liberados
-  S->>S: confere o diff contra os arquivos liberados
-  S->>S: roda node --test dos arquivos do nó
-  S->>V: entrega o diff e os recibos dos testes
-  V-->>S: aprova ou pede FIX_LOCAL
-  S->>S: sela a evidência do nó (proveniência)
+flowchart TD
+  E[⚙️ Executor altera só os arquivos liberados] --> D{🧪 Supervisor: o diff ficou<br/>dentro dos arquivos liberados?}
+  D -- não --> X([⛔ BLOCK])
+  D -- sim --> T[🧪 Supervisor roda node --test<br/>dos arquivos do nó]
+  T --> V{🔍 Verificador lê o diff<br/>e os recibos dos testes}
+  V -- FIX_LOCAL --> E
+  V -- aprova --> S([🔒 Supervisor sela a evidência do nó])
 ```
 
 Regras que valem sempre:
@@ -206,13 +203,17 @@ Regras que valem sempre:
 
 A 1.0 gasta mais chamadas porque revisa e testa cada nó. Em troca, ela **sabe** que terminou e prova isso.
 
-```mermaid
-xychart-beta
-  title "Chamadas por papel no graph-eng 1.0 (rodada f366)"
-  x-axis ["planner", "rev. plano", "executor", "verificador", "critic", "rev. design", "synth"]
-  y-axis "chamadas" 0 --> 10
-  bar [2, 2, 8, 5, 2, 1, 1]
-```
+**Chamadas por papel no graph-eng 1.0 (rodada f366):**
+
+| Papel | Chamadas |
+| --- | --- |
+| ⚙️ executor | `████████████████` 8 |
+| 🔍 verificador | `██████████` 5 |
+| 🧠 planner | `████` 2 |
+| 🧠 revisor do plano | `████` 2 |
+| 🧠 critic | `████` 2 |
+| 🧠 revisor do design | `██` 1 |
+| ⚙️ synth | `██` 1 |
 
 - 💰 **Custo:** cerca de US$ 1 por rodada. Antes eram US$ 88, porque o host vazava cerca de 75k tokens de contexto por chamada; isolado, cerca de 6,5k.
 - 📈 **Histórico:** em 13 rodadas reais, a 1.0 nunca deu DONE falso. Cada BLOCK virou correção com teste de regressão, até fechar DONE na f366.
