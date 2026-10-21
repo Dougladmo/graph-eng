@@ -1,16 +1,16 @@
 {
   "name": "graph-eng",
   "version": "1.0.0",
-  "description": "Planeja e executa tarefas complexas como grafos pequenos com checks verificáveis e evidências locais.",
+  "description": "Plan or implement complex tasks as small agent graphs, with real checks and local evidence.",
   "interface": {
     "displayName": "Graph Eng",
-    "shortDescription": "Grafo com checks confiáveis",
-    "longDescription": "Planeje ou implemente tarefas complexas com esforço controlado, checks confiáveis, evidências locais e painel desacoplado.",
+    "shortDescription": "Agent graphs, trusted checks",
+    "longDescription": "Plan or implement complex tasks with controlled effort, trusted checks, local evidence and a detached live panel.",
     "developerName": "Douglas Oliveira",
     "category": "Developer tools",
     "capabilities": [
       "Interactive"
     ],
-    "defaultPrompt": "Ajude a planejar ou executar esta tarefa com o graph-eng."
+    "defaultPrompt": "Help me plan or run this task with graph-eng."
   }
 }

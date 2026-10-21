@@ -2,68 +2,68 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg">
-    <img src="docs/assets/logo-light.svg" width="200" height="200" alt="Logo do graph-eng: quadrado escuro com quatro bolinhas em losango ligadas por linhas retas">
+    <img src="docs/assets/logo-light.svg" width="200" height="200" alt="graph-eng logo: a dark square with four dots in a diamond, joined by straight lines">
   </picture>
 </p>
 
 <h1 align="center">graph-eng</h1>
 
 <p align="center">
-  <em>Tarefa complexa vira um grafo pequeno de agentes: o feedback dos revisores volta pelo grafo, e só sai DONE com evidência.</em>
+  <em>A complex task becomes a small graph of agents: reviewer feedback flows back through the graph, and the run only ends DONE with evidence.</em>
 </p>
 
 <p align="center">
   <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="stars"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.0.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versão 1.0.0"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-1d1d1f?style=flat-square" alt="licença MIT"></a>
-  <a href="#os-cinco-comandos"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="plugin do Claude Code"></a>
-  <a href="#os-cinco-comandos"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="plugin do Codex"></a>
-  <a href="#desenvolvimento"><img src="https://img.shields.io/badge/Node-22-1d1d1f?style=flat-square" alt="Node 22"></a>
-  <a href="#benchmark"><img src="https://img.shields.io/badge/benchmark%20Claude-DONE%2010%2F10-30d158?style=flat-square&labelColor=1d1d1f" alt="benchmark real com Claude: DONE com aceite externo 10/10"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="version 1.0.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat-square" alt="MIT license"></a>
+  <a href="#the-five-commands"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="Claude Code plugin"></a>
+  <a href="#the-five-commands"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="Codex plugin"></a>
+  <a href="#development"><img src="https://img.shields.io/badge/Node-22-1d1d1f?style=flat-square" alt="Node 22"></a>
+  <a href="#benchmark"><img src="https://img.shields.io/badge/Claude%20benchmark-DONE%2010%2F10-30d158?style=flat-square&labelColor=1d1d1f" alt="real Claude benchmark: DONE with 10/10 external acceptance"></a>
 </p>
 
 <p align="center">
-  <a href="#instalação">Instalação</a> ·
-  <a href="#como-funciona">Como funciona</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#how-it-works">How it works</a> ·
   <a href="#benchmark">Benchmark</a> ·
-  <a href="#os-cinco-comandos">Comandos</a> ·
-  <a href="#estado-final-no-painel">Painel</a> ·
+  <a href="#the-five-commands">Commands</a> ·
+  <a href="#final-state-in-the-panel">Panel</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
-  <a href="skills/grapheng/DESIGN.md">Por que o desenho é este</a>
+  <a href="skills/grapheng/DESIGN.md">Why the design is this way</a>
 </p>
 
 <p align="center">
-  <strong>papel forte planeja e revisa · papel barato executa · checks reais por nó · DONE só com evidência · painel ao vivo</strong><br>
-  <sub>O graph-eng planeja ou executa tarefas complexas como grafos pequenos, com papéis definidos pelo host, checks confiáveis e evidências por execução. O pacote mantém a identidade <code>graph-eng</code> e descobre <code>skills/</code> em local portátil.</sub>
+  <strong>strong role plans and reviews · cheap role executes · real checks per node · DONE only with evidence · live panel</strong><br>
+  <sub>graph-eng plans or runs complex tasks as small graphs, with roles set by the host, trusted checks and per-run evidence. The package keeps the <code>graph-eng</code> identity and finds <code>skills/</code> in a portable location.</sub>
 </p>
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/painel-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/painel-light.png">
-    <img src="docs/assets/painel-light.png" width="860" alt="Painel do graph-eng com uma run fictícia rodando: na lateral, as runs em Fixadas, num grupo, Em andamento, Paradas e Finalizadas recolhida; no centro, o grafo em colunas de fase, com nós prontos, rodando, bloqueado, falho e pulado">
+    <img src="docs/assets/painel-light.png" width="860" alt="graph-eng panel with a sample run in progress: the sidebar lists runs under Pinned, a group, In progress, Stalled and a collapsed Finished section; the center shows the graph in phase columns, with done, running, blocked, failed and skipped nodes">
   </picture>
 </p>
 
 ---
 
-## Em 30 segundos
+## In 30 seconds
 
-> Você descreve a tarefa. Um modelo **forte** planeja e revisa, modelos **baratos** executam, e o supervisor roda **testes de verdade** em cada passo. A run só termina como **DONE** quando há evidência; senão, para com um **motivo legível**.
+> You describe the task. A **strong** model plans and reviews, **cheap** models do the work, and the supervisor runs **real tests** at every step. The run only ends as **DONE** when there is evidence; otherwise it stops with a **readable reason**.
 
 | | |
 | --- | --- |
-| 🧠 **Planeja forte** | O modelo forte do host monta o plano como grafo e revisa cada etapa. |
-| ⚙️ **Executa barato** | O modelo operacional do host, mais barato, faz o trabalho de cada nó. |
-| 🧪 **Confere com testes** | `node --test` nos arquivos de cada nó e a suíte inteira no fim. |
-| 🔁 **Corrige pelo caminho** | O feedback dos revisores volta pelo grafo: refaz um nó, replaneja ou para. |
-| 🔒 **Sem DONE falso** | Sem testes aprovados, critic aprovado e evidência atual, o DONE é negado. |
+| 🧠 **Plans strong** | The host's strong model builds the plan as a graph and reviews every stage. |
+| ⚙️ **Executes cheap** | The host's operational model, cheaper, does the work of each node. |
+| 🧪 **Checks with tests** | `node --test` on each node's files, and the whole suite at the end. |
+| 🔁 **Fixes along the way** | Reviewer feedback flows back through the graph: redo a node, replan, or stop. |
+| 🔒 **No false DONE** | Without passing tests, an approving critic and current evidence, DONE is denied. |
 
-Versão atual: **1.0.0** · veja o [CHANGELOG](CHANGELOG.md).
+Current version: **1.0.0** · see the [CHANGELOG](CHANGELOG.md).
 
-## Instalação
+## Installation
 
-Numa sessão do Claude Code, um comando de cada vez:
+In a Claude Code session, one command at a time:
 
 ```
 /plugin marketplace add Dougladmo/graph-eng
@@ -73,222 +73,222 @@ Numa sessão do Claude Code, um comando de cada vez:
 /plugin install graph-eng@graph-eng
 ```
 
-Pelo terminal:
+From the terminal:
 
 ```bash
 claude plugin marketplace add Dougladmo/graph-eng
 claude plugin install graph-eng@graph-eng
 ```
 
-Requisitos: `node` 22 no `PATH`. O pacote não tem dependência de runtime.
+Requirements: `node` 22 on the `PATH`. The package has no runtime dependencies.
 
-## Os cinco comandos
+## The five commands
 
-O caminho normal é de cima para baixo. Cada passo reaproveita o anterior enquanto ele ainda vale.
+The normal path goes top to bottom. Each step reuses the previous one while it is still valid.
 
 ```mermaid
 flowchart TD
-  I([init<br/>sobe o painel]) -.-> P
-  P[plan<br/>gera o plano] --> Q{tem perguntas?}
-  Q -- sim --> C[clarify<br/>responde as perguntas] --> T
-  Q -- não --> T[tasks<br/>quebra em tarefas]
-  T --> M[implemente<br/>executa e testa]
-  M --> R([DONE ou BLOCK<br/>com motivo])
+  I([init<br/>starts the panel]) -.-> P
+  P[plan<br/>writes the plan] --> Q{any questions?}
+  Q -- yes --> C[clarify<br/>answers the questions] --> T
+  Q -- no --> T[tasks<br/>splits into tasks]
+  T --> M[implemente<br/>runs and tests]
+  M --> R([DONE or BLOCK<br/>with a reason])
 ```
 
-| Comando | O que faz | Mexe no código? |
+| Command | What it does | Touches code? |
 | --- | --- | --- |
-| `plan <tarefa>` | Gera o plano. Se faltar informação, termina com `needs_clarification`. | ❌ |
-| `clarify` | Responde as perguntas pendentes do plano. Não inventa respostas. | ❌ |
-| `tasks` | Quebra o plano aprovado em tarefas (um grafo de dependências). | ❌ |
-| `implemente [<tarefa>]` | Executa as tarefas, roda os testes e decide DONE ou BLOCK. | ✅ |
-| `init` | Sobe (ou reaproveita) o painel local e mostra a porta. | ❌ |
+| `plan <task>` | Writes the plan. If information is missing, it ends with `needs_clarification`. | ❌ |
+| `clarify` | Answers the plan's pending questions. It never makes up answers. | ❌ |
+| `tasks` | Splits the approved plan into tasks (a dependency graph). | ❌ |
+| `implemente [<task>]` | Runs the tasks, runs the tests and decides DONE or BLOCK. | ✅ |
+| `init` | Starts (or reuses) the local panel and prints the port. | ❌ |
 
-| Host | Como chamar |
+| Host | How to call it |
 | --- | --- |
-| Claude Code | `/graph-eng:plan <tarefa>`, `/graph-eng:clarify`, `/graph-eng:tasks`, `/graph-eng:implemente [<tarefa>]`, `/graph-eng:init` (ou `/graph-eng:grapheng <comando>`) |
-| Codex | a skill `graph-eng:grapheng`, com os mesmos cinco comandos. Não há slash global do plugin no Codex |
+| Claude Code | `/graph-eng:plan <task>`, `/graph-eng:clarify`, `/graph-eng:tasks`, `/graph-eng:implemente [<task>]`, `/graph-eng:init` (or `/graph-eng:grapheng <command>`) |
+| Codex | the `graph-eng:grapheng` skill, with the same five commands. Codex has no global slash command for the plugin |
 
-Há um slot de plano e um de tarefas por repositório, a **feature corrente**: um `plan` aprovado novo substitui o anterior. Se algo mudou desde o passo anterior, o runner recusa o reuso e diz o motivo (`workspace_changed`, `task_changed`, `tasks_plan_mismatch`, `source_unverified`, entre outros).
+Each repository has one plan slot and one tasks slot, the **current feature**: a newly approved `plan` replaces the previous one. If something changed since the previous step, the runner refuses to reuse it and says why (`workspace_changed`, `task_changed`, `tasks_plan_mismatch`, `source_unverified`, among others).
 
-## Como funciona
+## How it works
 
-### O ciclo inteiro
+### The whole cycle
 
 ```mermaid
 flowchart TD
-  P[🧠 Planner<br/>monta o plano] --> R{🧠 Revisor do plano}
-  R -- pede ajuste --> P
-  R -- aprova --> W[⚙️ Executores<br/>um por nó do grafo]
-  W --> C[🧪 Supervisor roda os testes do nó]
-  C --> V{🔍 Verificador do nó}
+  P[🧠 Planner<br/>builds the plan] --> R{🧠 Plan reviewer}
+  R -- asks for changes --> P
+  R -- approves --> W[⚙️ Executors<br/>one per graph node]
+  W --> C[🧪 Supervisor runs the node's tests]
+  C --> V{🔍 Node verifier}
   V -- FIX_LOCAL --> W
-  V -- aprovado --> PO[✨ Polish por área]
-  PO --> G[🧪 Gate final<br/>suíte inteira]
+  V -- approved --> PO[✨ Polish per area]
+  PO --> G[🧪 Final gate<br/>whole suite]
   G --> K{🧠 Critic}
   K -- FIX_LOCAL --> W
-  K -- REPLAN, no máximo 2 --> P
-  K -- BLOCK --> B([⛔ BLOCK com motivo])
-  K -- DONE com evidência --> D([✅ DONE])
+  K -- REPLAN, at most 2 --> P
+  K -- BLOCK --> B([⛔ BLOCK with a reason])
+  K -- DONE with evidence --> D([✅ DONE])
 ```
 
-### Quem faz o quê
+### Who does what
 
-Os modelos de cada papel são fixos por host (Claude Code ou Codex): forte para planejar e revisar, operacional para executar. Não há flag para trocar.
+Each role's model is fixed per host (Claude Code or Codex): strong to plan and review, operational to execute. There is no flag to change it.
 
-| Papel | Tipo | O que faz |
+| Role | Kind | What it does |
 | --- | --- | --- |
-| Planner | 🧠 forte | Monta o plano como grafo, com critérios de pronto (`doneWhen`). |
-| Revisores (plano e design) | 🧠 forte | Aprovam ou devolvem com o motivo. |
-| Critic | 🧠 forte | Confere cada critério de pronto contra a evidência e decide. |
-| Executor | ⚙️ barato | Faz o trabalho de um nó, só nos arquivos liberados para ele. |
-| Verificador | ⚙️ barato | Lê o que o executor fez e os recibos dos testes. |
-| Synth | ⚙️ barato | Escreve o resumo final. |
-| Supervisor | 🧪 código | Roda os testes, sela a evidência e nega DONE sem prova. Não é um modelo. |
+| Planner | 🧠 strong | Builds the plan as a graph, with done criteria (`doneWhen`). |
+| Reviewers (plan and design) | 🧠 strong | Approve, or send it back with the reason. |
+| Critic | 🧠 strong | Checks every done criterion against the evidence and decides. |
+| Executor | ⚙️ cheap | Does one node's work, only in the files granted to it. |
+| Verifier | ⚙️ cheap | Reads what the executor did and the test receipts. |
+| Synth | ⚙️ cheap | Writes the final summary. |
+| Supervisor | 🧪 code | Runs the tests, seals the evidence and denies DONE without proof. It is not a model. |
 
-### As quatro decisões
+### The four decisions
 
-Todo revisor responde com uma destas, sempre com evidência:
+Every reviewer answers with one of these, always with evidence:
 
-| Decisão | O que acontece | Limite |
+| Decision | What happens | Limit |
 | --- | --- | --- |
-| 🔧 `FIX_LOCAL` | Refaz só o nó afetado, com o motivo do revisor no prompt. | conta no orçamento do nó |
-| 🗺️ `REPLAN` | Gera um plano novo. Os critérios de pronto do usuário ficam travados. | no máximo 2 por run |
-| ⛔ `BLOCK` | Para e mostra o motivo (por exemplo `original_plan_criteria_changed`). | — |
-| ✅ `DONE` | Fecha a run. Exige testes aprovados, critic aprovado e evidência atual. | negado sem prova |
+| 🔧 `FIX_LOCAL` | Redoes only the affected node, with the reviewer's reason in the prompt. | counts against the node's budget |
+| 🗺️ `REPLAN` | Writes a new plan. The user's done criteria stay locked. | at most 2 per run |
+| ⛔ `BLOCK` | Stops and shows the reason (for example `original_plan_criteria_changed`). | — |
+| ✅ `DONE` | Closes the run. Requires passing tests, an approving critic and current evidence. | denied without proof |
 
-### Como um nó vira pronto
+### How a node becomes done
 
 ```mermaid
 flowchart TD
-  E[⚙️ Executor altera só os arquivos liberados] --> D{🧪 Supervisor: o diff ficou<br/>dentro dos arquivos liberados?}
-  D -- não --> X([⛔ BLOCK])
-  D -- sim --> T[🧪 Supervisor roda node --test<br/>dos arquivos do nó]
-  T --> V{🔍 Verificador lê o diff<br/>e os recibos dos testes}
+  E[⚙️ Executor changes only the granted files] --> D{🧪 Supervisor: did the diff stay<br/>inside the granted files?}
+  D -- no --> X([⛔ BLOCK])
+  D -- yes --> T[🧪 Supervisor runs node --test<br/>for the node's files]
+  T --> V{🔍 Verifier reads the diff<br/>and the test receipts}
   V -- FIX_LOCAL --> E
-  V -- aprova --> S([🔒 Supervisor sela a evidência do nó])
+  V -- approves --> S([🔒 Supervisor seals the node's evidence])
 ```
 
-Regras que valem sempre:
+Rules that always apply:
 
-- O nó só mexe nos arquivos que o plano liberou para ele. Arquivo fora disso bloqueia.
-- A suíte inteira roda uma vez, no gate final, depois de todo polish.
-- A retomada nunca devolve orçamento, e os contadores nunca diminuem.
+- A node only touches the files the plan granted to it. Any other file blocks it.
+- The whole suite runs once, at the final gate, after all polish.
+- Resuming never gives budget back, and counters never go down.
 
-### O que mudou da 0.1 para a 1.0
+### What changed from 0.1 to 1.0
 
 | | 0.1 | 1.0 |
 | --- | --- | --- |
-| Fluxo | grafo de ida, com critic no fim | grafo **bidirecional**: o feedback volta e muda o plano |
-| Fim da run | relatório `PARTIAL`, sem saber se terminou | **DONE** com evidência, ou **BLOCK** com motivo |
-| Testes | comando livre por nó | `node --test` selecionado pelos arquivos do nó, suíte inteira no fim |
-| Configuração | esforço × teto de agentes, mais vários ajustes finos | só `--effort low\|medium\|max` |
-| Hosts | Claude | Claude e Codex |
-| Painel | visualização e fila de ações | visualização ao vivo, só leitura |
+| Flow | one-way graph, with a critic at the end | **bidirectional** graph: feedback flows back and changes the plan |
+| End of the run | `PARTIAL` report, without knowing if it finished | **DONE** with evidence, or **BLOCK** with a reason |
+| Tests | free-form command per node | `node --test` selected by the node's files, whole suite at the end |
+| Configuration | effort × agent cap, plus several fine-tuning knobs | only `--effort low\|medium\|max` |
+| Hosts | Claude | Claude and Codex |
+| Panel | view plus an action queue | live view, read only |
 
 ## Benchmark
 
-`bin/graph-benchmark.mjs` roda uma tarefa fixa numa cópia limpa do repositório, com Claude real. Quem dá a nota é um conjunto de **testes de aceitação externos**, que os agentes não veem. Detalhe de todas as rodadas em [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md).
+`bin/graph-benchmark.mjs` runs a fixed task in a clean copy of the repository, with real Claude. The grade comes from a set of **external acceptance tests** that the agents never see. Every run is detailed in [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md).
 
-**Rodada f366:**
+**Run f366:**
 
 | | graph-eng 1.0 |
 | --- | --- |
-| 💵 Custo da rodada | **US$ 0,80** |
-| ✅ Testes externos | **10/10** |
-| 🏁 O que o motor disse | **DONE** com evidência |
-| 🔒 DONE falso | **não** |
-| 📞 Chamadas de modelo | 21 |
-| 🔤 Tokens (entrada / saída) | 605k / 36k |
-| ⏱️ Tempo do motor | 292 s |
+| 💵 Cost of the run | **$0.80** |
+| ✅ External tests | **10/10** |
+| 🏁 What the engine said | **DONE** with evidence |
+| 🔒 False DONE | **no** |
+| 📞 Model calls | 21 |
+| 🔤 Tokens (input / output) | 605k / 36k |
+| ⏱️ Engine time | 292 s |
 
-**Onde vai o dinheiro:**
+**Where the money goes:**
 
-| Papel | Modelo | Chamadas | US$ |
+| Role | Model | Calls | USD |
 | --- | --- | --- | --- |
-| 🧠 critic | forte | 2 | `██████` 0,31 |
-| 🧠 planner | forte | 2 | `████` 0,18 |
-| 🧠 revisor do plano | forte | 2 | `███` 0,17 |
-| 🧠 revisor do design | forte | 1 | `██` 0,10 |
-| ⚙️ executor | operacional | 8 | 0,015 |
-| 🔍 verificador | operacional | 5 | 0,011 |
-| ⚙️ synth | operacional | 1 | 0,005 |
-| **Total** | | **21** | **0,80** |
+| 🧠 critic | strong | 2 | `██████` 0.31 |
+| 🧠 planner | strong | 2 | `████` 0.18 |
+| 🧠 plan reviewer | strong | 2 | `███` 0.17 |
+| 🧠 design reviewer | strong | 1 | `██` 0.10 |
+| ⚙️ executor | operational | 8 | 0.015 |
+| 🔍 verifier | operational | 5 | 0.011 |
+| ⚙️ synth | operational | 1 | 0.005 |
+| **Total** | | **21** | **0.80** |
 
-O modelo forte responde por cerca de 95% do custo. As 14 chamadas do modelo operacional somam só 3 centavos. Para baixar o custo, o lugar é nas chamadas fortes (critic, planner e revisores), e esse trabalho segue em aberto.
+The strong model accounts for about 95% of the cost. The 14 operational-model calls add up to only 3 cents. Lowering the cost means working on the strong calls (critic, planner and reviewers), and that work is still open.
 
-- 💰 O isolamento do host derrubou o custo de cerca de US$ 88 para menos de US$ 1 por rodada: o host deixou de vazar cerca de 75k tokens de contexto por chamada e agora manda cerca de 6,5k.
-- 📈 Em 13 rodadas reais, a 1.0 nunca deu DONE falso. Cada BLOCK virou correção com teste de regressão, até fechar DONE na f366.
-- 🧪 O cenário ainda é simples. Falta um cenário mais difícil.
-- ⚠️ O host Codex real ainda não foi validado.
+- 💰 Isolating the host cut the cost from about $88 to under $1 per run: the host stopped leaking about 75k tokens of context per call and now sends about 6.5k.
+- 📈 Across 13 real runs, 1.0 never gave a false DONE. Every BLOCK became a fix with a regression test, until it closed DONE on f366.
+- 🧪 The scenario is still simple. A harder scenario is missing.
+- ⚠️ The real Codex host has not been validated yet.
 
-## Detalhes de execução
+## Execution details
 
-O esforço aceita `low`, `medium` (padrão) ou `max`, na forma separada (`--effort max`); `--effort` substitui a configuração em `plan`, `clarify`, `tasks` e `implemente`. Papéis e modelos são fixos pelo adapter confiável de Claude ou Codex. Não há flags públicas para modelos, papéis, largura ou limites internos.
+Effort accepts `low`, `medium` (default) or `max`, in the separate form (`--effort max`); `--effort` overrides the configuration in `plan`, `clarify`, `tasks` and `implemente`. Roles and models are fixed by the trusted Claude or Codex adapter. There are no public flags for models, roles, width or internal limits.
 
-O adapter de execução implementado neste corte é somente Node native test runner em repositórios com `package.json` legível e `scripts.test` exatamente `node --test`. Vitest, Jest, scripts com flags extras e repositórios sem esse contrato produzem `BLOCK` para `implemente`; `plan` continua disponível. Cada nó recebe uma seleção local derivada de `inputs`, `outputs` e `files` aprovados pelo supervisor. Um mapping interno conhecido roda os testes afetados; sem mapping completo, a cobertura é marcada como limitada e só se executam `node --check` aplicáveis e a validação do contrato/grants. O gate final roda a suíte completa com concorrência 2 somente depois de todo polish. Os checks usam `process.execPath`, argv explícito e spawn sem shell. Cada run grava seleção e receipts em `.graph-runs/` no repositório.
+The execution adapter in this release only supports the Node native test runner, in repositories with a readable `package.json` and `scripts.test` set to exactly `node --test`. Vitest, Jest, scripts with extra flags and repositories without that contract produce `BLOCK` for `implemente`; `plan` still works. Each node gets a local selection derived from the `inputs`, `outputs` and `files` the supervisor approved. A known internal mapping runs the affected tests; without a complete mapping, coverage is marked as limited and only the applicable `node --check` runs plus the contract and grant validation. The final gate runs the whole suite with concurrency 2, only after all polish. Checks use `process.execPath`, explicit argv and spawn without a shell. Each run writes its selection and receipts to `.graph-runs/` in the repository.
 
-O runner informa o estado e os bloqueios encontrados durante a execução. Quando não há mapeamento confiável de checks, `implemente` fica bloqueado; não invente comandos para contornar isso.
+The runner reports the state and any blocks found during the run. When there is no trusted check mapping, `implemente` stays blocked; do not invent commands to get around it.
 
-## Concorrência no mesmo repositório
+## Concurrency in the same repository
 
-Enquanto um `implemente` roda no mesmo repositório, `plan`, `clarify` e `tasks` podem ser bloqueados com `workspace_busy`. Isso é esperado: o lock do workspace é o mesmo para leitura e escrita, e só sai quando a run termina.
+While an `implemente` runs in a repository, `plan`, `clarify` and `tasks` may be blocked with `workspace_busy`. That is expected: the workspace lock is the same for reading and writing, and it is only released when the run ends.
 
-## CLI direto (`bin/graph-run.mjs`)
+## Direct CLI (`bin/graph-run.mjs`)
 
-O uso direto do runner é para depuração. `node bin/graph-run.mjs --host <claude|codex> --args <arquivo.json>` bloqueia implementação sem `nodeCheckPolicy` com `write_audit_unavailable`, sem criar host nem runDir, e sai com código 2. Plano só de leitura (`planOnly`, `research`, `architecture`, `review`) passa sem política.
+Calling the runner directly is for debugging. `node bin/graph-run.mjs --host <claude|codex> --args <file.json>` blocks implementation without `nodeCheckPolicy` with `write_audit_unavailable`, without creating a host or runDir, and exits with code 2. Read-only plans (`planOnly`, `research`, `architecture`, `review`) pass without a policy.
 
-Retomar pelo CLI direto exige repetir `mode` e `nodeCheckPolicy` nos args. Um arquivo só com `{ "runId": "...", "resume": { ... } }` cai no mesmo bloqueio, mesmo que a run original tenha política.
+Resuming through the direct CLI requires repeating `mode` and `nodeCheckPolicy` in the args. A file with only `{ "runId": "...", "resume": { ... } }` hits the same block, even if the original run had a policy.
 
-## Limites de integridade da runDir
+## runDir integrity limits
 
-A run grava o estado em `.graph-runs/<runId>/` e confere a árvore com um guard de integridade. Esse guard tem dois limites conhecidos:
+The run writes its state to `.graph-runs/<runId>/` and checks the tree with an integrity guard. That guard has two known limits:
 
-- **A violação não persiste depois que o processo sai.** Enquanto o processo que detectou a alteração está vivo, a run fica bloqueada com `run_integrity_violation` e não escreve REPORT. Quando a run é retomada depois, o baseline é recalculado a partir dos bytes atuais do disco, e o resume aceita o que estiver lá.
-- **Durante o handle de um host, a saída de outro handle não é vigiada.** Um agente com escrita na runDir pode trocar o `.host-*.output.json` de outro handle sem que o guard perceba, porque a saída não tem hash. O schema tem hash e é conferido na limpeza.
+- **A violation does not persist after the process exits.** While the process that detected the change is alive, the run stays blocked with `run_integrity_violation` and does not write a REPORT. When the run is resumed later, the baseline is recomputed from the bytes currently on disk, and the resume accepts whatever is there.
+- **While one host handle runs, another handle's output is not watched.** An agent with write access to the runDir can swap another handle's `.host-*.output.json` without the guard noticing, because the output has no hash. The schema is hashed and checked at cleanup.
 
-Um erro de checagem que não é violação, como um diretório ilegível no inventário, bloqueia com `integrity_check_failed`, mesmo que a permissão volte antes do fim da run, e não grava REPORT.
+A check error that is not a violation, such as an unreadable directory in the inventory, blocks with `integrity_check_failed`, even if the permission comes back before the run ends, and does not write a REPORT.
 
-Custo: a checagem da árvore inteira roda por agente e custa O(bytes da runDir). Com runDir de 1 a 10 MB, cada checagem leva de 10 a 25 ms; acima de 100 MB, esse custo deve ser reavaliado.
+Cost: the whole-tree check runs per agent and costs O(runDir bytes). With a 1 to 10 MB runDir, each check takes 10 to 25 ms; above 100 MB this cost should be reassessed.
 
-## Lock de workspace com dono morto
+## Workspace lock with a dead owner
 
-Cada workspace tem um lock de recurso no diretório de estado. Se a run encontra esse lock com dono morto, ela não o remove sozinha: a execução para com `workspace_lock_owner_dead`, e o detalhe traz o caminho do arquivo e o pid do dono. Um pid vivo com outra identidade de processo (pid reutilizado) conta como dono morto.
+Each workspace has a resource lock in the state directory. If the run finds that lock with a dead owner, it does not remove it on its own: execution stops with `workspace_lock_owner_dead`, and the detail includes the file path and the owner's pid. A live pid with a different process identity (a reused pid) counts as a dead owner.
 
-Remoção manual: confirme que o pid do detalhe não existe mais e só então apague o arquivo indicado. Um lock com JSON inválido (`workspace_lock_invalid`) ou com dono ambíguo (`workspace_lock_ambiguous`) também fica parado para inspeção e exige a mesma conferência antes de qualquer remoção.
+Manual removal: confirm the pid in the detail no longer exists, and only then delete the file shown. A lock with invalid JSON (`workspace_lock_invalid`) or an ambiguous owner (`workspace_lock_ambiguous`) also stays put for inspection and needs the same check before any removal.
 
-## Memória entre runs
+## Memory across runs
 
-Ao fim de cada run sem violação de integridade e com lease confiável (sem falha de heartbeat), o supervisor registra na memória do repositório (`~/.claude/graph-eng/memory/<repoId>`, fora da runDir) os registros de design aprovado e de checks válidos. Falha de memória ou de registro vira diagnóstico no journal e nunca muda o status da run.
+At the end of each run with no integrity violation and a trusted lease (no heartbeat failure), the supervisor writes approved-design and valid-check records to the repository memory (`~/.claude/graph-eng/memory/<repoId>`, outside the runDir). A memory or record failure becomes a diagnostic in the journal and never changes the run's status.
 
-Uma run seguinte no mesmo repositório seleciona esses registros por nó e contrato. Cada worker recebe só os registros do próprio nó e com a mesma identidade de contrato pré-trabalho, num bloco `<memoryContext>` com o aviso de que o conteúdo são dados não confiáveis. Os registros vêm como JSON, com `<` escapado, então um resumo não consegue fechar a tag nem virar instrução. O evento `memory.selected` aparece no journal antes do agente.
+A later run in the same repository selects those records by node and contract. Each worker only gets records for its own node with the same pre-work contract identity, in a `<memoryContext>` block warning that the content is untrusted data. The records come as JSON with `<` escaped, so a summary cannot close the tag or turn into an instruction. The `memory.selected` event shows up in the journal before the agent.
 
-Na retomada, a seleção fixada da run é reaproveitada só depois de conferida. O evento `memory.selected` sai de novo com `reused: true`, e o painel mostra essa marca. Se a conferência falhar, a run registra um diagnóstico `selection_reuse_rejected` e faz uma nova seleção.
+On resume, the run's pinned selection is reused only after it is checked. The `memory.selected` event is emitted again with `reused: true`, and the panel shows that mark. If the check fails, the run records a `selection_reuse_rejected` diagnostic and makes a new selection.
 
-Limitações desta versão (v1.0):
+Limits of this version (v1.0):
 
-- **O planner não recebe seleção de memória.** Ele não tem nó nem caminho definidos no início da run, e a seleção exige um escopo que case com algum registro.
-- **O critic não recebe seleção de memória.** O ramo que selecionava por caminho não tinha produtor de registro com caminhos; foi retirado e não é relaxado. Registros de memória não entram na revisão crítica.
-- **Evidência da fase final fica fora.** Receipts de checks finais (depois do polish) não têm escopo por nó e não alimentam a memória. Só os receipts da fase de nó entram, com escopo `nodeId + contractIdentity`, e só o worker do mesmo nó e contrato os recebe.
-- **Contract, failure e version ficam fora da v1.0.** Esses tipos existem no modelo de registro, mas nenhum produtor os grava e nenhum papel os seleciona. Nada é alimentado sem consumidor.
+- **The planner gets no memory selection.** It has no node or path defined at the start of the run, and selection needs a scope that matches some record.
+- **The critic gets no memory selection.** The branch that selected by path had no record producer with paths; it was removed and is not relaxed. Memory records do not enter the critical review.
+- **Final-phase evidence is left out.** Final check receipts (after polish) have no per-node scope and do not feed memory. Only node-phase receipts go in, scoped by `nodeId + contractIdentity`, and only the worker for the same node and contract receives them.
+- **Contract, failure and version records are out of v1.0.** Those types exist in the record model, but no producer writes them and no role selects them. Nothing is fed without a consumer.
 
-## Estado final no painel
+## Final state in the panel
 
-O evento `run.finished` é o último do journal e carrega o status terminal. Ele sai depois do REPORT e antes da liberação do lease. Uma run planOnly bem-sucedida grava `plan_only` (plano concluído), não `blocked`.
+The `run.finished` event is the last one in the journal and carries the terminal status. It is emitted after the REPORT and before the lease is released. A successful planOnly run records `plan_only` (plan finished), not `blocked`.
 
-Divergência conhecida: se a liberação do lease ou do workspace falha depois do `run.finished`, o journal continua com o status do resultado (por exemplo `done`), enquanto o retorno do CLI sai `blocked` com `lease_release_failed` ou `workspace_release_failed`. O painel só mostra o status do journal quando o lease já foi solto; com o lease preso, o status fica desconhecido.
+Known divergence: if releasing the lease or the workspace fails after `run.finished`, the journal keeps the result's status (for example `done`), while the CLI returns `blocked` with `lease_release_failed` or `workspace_release_failed`. The panel only shows the journal status once the lease has been released; with the lease stuck, the status is unknown.
 
-## Desenvolvimento
+## Development
 
-O pacote não precisa de instalação global. Com Node.js e dependências de desenvolvimento já instaladas, execute os testes do driver e dos manifests:
+The package needs no global install. With Node.js and the dev dependencies installed, run the driver and manifest tests:
 
 ```sh
 node --test --test-concurrency=2 test/grapheng.test.mjs test/packaging.test.mjs
 ```
 
-O projeto usa `node --test`; alterações de UI podem exigir `npm run css:build`. A justificativa histórica do desenho está em [DESIGN.md](skills/grapheng/DESIGN.md).
+The project uses `node --test`; UI changes may need `npm run css:build`. The historical reasoning behind the design is in [DESIGN.md](skills/grapheng/DESIGN.md).
 
-## Licença
+## License
 
 [MIT](LICENSE)
 
@@ -298,6 +298,6 @@ O projeto usa `node --test`; alterações de UI podem exigir `npm run css:build`
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date&theme=dark">
     <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date">
-    <img alt="Star History do graph-eng" src="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date">
+    <img alt="graph-eng Star History" src="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date">
   </picture>
 </a>
