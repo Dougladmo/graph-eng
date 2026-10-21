@@ -75,7 +75,7 @@ A 1.0 troca o motor 0.1 por uma **orquestração bidirecional adaptativa**. O pl
 
 ### Benchmark
 
-- Rodada real f366 (Claude): a adaptativa fechou `DONE` com aceite externo 10/10 e sem falso DONE; a v1 normalizada passou no externo mas reporta PARTIAL. Detalhe em `docs/validation/graph-eng-2-benchmark.md`.
+- Rodada real f366 (Claude): `DONE` com aceite externo 10/10 e sem falso DONE, em 21 chamadas, por US$ 0,80. O modelo forte responde por cerca de 95% do custo. Detalhe em `docs/validation/graph-eng-2-benchmark.md`.
 
 ### Limites conhecidos
 
