@@ -1,8 +1,8 @@
 # Changelog
 
-## 2.0.0 — 2026-10-20
+## 1.0.0 — 2026-10-21
 
-A 2.0 troca o motor 1.x por uma **orquestração bidirecional adaptativa**. O plano é executado como grafo, e o feedback dos revisores volta por ele com quatro decisões, todas com evidência:
+A 1.0 troca o motor 0.1 por uma **orquestração bidirecional adaptativa**. O plano é executado como grafo, e o feedback dos revisores volta por ele com quatro decisões, todas com evidência:
 
 - `FIX_LOCAL`: reparo dentro do nó afetado.
 - `REPLAN`: replanejamento, no máximo 2 por run.
@@ -66,7 +66,7 @@ A 2.0 troca o motor 1.x por uma **orquestração bidirecional adaptativa**. O pl
 
 ### Removido
 
-- Fluxo 1.x de `effort × ceiling`: `manual`, `auto`, `high`, `maxAgents` e `economy`.
+- Fluxo 0.1 de `effort × ceiling`: `manual`, `auto`, `high`, `maxAgents` e `economy`.
 - CLI `graph-config` e CLI `graph-resume`.
 - Fila de ações do painel: pedidos, sessão ouvindo e as rotas `POST /api/requests*`. O painel agora é só visualização ao vivo.
   - Saíram `bin/requests.mjs`, `bin/ui/actions.mjs`, `bin/ui/commands.mjs`, `GET /api/listeners` e o consumo de pedidos no `graph-watch`. A parada da run passa a ser só por silêncio, e `events` sai logo depois do TERMINADO.
@@ -83,4 +83,4 @@ A 2.0 troca o motor 1.x por uma **orquestração bidirecional adaptativa**. O pl
 
 ## 0.1.0
 
-Primeira versão: motor 1.x com painel web.
+Primeira versão: motor 0.1 com painel web.

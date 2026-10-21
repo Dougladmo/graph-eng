@@ -1,6 +1,6 @@
 {
   "name": "graph-eng",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "Planeja e executa tarefas complexas como grafos pequenos com checks verificáveis e evidências locais.",
   "interface": {
     "displayName": "Graph Eng",
