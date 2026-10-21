@@ -33,6 +33,10 @@
 </p>
 
 <p align="center">
+  🌐 <strong>English</strong> · <a href="README.pt-BR.md">Português</a> · <a href="README.es.md">Español</a>
+</p>
+
+<p align="center">
   <strong>strong role plans and reviews · cheap role executes · real checks per node · DONE only with evidence · live panel</strong><br>
   <sub>graph-eng plans or runs complex tasks as small graphs, with roles set by the host, trusted checks and per-run evidence. The package keeps the <code>graph-eng</code> identity and finds <code>skills/</code> in a portable location.</sub>
 </p>

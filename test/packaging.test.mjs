@@ -55,9 +55,17 @@ test('commands de Claude são exatamente clarify, implemente, init, plan e tasks
 })
 
 test('commands, SKILL e README não citam full, ceiling, economy, --model nem nomes de modelo', async () => {
-  for (const file of ['commands/plan.md', 'commands/implemente.md', 'commands/init.md', 'skills/grapheng/SKILL.md', 'README.md']) {
+  for (const file of ['commands/plan.md', 'commands/implemente.md', 'commands/init.md', 'skills/grapheng/SKILL.md', 'README.md', 'README.pt-BR.md', 'README.es.md']) {
     const text = await readFile(path.join(root, file), 'utf8')
     assert.doesNotMatch(text, /\b(full|ceiling|economy)\b|--model\b|\b(opus|sonnet|haiku)\b|gpt-/i, file)
+  }
+})
+
+test('README em inglês, português e espanhol, cada um com o seletor apontando para os outros dois', async () => {
+  const readmes = ['README.md', 'README.pt-BR.md', 'README.es.md']
+  for (const file of readmes) {
+    const text = await readFile(path.join(root, file), 'utf8')
+    for (const other of readmes.filter((name) => name !== file)) assert.match(text, new RegExp(`href="${other.replace('.', '\\.')}"`), `${file} sem link para ${other}`)
   }
 })
 
