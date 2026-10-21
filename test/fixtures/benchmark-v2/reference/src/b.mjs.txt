@@ -1,0 +1,3 @@
+export function somarInteiros(lista) {
+  return lista.reduce((total, valor) => total + valor, 0)
+}

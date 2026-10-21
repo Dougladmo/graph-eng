@@ -1,9 +1,8 @@
 // Painel web ao vivo do graph-watch (`graph-watch ui`) — docs/specs/2026-09-27-painel-web.md.
 // Node puro (node:http), sem dependências. Rotas de escrita: PUT /api/config (grava
 // ~/.claude/graph-eng/config.json, via bin/config.mjs), POST /api/org/* (grava <stateDir>/organize.json,
-// via bin/organize.mjs; o apagar remove só .graph-runs/<run>/ depois da contenção) e POST /api/requests*
-// (grava <stateDir>/requests/, via bin/requests.mjs). A leitura da lista e do pedido também grava `falhou`
-// num pedido vencido e faz a limpeza da fila (C2). Nenhum outro endpoint escreve em disco. Spec das ações e da organização: docs/specs/2026-09-28-acoes-no-painel.md (C1, C10, C11).
+// via bin/organize.mjs; o apagar remove só .graph-runs/<run>/ depois da contenção). Nenhum outro endpoint
+// escreve em disco. O painel é só visualização ao vivo: não há fila de pedidos nem sinal de vida de sessão.
 //
 // ── Contrato HTTP (consumido pela página em bin/ui/) ──
 // Todas as respostas: só GET (outro método → 405 com `Allow: GET`), exceto /api/config, que aceita GET e
@@ -46,17 +45,6 @@
 //   O9 delete-finished {wfs, confirm: "apagar N"} → +deleted[], failed[{wf, reason}].
 //   OrgPublica = { groups: [{ id, name }], pinned: key[], warnings: string[] }.
 //
-// POST /api/requests (C10 A1) `{ type: resume|stop|rerun-node, wf, node?, dependents? }` → 202 `{ request }`.
-//   Mesmas travas, na mesma ordem; 400 `{ error: "pedido inválido", fields }` (tabela estrita, D3 §3.4) · 404
-//   run · 409 execução superada · 404 nó (no Modelo da execução atual) · 409 com o `why` da regra C12 (o mesmo
-//   texto de `actions.*.why`), ou "Já existe um pedido aberto para esta run." numa corrida · 500 E/S. O resto
-//   do pedido (runKey, runId, project, ownerSession, runDir absoluto e contido, dependentsList, route) sai
-//   do índice, nunca do cliente.
-// GET /api/requests/:id (A2) → 200 `{ request }` | 400 id fora do REQ_RE | 404.
-// POST /api/requests/:id/cancel (A3) `{}` → 200 `{ request }` em `falhou` ("cancelado no painel", ou
-//   "descartado no painel: a sessão não confirmou" num aceito há ≥ 2 min) | travas | 400 | 404 | 409.
-// GET /api/listeners (A4) → 200 `{ sessions: [{ session: 8 chars, project, wf, beatAt: ms, until: ms|null }],
-//   staleMs: 30000 }`, só os ouvintes vivos.
 // GET /api/runs/:wf/artifacts (A5) → 200 `{ runId, runDir, files: [{ name, kind, node?, variant?, size, mtime }] }`
 //   | 400 | 404 run | 404 "essa run não tem pasta de artefatos". GET …/artifacts/:name (A6) → 200 `{ name,
 //   kind, size, mtime, truncated, text }` (teto 256 KB) | 400 "nome de artefato inválido" | 404. Só entrada
@@ -78,8 +66,8 @@
 //     status: "rodando" | "parada?" | "terminado",
 //                                       // terminado = synth com result, ou run planOnly (spec C6);
 //                                       // parada? = computeStop() ≠ null (mesma regra do buildModel,
-//                                       // bin/graph-watch.mjs: silêncio > N min sem sessão dona ouvindo,
-//                                       // ou 3·N com ela, cota/interrupção na hora); senão rodando.
+//                                       // bin/graph-watch.mjs: silêncio > N min,
+//                                       // cota/interrupção na hora); senão rodando.
 //     stop: null | { reason, text, idleSec }, // motivo da parada (spec C6), null fora de "parada?"
 //     planOnly: boolean,                // só o planner rodou; nunca conta como parada
 //     goal: string | null,              // goal do plano
@@ -87,8 +75,6 @@
 //     round: number,
 //     mtime: number,                    // ms epoch da última atividade (journal ou transcrição)
 //     nodes: [{ id, state, round }],    // faixa-miniatura da barra lateral, na ordem do modelo
-//     pending: "resume" | "stop" | "rerun-node" | null, // tipo do pedido aberto da key (C2)
-//     listening: bool,                  // há ouvinte vivo no projeto da execução atual (C3)
 //   }
 //
 // GET /api/runs/:wf → 200 Modelo | 400 (wf fora de /^wf_[A-Za-z0-9_-]+$/) | 404 (fora da lista de runs)
@@ -98,12 +84,9 @@
 //     nodes: [{ id, kind, risk, round, title, deps: string[], explore, state, reps, closed,
 //               orphan?, running?: { label, agentId } }],
 //     critic: null | { r, running, gaps?, done? }, synth: "aguardando" | "rodando" | "pronto", spent,
-//     estimate?/ceiling? (só quando há economy). Campos do I5 (C11): runId, runKey, current (wf da execução
-//     atual da key), supersededBy (= current num wf superado, senão null), runDir (com ~ | null), requests
-//     (os 5 pedidos mais novos da key), actions = { listening: { project, owner, ownerPresence, sessions },
-//     open: Pedido | null, resume, stop, rerun, copy: { resume, stop, rerun } } com Pode = { ok, why, route? },
-//     e em cada nó `rerun: Pode` (só a regra do nó e a da execução superada: a página combina com
-//     `actions.rerun` ou `actions.copy.rerun`) e `dependents: id[]` (fecho transitivo pelos deps). `mode` e `economy` vêm das linhas `Mode:` e `Economy:` do
+//     estimate?/ceiling? (só quando há economy). Campos de execução: runId, runKey, current (wf da
+//     execução atual da key), supersededBy (= current num wf superado, senão null), runDir (com ~ | null).
+//     `mode` e `economy` vêm das linhas `Mode:` e `Economy:` do
 //     prompt do agente `plan` (ausentes se não achar; `Economy:` só existe em runs da 0.3.0 em diante).
 //   Estados de nó: trabalhando | verificando | reparando (rodando agora); pronto | pronto-sem-verif |
 //     pronto-sem-verif? | sem-reverificacao (já rodou); falhou | falhou-check | bloqueado | erro (falha);
@@ -166,34 +149,16 @@ import {
   validateOrgBody,
   writeOrg,
 } from './organize.mjs'
-import {
-  LISTEN_FRESH_MS,
-  NODE_RE,
-  REQ_RE,
-  REQUEST_TYPES,
-  WF_RE,
-  createExclusive,
-  createRequest,
-  discardAccepted,
-  isAcceptedDiscardable,
-  isOpenForRunKey,
-  listRequests,
-  listenersDir,
-  ownerPathInfo,
-  ownerPresence,
-  projectListening,
-  readListeners,
-  readRequest,
-  reapExpired,
-  requestsDir,
-  writeJsonAtomic,
-} from './requests.mjs'
-import { variantOf } from './ui/graph-layout.mjs'
+import { readRunRegistry } from './run-registry.mjs'
+import { readRunV2 } from './run-view-v2.mjs'
 
 export const DEFAULT_PORT = 4477
 const HOST = '127.0.0.1'
 const RUNS_LIMIT = 50
-// WF_RE e NODE_RE vêm de bin/requests.mjs (C2: uma regex em um lugar só, com os literais de sempre).
+// Seletor opaco de geração v2. Não coincide com a forma legada `wf_*`.
+const V2_RUN_RE = /^v2-[a-f0-9]{64}$/
+const WF_RE = /^wf_[A-Za-z0-9_-]+$/
+const NODE_RE = /^[A-Za-z0-9_-]{1,64}$/
 const PSEUDO = new Set(['plan', 'critic', 'design-review', 'synth'])
 const POLISH_API_RE = /^polish-(\d{1,3})$/ // subconjunto do NODE_RE: o polidor `polish:<k>` na URL
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ui')
@@ -238,151 +203,6 @@ function orgRoute(pathname) {
   if (parts.length === 3 && ORG_ROUTES.has(parts[2])) return { op: ORG_ROUTES.get(parts[2]) }
   if (parts.length === 5 && parts[2] === 'groups' && ORG_GROUP_ROUTES.has(parts[4])) return { op: ORG_GROUP_ROUTES.get(parts[4]), gid: parts[3] }
   return null
-}
-
-// ── Fila de pedidos (C2, C10 A1-A4) ──
-const CLEANUP_EVERY_MS = 60000 // a limpeza da fila roda no máximo 1 vez por minuto (C2)
-const FINAL_KEEP_MS = 7 * 24 * 3600 * 1000 // pedido final some depois de 7 dias…
-const FINAL_KEEP_MAX = 200 // …ou quando passa dos 200 finais mais novos
-const LISTENER_KEEP_MS = 24 * 3600 * 1000 // sinal de vida com beatAt de mais de 24 h some
-const REQUESTS_IN_MODEL = 5 // o Modelo leva os 5 pedidos mais novos da key (C11)
-
-// Remove os pedidos finais velhos (com .json, .claim, .final e .seen-*) e os sinais de vida parados há mais
-// de 24 h. Nunca toca pedido pendente ou aceito.
-function cleanupState(stateDir, now) {
-  const finals = listRequests(stateDir)
-    .filter((r) => r.state === 'feito' || r.state === 'falhou')
-    .reverse()
-  const drop = new Set()
-  finals.forEach((r, i) => {
-    const t = Date.parse(r.finishedAt || r.updatedAt || r.createdAt)
-    if (i >= FINAL_KEEP_MAX || (!Number.isNaN(t) && now - t > FINAL_KEEP_MS)) drop.add(r.id)
-  })
-  if (drop.size) {
-    const dir = requestsDir(stateDir)
-    for (const f of fs.readdirSync(dir)) {
-      if (drop.has(f.split('.')[0])) fs.rmSync(path.join(dir, f), { force: true })
-    }
-  }
-  for (const l of readListeners(stateDir, now)) {
-    const t = Date.parse(l.beatAt)
-    if (Number.isNaN(t) || now - t <= LISTENER_KEEP_MS) continue
-    const file = path.join(listenersDir(stateDir), `${l.session}.${l.pid}.json`)
-    if (path.dirname(file) === listenersDir(stateDir)) fs.rmSync(file, { force: true })
-  }
-}
-
-// Corpo da A1 (D3 §3.4, tabela CHECK estrita, no padrão do validateConfig): → { ok, value } | { ok, errors }.
-// Pares + Object.fromEntries: um campo `__proto__` vira erro, e o protótipo fica intacto.
-function validateRequestBody(body) {
-  const errors = []
-  const type = body.type
-  const isRerun = type === 'rerun-node'
-  for (const k of Object.keys(body)) {
-    if (!['type', 'wf', 'node', 'dependents'].includes(k)) errors.push([k, 'campo desconhecido'])
-  }
-  if (!REQUEST_TYPES.includes(type)) errors.push(['type', 'use resume, stop ou rerun-node'])
-  if (typeof body.wf !== 'string' || !WF_RE.test(body.wf)) errors.push(['wf', 'id de run inválido'])
-  if (Object.hasOwn(body, 'node')) {
-    if (REQUEST_TYPES.includes(type) && !isRerun) errors.push(['node', 'só vale em rerun-node'])
-    else if (typeof body.node !== 'string' || !NODE_RE.test(body.node)) errors.push(['node', 'id de nó inválido'])
-    else if (PSEUDO.has(body.node) || POLISH_API_RE.test(body.node)) errors.push(['node', 'plano, revisão, crítica, polimento e síntese não se refazem'])
-  } else if (isRerun) errors.push(['node', 'obrigatório em rerun-node'])
-  if (Object.hasOwn(body, 'dependents')) {
-    if (REQUEST_TYPES.includes(type) && !isRerun) errors.push(['dependents', 'só vale em rerun-node'])
-    else if (typeof body.dependents !== 'boolean') errors.push(['dependents', 'use true ou false'])
-  }
-  if (errors.length) return { ok: false, errors: Object.fromEntries(errors) }
-  const value = { type, wf: body.wf }
-  if (isRerun) {
-    value.node = body.node
-    value.dependents = body.dependents === true
-  }
-  return { ok: true, value }
-}
-
-// Fecho transitivo dos descendentes de `id` pelos `deps` do Modelo, na ordem do Modelo (C11, D3 §3.5).
-function dependentsOf(nodes, id) {
-  const out = new Set()
-  let grew = true
-  while (grew) {
-    grew = false
-    for (const n of nodes) {
-      if (out.has(n.id) || n.id === id) continue
-      if ((n.deps || []).some((d) => d === id || out.has(d))) {
-        out.add(n.id)
-        grew = true
-      }
-    }
-  }
-  return nodes.filter((n) => out.has(n.id)).map((n) => n.id)
-}
-
-// ── Regra das ações (C12). A primeira condição que falha dá o `why`; o mesmo texto volta como 409 na A1. ──
-const WHY = {
-  superseded: (cur) => `Essa execução foi retomada em ${cur}; use a mais nova.`,
-  resumeDone: 'A run já terminou. Para rodar um nó de novo, use Refazer nó.',
-  planOnly: 'Só o plano rodou. Aprovar o plano pelo painel está fora do escopo: aprove no chat.',
-  resumeRunning: 'A run está rodando. Pare antes de retomar.',
-  noRunDir: 'Essa run não tem pasta em .graph-runs; sem ela não há de onde retomar.',
-  open: 'Espere o pedido aberto terminar, ou cancele.',
-  openDone: 'A retomada foi feita; esperando a execução nova aparecer.',
-  rearm: 'A sessão dona está rearmando a escuta do painel; tente de novo em instantes.',
-  noProjectResume: 'Nenhuma sessão ouvindo este projeto. Use Copiar para retomar e cole numa sessão do Claude Code.',
-  stopDone: 'A run já terminou.',
-  stopGone: 'A sessão que rodou a run acabou; não há o que parar. Use Retomar.',
-  stopNoOwner: 'A sessão que rodou esta run não está ouvindo. Use Copiar para parar e cole nela.',
-  rerunRunning: 'A run está rodando. Pare antes de refazer um nó.',
-  noProjectRerun: 'Nenhuma sessão ouvindo este projeto. Use Copiar para refazer e cole numa sessão do Claude Code.',
-  nodeEmpty: 'Esse nó ainda não rodou.',
-  nodeSkipped: 'Esse nó foi pulado. Refaça o nó de que ele depende, com os dependentes.',
-  nodeRunning: 'Esse nó está rodando.',
-  nodeGap: 'Nó da crítica: use Retomar, que a crítica decide de novo.',
-  raced: 'Já existe um pedido aberto para esta run.',
-}
-const ok = (route) => (route ? { ok: true, why: null, route } : { ok: true, why: null })
-const no = (why) => ({ ok: false, why })
-
-// `ctx` = { wf, current, status, planOnly, stopReason, hasRunDir, open, presence, listenProject }. `status` é
-// o do RunResumo: `rodando`, `terminado` ou a parada (`parada?`, e `parada` quando o C6 tirar o `?`).
-export function runActions(ctx) {
-  const { wf, current, status, planOnly, stopReason, hasRunDir, open, presence, listenProject } = ctx
-  if (wf !== current) {
-    const p = no(WHY.superseded(current))
-    return { resume: p, stop: p, rerun: p, copy: { resume: p, stop: p, rerun: p } }
-  }
-  const running = status === 'rodando'
-  const finished = status === 'terminado' && !planOnly
-  const stopped = !running && status !== 'terminado'
-  const openWhy = open ? (open.state === 'feito' ? WHY.openDone : WHY.open) : null
-  // 5b (P1): numa parada que não é `interrompida`, a dona talvez ainda tenha o Workflow vivo.
-  const ownerMaybeAlive = stopped && stopReason !== 'interrompida' && (presence === 'ouvindo' || presence === 'rearmando')
-
-  const copyResume = finished ? no(WHY.resumeDone) : planOnly ? no(WHY.planOnly) : running ? no(WHY.resumeRunning) : !hasRunDir ? no(WHY.noRunDir) : ok()
-  const copyStop = status === 'terminado' ? no(WHY.stopDone) : stopReason === 'sessao-encerrada' ? no(WHY.stopGone) : ok()
-  const copyRerun = running ? no(WHY.rerunRunning) : planOnly ? no(WHY.planOnly) : !hasRunDir ? no(WHY.noRunDir) : ok()
-
-  const viaListeners = (base, noProject) => {
-    if (!base.ok) return base
-    if (openWhy) return no(openWhy)
-    if (ownerMaybeAlive) return presence === 'rearmando' ? no(WHY.rearm) : ok('owner')
-    return listenProject ? ok('project') : no(noProject)
-  }
-  const resume = viaListeners(copyResume, WHY.noProjectResume)
-  const rerun = viaListeners(copyRerun, WHY.noProjectRerun)
-  const stop = !copyStop.ok ? copyStop : openWhy ? no(openWhy) : presence === 'ouvindo' ? ok('owner') : no(WHY.stopNoOwner)
-  return { resume, stop, rerun, copy: { resume: copyResume, stop: copyStop, rerun: copyRerun } }
-}
-
-// Regra do nó (C12, pela variante do estado): combina com `actions.rerun` (ou `copy.rerun`) na página.
-export function nodeRerun(node, { superseded, current, status }) {
-  if (superseded) return no(WHY.superseded(current))
-  if (node.round > 1) return no(WHY.nodeGap)
-  const v = variantOf(node.state)
-  if (v === 'done' || v === 'fail') return ok()
-  if (v === 'skipped') return no(WHY.nodeSkipped)
-  if (v === 'running') return status === 'rodando' ? no(WHY.nodeRunning) : ok()
-  return no(WHY.nodeEmpty)
 }
 
 // ── Artefatos da run (C10 A5/A6): lista fechada, só leitura, sem sair da pasta da run ──
@@ -443,16 +263,6 @@ function readArtifact(real, name) {
   } finally {
     fs.closeSync(fd)
   }
-}
-
-// Rotas de escrita da fila (C10 A1/A3): `/api/requests` e `/api/requests/:id/cancel`, só POST. A leitura
-// `/api/requests/:id` segue a regra GET-only.
-function requestRoute(pathname) {
-  const parts = pathname.split('/').slice(1)
-  if (parts[0] !== 'api' || parts[1] !== 'requests') return null
-  if (parts.length === 2) return { kind: 'create' }
-  if (parts.length === 4 && parts[3] === 'cancel') return { kind: 'cancel', id: parts[2] }
-  return null
 }
 
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
@@ -551,7 +361,7 @@ function inferHeader(dir) {
       const r = text.match(/(?:^|\\n|\n|")[ \t]*# Graph run ([A-Za-z0-9._-]{1,96})/)
       const d = text.match(/(?:^|\\n|\n)[ \t]*Run dir \(paper trail\): ([^\\"\n]{1,1024})/)
       // I8: `Resume: <rs>` (workflows/graph-eng.js buildShared) — id da retomada que originou este wf, se
-      // ele veio de uma (bin/graph-resume.mjs). Sem a linha, o wf foi disparado do zero.
+      // ele veio de uma retomada. Sem a linha, o wf foi disparado do zero.
       const rs = text.match(/(?:^|\\n|\n)[ \t]*Resume: (rs-\d{8}-\d{6}(?:-\d+)?)/)
       return {
         runId: r ? r[1] : undefined,
@@ -588,45 +398,12 @@ function planGoal(dir) {
 // também o wf superado de uma run retomada). `scan()` devolve só a lista. O cache guarda o que depende só
 // do journal. `configPath` é de onde sai `stallMinutes` (C6): lido a cada scan, tolerante como o resto da
 // config, para o modal de engrenagem valer na hora. `organizePath` (C1) é a organização da lista; sem ele,
-// a lista sai sem organização. `stateDir` (C1) é de onde saem a fila de pedidos e os sinais de vida (C2,
-// C3); sem ele, a lista sai sem pedidos e sem ouvinte, e o `computeStop` roda sem presença da dona.
+// a lista sai sem organização. `stateDir` é de onde sai o registro de runs v2 (bin/run-registry.mjs).
 export function createRunIndex(projectsDir, { configPath = defaultConfigPath(), organizePath = null, graphRunsHome = null, home = os.homedir(), stateDir = null } = {}) {
   const runsHome = graphRunsHome || path.join(home, '.claude', 'graph-runs')
   const cache = new Map() // dir → { sig, head | null, info? }
   const projects = new Map() // dir → nome do projeto (fixo depois de achado pelo cwd)
   let lastCleanup = -Infinity
-
-  // Fila e sinais de vida, lidos uma vez por scan (C11). Pedido vencido vira `falhou` aqui (C2, "o
-  // servidor, na leitura"), e a limpeza roda no máximo 1 vez por minuto. Tolerante: E/S ruim vira vazio.
-  function loadState(now) {
-    if (!stateDir) return { listeners: [], requests: [] }
-    try {
-      reapExpired(stateDir, now)
-    } catch {
-      /* corrida com um accept/done concorrente: fica para o próximo scan */
-    }
-    if (now - lastCleanup >= CLEANUP_EVERY_MS) {
-      lastCleanup = now
-      try {
-        cleanupState(stateDir, now)
-      } catch {
-        /* limpeza é melhor esforço */
-      }
-    }
-    let listeners = []
-    let requests = []
-    try {
-      listeners = readListeners(stateDir, now)
-    } catch {
-      /* pasta ilegível: ninguém ouvindo */
-    }
-    try {
-      requests = listRequests(stateDir)
-    } catch {
-      /* fila ilegível: nenhum pedido */
-    }
-    return { listeners, requests }
-  }
 
   // Parte leve, lida de todo wf (é o que dá a key): graph-eng? + cabeçalho do prompt.
   function headOf(c) {
@@ -679,12 +456,11 @@ export function createRunIndex(projectsDir, { configPath = defaultConfigPath(), 
     // Só `stallMinutes` importa aqui; os demais campos (effort/ceiling/…) não afetam a lista.
     let stallMinutes = 5
     try {
-      stallMinutes = resolveConfig({ stored: readConfig(configPath).stored }).config.stallMinutes
+      stallMinutes = readConfig(configPath).operational.stallMinutes
     } catch {
       /* config ilegível: mantém o padrão, como o resto da leitura de config */
     }
     const { org, warnings: orgWarnings } = loadOrg()
-    const { listeners, requests } = loadState(now)
     const keep = new Set([...org.pinned, ...Object.keys(org.placement)])
     const all = listAllWfDirs(projectsDir).sort((a, b) => b.mtime - a.mtime)
 
@@ -722,18 +498,13 @@ export function createRunIndex(projectsDir, { configPath = defaultConfigPath(), 
         const agents = info.terminated ? 0 : agentActivity(c.dir)
         const last = Math.max(head.journalMtime, agents)
         if (!projects.has(c.dir)) projects.set(c.dir, projectOf(projectsDir, c.dir))
-        // Dona da execução (C3): a sessão sai do caminho do wf; sem a forma <slug>/<sessão uuid>/…, `nunca`.
-        const own = ownerPathInfo(c.dir)
-        const ownerSession = own ? own.session : null
-        const presence = ownerSession ? ownerPresence(listeners, ownerSession, now) : 'nunca'
-        const ownerListening = presence === 'ouvindo'
-        const ownerGone = presence === 'encerrada'
-        // C6: a mesma regra e o mesmo motivo do `buildModel` (bin/graph-watch.mjs), sem janela fixa —
-        // `openAgentIds`/`planOnly` vêm cacheados (dependem só do journal); `computeStop` é recalculado
-        // a cada scan porque depende de `now`, da presença da dona e da cauda dos agentes ainda abertos.
-        const stop = computeStop({ runDir: c.dir, openAgentIds: info.openAgentIds, terminated: info.terminated, planOnly: info.planOnly, now, stallMinutes, ownerListening, ownerGone })
+        // A mesma regra e o mesmo motivo do `buildModel` (bin/graph-watch.mjs): `openAgentIds`/`planOnly` vêm
+        // cacheados (dependem só do journal); `computeStop` é recalculado a cada scan porque depende de `now`
+        // e da cauda dos agentes ainda abertos.
+        const stop = computeStop({ runDir: c.dir, openAgentIds: info.openAgentIds, terminated: info.terminated, planOnly: info.planOnly, now, stallMinutes })
         const status = info.terminated || info.planOnly ? 'terminado' : stop ? 'parada?' : 'rodando'
         entries.push({
+          generation: 'legacy',
           wf: c.wf,
           project: projects.get(c.dir),
           status,
@@ -755,10 +526,6 @@ export function createRunIndex(projectsDir, { configPath = defaultConfigPath(), 
           slug,
           runId,
           runDirRaw: head.runDirRaw || null,
-          ownerSession,
-          presence,
-          ownerListening,
-          ownerGone,
           stallMinutes,
         })
       }
@@ -772,6 +539,7 @@ export function createRunIndex(projectsDir, { configPath = defaultConfigPath(), 
       const runDirRaw = rep.runDirRaw || (byNew.find((e) => e.runDirRaw) || {}).runDirRaw || null
       const where = runDirRaw ? resolveRunDir(runDirRaw, runId, { projectsDir, graphRunsHome: runsHome, home }) : null
       const run = {
+        generation: 'legacy',
         ...rep,
         key,
         runId,
@@ -784,25 +552,40 @@ export function createRunIndex(projectsDir, { configPath = defaultConfigPath(), 
         runDirRaw,
         entries,
       }
-      // Pedidos da key (C2/C11): os mais novos primeiro; o aberto é no máximo 1, medido contra a execução
-      // atual (o representante). `listening` = há ouvinte vivo no projeto da execução atual (C12).
-      const reqs = requests.filter((r) => r.runKey === key).reverse()
-      const openReq = reqs.find((r) => isOpenForRunKey(r, key, run.wf, now)) || null
-      const live = listeners.filter((l) => l.live && l.project === rep.slug)
-      run.reqs = reqs
-      run.openReq = openReq
-      run.pending = openReq ? openReq.type : null
-      run.listening = projectListening(listeners, rep.slug)
-      run.listenCount = live.length
-      // O sinal SSE de cada wf da key muda quando muda um pedido, o ouvinte ou a execução atual (C11).
-      const extra = JSON.stringify([run.wf, reqs.slice(0, 5).map((r) => [r.id, r.state, r.updatedAt]), run.listening, rep.presence])
-      for (const e of entries) e.sig = `${e.sig}|${extra}`
       runs.push(run)
       for (const e of entries) byWf.set(e.wf, { entry: e, run })
     }
+
+    // Registry v2 é apenas uma pista local de descoberta; a projeção relê e valida cada identidade sem
+    // adquirir lease, recuperar journal ou aceitar caminhos vindos do browser.
+    const registry = stateDir ? await readRunRegistry({ stateDir }) : { entries: [], warnings: [] }
+    const registryWarnings = registry.warnings.map((w) => `Registry v2: ${w.code || 'aviso'} (entrada indisponível).`)
+    for (const entry of registry.entries) {
+      const projected = await readRunV2(entry)
+      if (!projected.run) {
+        for (const w of projected.warnings || []) registryWarnings.push(`Run v2: ${w.code || 'aviso'} (projeção indisponível).`)
+        continue
+      }
+      const v2 = projectV2Summary(projected.run)
+      const selector = `v2-${projected.run.key}`
+      const timestamps = (projected.run.events || []).map((event) => Date.parse(event.at)).filter(Number.isFinite)
+      const registeredAt = Date.parse(entry.registeredAt)
+      const mtime = timestamps.length ? timestamps.reduce((max, value) => Math.max(max, value), -Infinity) : Number.isFinite(registeredAt) ? registeredAt : now
+      const warnings = [...new Set((projected.run.warnings || []).map((w) => safeDisplay(w.code, 40) || 'aviso'))].map((code) => `Aviso v2 (${code}); detalhes internos omitidos.`)
+      const summary = {
+        generation: 'v2', key: selector, wf: selector, wfs: [selector], runId: projected.run.runId, sig: JSON.stringify(projected.signatures),
+        project: path.basename(projected.run.cwd), status: statusLabel(projected.run.status), stop: { reason: projected.run.statusReason, text: stopText(projected.run.status) },
+        planOnly: false, goal: safeDisplay(projected.run.task, 240), done: 0, total: 0, round: v2.planVersion || '—',
+        mtime, nodes: [], pinned: false, group: null, archived: false, runDir: null,
+        host: safeDisplay(projected.run.host, 80) || 'desconhecido', _v2Receipts: v2.receipts,
+        v2: { ...v2, receipts: undefined, receiptCount: v2.receipts.length, warnings },
+      }
+      runs.push(summary)
+      byWf.set(selector, { entry: summary, run: summary })
+    }
     const rank = (r) => (r.status === 'rodando' ? 0 : 1)
     runs.sort((a, b) => rank(a) - rank(b) || b.mtime - a.mtime)
-    return { runs, org, warnings: [...orgWarnings, ...dupWarnings], dupWarnings, latest, byWf, listeners, requests }
+    return { runs, org, warnings: [...orgWarnings, ...dupWarnings, ...registryWarnings], dupWarnings, latest, byWf }
   }
 
   async function scan(now = Date.now()) {
@@ -812,9 +595,184 @@ export function createRunIndex(projectsDir, { configPath = defaultConfigPath(), 
   return { scan, scanAll }
 }
 
+const FEEDBACK_HISTORY_LIMIT = 10
+const STATUS_LABELS = { done: 'concluída', blocked: 'bloqueada', needs_clarification: 'precisa de esclarecimento', plan_only: 'plano concluído' }
+const REPAIR_STAGES = ['design-fix-intent', 'critic-fix-complete']
+
+function statusLabel(status) { return Object.hasOwn(STATUS_LABELS, status) ? STATUS_LABELS[status] : 'desconhecida' }
+
+function stopText(status) {
+  if (Object.hasOwn(STATUS_LABELS, status)) return `Execução ${statusLabel(status)}; o status veio do evento run.finished.`
+  return 'O status final desta execução ainda não está disponível.'
+}
+
+function projectV2Summary(run) {
+  const events = Array.isArray(run.events) ? run.events : []
+  const versions = [run.state?.planVersion, ...events.map((event) => event.planVersion)].filter((n) => Number.isSafeInteger(n) && n > 0)
+  // Reparos e replanos vêm só dos control.transition já projetados por allowlist (run-view-v2).
+  const transitions = events.filter((event) => event.type === 'control.transition' && event.payload && typeof event.payload === 'object')
+  const hasTransitions = transitions.length > 0
+  const repairs = transitions.filter((event) => REPAIR_STAGES.includes(event.payload.stage)).length
+  const replans = transitions.filter((event) => event.payload.stage === 'plan-approved' && Number.isSafeInteger(event.payload.previousPlanVersion)).length
+  const feedbackHistory = events
+    .filter((event) => event.feedback || event.payload?.feedback)
+    .slice(-FEEDBACK_HISTORY_LIMIT)
+    .map((event) => {
+      const item = event.feedback || event.payload.feedback
+      return { seq: event.seq, kind: item.kind ?? null, reason: item.reason ?? null, severity: item.severity ?? null, affectedNodes: item.affectedNodes ?? null }
+    })
+  // Só IDs de seleção e contagem por papel; o summary dos registros nunca sai daqui.
+  const memoryEvents = events.filter((event) => event.type === 'memory.selected')
+  const memoryByRole = new Map()
+  for (const event of memoryEvents) {
+    const role = typeof event.payload?.role === 'string' ? event.payload.role : 'desconhecido'
+    memoryByRole.set(role, (memoryByRole.get(role) || 0) + 1)
+  }
+  const memorySelections = {
+    total: memoryEvents.length,
+    byRole: [...memoryByRole].map(([role, count]) => ({ role, count })),
+    selectionIds: memoryEvents.map((event) => event.payload?.selectionId).filter((id) => typeof id === 'string'),
+    // R-E9c: seleções reaproveitadas na retomada (reused: true).
+    reused: memoryEvents.filter((event) => event.payload?.reused === true).length,
+  }
+  const feedbackEvent = [...events].reverse().find((event) => event.feedback || event.payload?.feedback)
+  const feedback = run.state?.feedback || feedbackEvent?.feedback || feedbackEvent?.payload?.feedback || null
+  const callsById = new Map()
+  const roleCounts = new Map()
+  const modelCounts = new Map()
+  const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }
+  const usageKnown = Object.fromEntries(Object.keys(usage).map((key) => [key, false]))
+  const times = []
+  const receipts = []
+  for (const event of events) {
+    if (Number.isFinite(Date.parse(event.at))) times.push(Date.parse(event.at))
+    const payload = event.payload || {}
+    const identity = typeof event.agentId === 'string' && event.agentId ? event.agentId : typeof event.key === 'string' && event.key ? event.key : null
+    if (identity && ['started', 'result', 'failed'].includes(event.type)) {
+      const call = callsById.get(identity) || { identity }
+      if (typeof payload.role === 'string') call.role = payload.role
+      for (const field of ['requestedModel', 'effectiveModel']) {
+        if (Object.hasOwn(payload, field)) {
+          call[`${field}Available`] = true
+          call[field] = typeof payload[field] === 'string' ? payload[field] : null
+        }
+      }
+      if (event.type === 'result' && payload.usage && typeof payload.usage === 'object') call.usage = payload.usage
+      callsById.set(identity, call)
+    }
+    if (payload.checkId) {
+      receipts.push({ seq: event.seq, checkId: payload.checkId || null, identity: payload.identity || null, valid: typeof payload.valid === 'boolean' ? payload.valid : null })
+    }
+  }
+  const calls = [...callsById.values()].filter((call) => typeof call.role === 'string')
+  for (const call of calls) {
+    roleCounts.set(call.role, (roleCounts.get(call.role) || 0) + 1)
+    for (const [kind, available, name] of [
+      ['solicitado', call.requestedModelAvailable, call.requestedModel],
+      ['efetivo', call.effectiveModelAvailable, call.effectiveModel],
+    ]) {
+      if (!available) continue
+      const label = `${call.role} · ${kind} · ${name || 'não informado'}`
+      modelCounts.set(label, (modelCounts.get(label) || 0) + 1)
+    }
+    const u = call.usage
+    if (!u) continue
+    const input = u.input_tokens ?? u.prompt_tokens
+    const output = u.output_tokens ?? u.completion_tokens
+    const total = u.total_tokens
+    const cacheRead = u.cache_read_input_tokens ?? u.cached_tokens
+    const cacheCreation = u.cache_creation_input_tokens
+    if (Number.isSafeInteger(input)) { usage.inputTokens += input; usageKnown.inputTokens = true }
+    if (Number.isSafeInteger(output)) { usage.outputTokens += output; usageKnown.outputTokens = true }
+    if (Number.isSafeInteger(total)) { usage.totalTokens += total; usageKnown.totalTokens = true }
+    if (Number.isSafeInteger(cacheRead)) { usage.cacheReadTokens += cacheRead; usageKnown.cacheReadTokens = true }
+    if (Number.isSafeInteger(cacheCreation)) { usage.cacheCreationTokens += cacheCreation; usageKnown.cacheCreationTokens = true }
+  }
+  const from = times.length ? times.reduce((min, value) => Math.min(min, value), Infinity) : null
+  const to = times.length ? times.reduce((max, value) => Math.max(max, value), -Infinity) : null
+  const observed = times.length ? { from, to, durationMs: to - from } : null
+  const modelFieldsAvailable = calls.some((call) => call.requestedModelAvailable || call.effectiveModelAvailable)
+  const usageFieldValue = {
+    inputTokens: (u) => u.input_tokens ?? u.prompt_tokens,
+    outputTokens: (u) => u.output_tokens ?? u.completion_tokens,
+    totalTokens: (u) => u.total_tokens,
+    cacheReadTokens: (u) => u.cache_read_input_tokens ?? u.cached_tokens,
+    cacheCreationTokens: (u) => u.cache_creation_input_tokens,
+  }
+  const usageFields = Object.fromEntries(Object.entries(usageFieldValue).map(([field, getValue]) => [field, {
+    observedCalls: calls.filter((call) => Number.isSafeInteger(getValue(call.usage || {}))).length,
+    totalCalls: calls.length,
+  }]))
+  const planVersions = [...new Set(versions)].sort((a, b) => a - b)
+  return {
+    planVersion: versions.length ? versions.reduce((max, value) => Math.max(max, value), 0) : null,
+    planVersions,
+    feedback,
+    repairs: hasTransitions ? repairs : null,
+    replans: hasTransitions ? replans : null,
+    feedbackHistory,
+    memorySelections,
+    terminalStatus: run.status ?? 'unknown',
+    terminalReason: run.statusReason ?? null,
+    callCount: calls.length,
+    roleCounts: [...roleCounts].map(([role, count]) => ({ role, count })),
+    modelCounts: [...modelCounts].map(([label, count]) => ({ label, count })),
+    observed,
+    usage: Object.values(usageKnown).some(Boolean)
+      ? {
+          ...Object.fromEntries(Object.keys(usage).map((key) => [key, usageKnown[key] ? usage[key] : null])),
+          coverage: usageFields,
+          callsWithUsage: calls.filter((call) => call.usage).length,
+          partial: Object.values(usageFields).some(({ observedCalls, totalCalls }) => observedCalls < totalCalls),
+        }
+      : null,
+    modelFieldsAvailable,
+    receipts,
+    preservation: null,
+    invalidation: null,
+    supportWarning: 'Os dados por nó e de preservação ainda não estão disponíveis para esta execução.',
+  }
+}
+
+function safeDisplay(value, max) {
+  return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, max) : ''
+}
+
+function publicV2Model(run) {
+  const v2 = run.v2
+  const receipts = run._v2Receipts || []
+  const feedback = v2.feedback
+  const feedbackText = feedback ? `Feedback ${feedback.kind || 'indisponível'}${feedback.reason ? `: ${feedback.reason}` : ''}${feedback.severity ? ` · gravidade ${feedback.severity}` : ''}${feedback.affectedNodes?.length ? ` · nós ${feedback.affectedNodes.join(', ')}` : ''}${feedback.evidenceIds?.length ? ` · evidências ${feedback.evidenceIds.join(', ')}` : ''}` : 'Feedback: indisponível'
+  const callText = v2.callCount ? `Chamadas observadas: ${v2.roleCounts.map(({ role, count }) => `${role} ${count}`).join(', ')}` : 'Chamadas por papel/modelo: indisponíveis'
+  const usageText = v2.usage ? `Usage ${v2.usage.partial ? 'parcial' : 'observado'}: ${v2.usage.inputTokens ?? 'indisponível'} entrada · ${v2.usage.outputTokens ?? 'indisponível'} saída · ${v2.usage.totalTokens ?? 'indisponível'} total · cache lido ${v2.usage.cacheReadTokens ?? 'indisponível'} · criado ${v2.usage.cacheCreationTokens ?? 'indisponível'}` : 'Usage: indisponível'
+  const modelsText = v2.modelFieldsAvailable
+    ? v2.modelCounts.map((item) => `${item.label} (${item.count})`).join('; ')
+    : 'Modelo solicitado/efetivo: indisponível'
+  const v2Summary = [
+    `Host ${run.host}`,
+    `Plan version atual ${v2.planVersion ?? 'indisponível'} · histórico ${v2.planVersions.length ? v2.planVersions.join(', ') : 'indisponível'}`,
+    modelsText,
+    callText,
+    v2.observed ? `Tempo observado ${Math.round(v2.observed.durationMs / 1000)} s` : 'Tempo observado: indisponível',
+    usageText,
+    v2.repairs === null ? 'Reparos e replanejamentos ainda não estão disponíveis para esta execução' : `Reparos ${v2.repairs} · Replanejamentos ${v2.replans}`,
+    feedbackText,
+    receipts.length ? `Checks/receipts observados: ${receipts.length}` : 'Checks/receipts: indisponíveis',
+    'Dados de preservação e invalidação indisponíveis para esta execução',
+  ].join(' · ')
+  return {
+    generation: 'v2', key: run.key, wf: run.wf, current: run.wf, runId: run.runId, runKey: run.key,
+    status: statusLabel(v2.terminalStatus), statusReason: v2.terminalReason ?? 'terminal_contract_unsupported', stop: run.stop, planOnly: false,
+    project: run.project, goal: [run.goal, v2Summary].filter(Boolean).join(' · '), round: v2.planVersion ?? '—',
+    nodes: [], warns: [...run.v2.warnings, v2.supportWarning], spent: undefined,
+    v2: { ...v2, receipts },
+    runDir: null,
+  }
+}
+
 // RunResumo público: os campos internos (`dir`, `sig`, o cabeçalho, o caminho cru e as execuções) ficam
 // no servidor.
-const publicRun = ({ dir, sig, mode, economy, effort, ceiling, slug, runDirRaw, entries, ownerSession, presence, ownerListening, ownerGone, stallMinutes, reqs, openReq, listenCount, ...r }) => r
+const publicRun = ({ dir, sig, mode, economy, effort, ceiling, slug, runDirRaw, entries, stallMinutes, _v2Receipts, ...r }) => r
 
 // ── Servidor ──
 
@@ -859,9 +817,8 @@ function readBody(req) {
 
 // Opções (C1): `configPath` (config.json), `stateDir` (padrão: a pasta do configPath explícito, ou
 // defaultStateDir()), `organizePath` (padrão `<stateDir>/organize.json`), `graphRunsHome` (o graph-runs
-// global, padrão ~/.claude/graph-runs; só a contenção do apagar o usa), `now` (relógio) e `canDelete(key)
-// → motivo | null` (o gancho que o I5 liga à fila de pedidos: um pedido aberto impede o apagar; passado
-// pelo chamador, ele substitui essa regra).
+// global, padrão ~/.claude/graph-runs; só a contenção do apagar o usa), `now` (relógio) e `canDelete(key, run)`
+// → motivo | null (gancho opcional de quem chama para impedir o apagar).
 export function createPanelServer(opts = {}) {
   const { projectsDir, pollMs = 1000, heartbeatMs = 15000, home = os.homedir(), now = () => Date.now() } = opts
   const configPath = opts.configPath ?? defaultConfigPath()
@@ -869,9 +826,8 @@ export function createPanelServer(opts = {}) {
   const organizePath = opts.organizePath ?? path.join(stateDir, 'organize.json')
   const graphRunsHome = opts.graphRunsHome ?? path.join(home, '.claude', 'graph-runs')
   const index = createRunIndex(projectsDir, { configPath, organizePath, graphRunsHome, home, stateDir })
-  // C10: com um pedido aberto na key (pendente, aceito, ou resume/rerun feito esperando o wf novo), o
-  // apagar dá 409. O `run` vem do snapshot de quem chama.
-  const canDelete = opts.canDelete ?? ((key, run) => (run && run.openReq ? 'Espere o pedido em andamento terminar.' : null))
+  // Gancho do apagar (O8/O9): `canDelete(key, run)` → motivo | null. Sem fila de pedidos, nada o impede por padrão.
+  const canDelete = opts.canDelete ?? (() => null)
   const clients = new Set()
   let pollTimer = null
   let beatTimer = null
@@ -882,7 +838,7 @@ export function createPanelServer(opts = {}) {
   const listBody = (snap) => ({ runs: snap.runs.map(publicRun), org: publicOrg(snap.org, snap.warnings) })
   const listSig = (snap) =>
     JSON.stringify([
-      snap.runs.map((r) => [r.key, r.wf, r.status, r.done, r.total, r.goal, r.round, r.nodes, r.pinned, r.group, r.archived, r.planOnly, r.wfs, r.runDir, r.pending, r.listening]),
+      snap.runs.map((r) => [r.key, r.generation, r.wf, r.status, r.done, r.total, r.goal, r.round, r.nodes, r.pinned, r.group, r.archived, r.planOnly, r.wfs, r.runDir, r.v2]),
       publicOrg(snap.org, snap.warnings),
     ])
   // assinatura de cada wf das runs listadas (também dos superados, que a página ainda pode ter aberto)
@@ -1035,6 +991,15 @@ export function createPanelServer(opts = {}) {
   async function postOrg(req, res, host, route) {
     const body = await readJsonBody(req, res, host)
     if (body === null) return
+    const v2Target = typeof body.wf === 'string' && V2_RUN_RE.test(body.wf)
+      ? body.wf
+      : Array.isArray(body.wfs) ? body.wfs.find((wf) => typeof wf === 'string' && V2_RUN_RE.test(wf)) : null
+    if (v2Target) {
+      const reason = route.op === 'delete' || route.op === 'delete-finished'
+        ? 'Exclusão física de run v2 bloqueada nesta entrega: contenção e lease proprietário não são verificados pelo serviço de organização.'
+        : 'Organização de runs v2 indisponível: o formato atual de organize.json só suporta identidades wf legadas.'
+      return sendError(res, 409, reason)
+    }
     if (route.gid !== undefined && !GROUP_RE.test(route.gid)) return sendError(res, 400, 'id de grupo inválido')
     const checked = validateOrgBody(route.op, body)
     if (!checked.ok) return send(res, 400, { error: 'pedido de organização inválido', fields: checked.errors })
@@ -1062,8 +1027,8 @@ export function createPanelServer(opts = {}) {
     return sendOrgResult(res, snap, r)
   }
 
-  // O8: nome digitado idêntico ao `name` (sem trim nem caixa); rodando → 409; pedido aberto → 409 (gancho
-  // do I5); pasta fora da contenção → 409 sem remover nada; a pasta sai antes de gravar a lista.
+  // O8: nome digitado idêntico ao `name` (sem trim nem caixa); rodando → 409; gancho `canDelete` → 409;
+  // pasta fora da contenção → 409 sem remover nada; a pasta sai antes de gravar a lista.
   async function deleteOne(res, snap, run, v) {
     if (v.confirm !== run.name) return send(res, 400, { error: 'pedido de organização inválido', fields: { confirm: 'digite o nome da run exatamente como aparece' } })
     if (run.status === 'rodando') return sendError(res, 409, 'Pare a run antes de apagar.')
@@ -1134,9 +1099,7 @@ export function createPanelServer(opts = {}) {
     return sendOrgResult(res, snap, r, { deleted: keys, failed })
   }
 
-  // ── Pedidos, ouvinte e artefatos (C10 A1-A6, C11, C12) ──
-
-  // O Modelo da execução, com o relógio, o limiar e a presença da dona que a lista usou (C6).
+  // ── Modelo da execução (com o relógio e o limiar que a lista usou, C6) e artefatos (A5/A6) ──
   const modelOf = (entry) =>
     buildModel({
       runDir: entry.dir,
@@ -1146,173 +1109,7 @@ export function createPanelServer(opts = {}) {
       ceiling: entry.ceiling,
       now: now(),
       stallMinutes: entry.stallMinutes,
-      ownerListening: entry.ownerListening,
-      ownerGone: entry.ownerGone,
     })
-
-  // `actions` do Modelo (C11/C12) para o wf `entry`, sempre medido contra a execução atual da key.
-  function actionsFor(entry, run) {
-    const a = runActions({
-      wf: entry.wf,
-      current: run.wf,
-      status: run.status,
-      planOnly: run.planOnly,
-      stopReason: run.stop ? run.stop.reason : null,
-      hasRunDir: whereOf(run).ok,
-      open: run.openReq,
-      presence: run.presence,
-      listenProject: run.listening,
-    })
-    const listening = { project: run.listening, owner: run.presence === 'ouvindo', ownerPresence: run.presence, sessions: run.listenCount }
-    return { listening, open: run.openReq, ...a }
-  }
-
-  // A1: o cliente manda só { type, wf, node?, dependents? }; o resto sai do índice e do Modelo da execução
-  // atual. Ordem: travas → 400 fields → 404 run → 409 superada → 404 nó → 409 C12 → 500.
-  async function postRequest(req, res, host) {
-    const body = await readJsonBody(req, res, host)
-    if (body === null) return
-    const checked = validateRequestBody(body)
-    if (!checked.ok) return send(res, 400, { error: 'pedido inválido', fields: checked.errors })
-    const v = checked.value
-    const snap = await index.scanAll(now())
-    const hit = snap.byWf.get(v.wf)
-    if (!hit) return sendError(res, 404, `run ${v.wf} não encontrada`)
-    const { run, entry } = hit
-    if (run.wf !== v.wf) return sendError(res, 409, WHY.superseded(run.wf))
-    let model
-    try {
-      model = await modelOf(entry)
-    } catch (e) {
-      if (e instanceof GraphWatchError) return sendError(res, 404, e.message)
-      throw e
-    }
-    let node = null
-    if (v.type === 'rerun-node') {
-      node = model.nodes.find((n) => n.id === v.node)
-      if (!node) return sendError(res, 404, `nó ${v.node} não existe em ${v.wf}`)
-    }
-    const actions = actionsFor(entry, run)
-    const pode = v.type === 'resume' ? actions.resume : v.type === 'stop' ? actions.stop : actions.rerun
-    if (!pode.ok) return sendError(res, 409, pode.why)
-    if (node) {
-      const nr = nodeRerun(node, { superseded: false, current: run.wf, status: run.status })
-      if (!nr.ok) return sendError(res, 409, nr.why)
-    }
-    const where = whereOf(run)
-    const own = ownerPathInfo(entry.dir)
-    // Daqui até gravar não há `await`: a releitura da fila fecha a corrida de dois cliques no mesmo servidor.
-    let fresh = []
-    try {
-      fresh = listRequests(stateDir)
-    } catch {
-      /* fila ilegível: a gravação abaixo diz se o disco responde */
-    }
-    if (fresh.some((r) => isOpenForRunKey(r, run.key, run.wf, now()))) return sendError(res, 409, WHY.raced)
-    let created
-    try {
-      created = createRequest(
-        stateDir,
-        {
-          type: v.type,
-          wf: run.wf,
-          node: node ? node.id : null,
-          dependents: !!v.dependents,
-          dependentsList: node && v.dependents ? dependentsOf(model.nodes, node.id) : [],
-          runKey: run.key,
-          runId: run.runId,
-          project: run.slug,
-          ownerSession: own ? own.session : null,
-          runDir: where.ok ? where.real : null,
-          route: pode.route,
-        },
-        now(),
-      )
-    } catch (e) {
-      return sendError(res, 500, `não consegui gravar o pedido: ${e.message}`)
-    }
-    tick() // a página e as outras abas veem o pedido na hora
-    return send(res, 202, { request: created })
-  }
-
-  // A2: leitura do pedido; o vencido vira `falhou` antes (C2).
-  function getRequest(res, id) {
-    if (!REQ_RE.test(id)) return sendError(res, 400, 'id de pedido inválido')
-    try {
-      reapExpired(stateDir, now())
-    } catch {
-      /* corrida com a sessão: a leitura abaixo mostra o que estiver gravado */
-    }
-    const request = readRequest(stateDir, id)
-    if (!request) return sendError(res, 404, 'pedido não encontrado')
-    return send(res, 200, { request })
-  }
-
-  // A3: cancelar um pendente (o `.claim` do painel tira o pedido da corrida do accept) ou descartar um aceito
-  // há ≥ 2 min. O `.final` O_EXCL garante que só uma gravação final vence (C2).
-  async function cancelRequest(req, res, host, id) {
-    const body = await readJsonBody(req, res, host)
-    if (body === null) return
-    if (!REQ_RE.test(id)) return sendError(res, 400, 'id de pedido inválido')
-    const extra = Object.keys(body)
-    if (extra.length) return send(res, 400, { error: 'pedido inválido', fields: Object.fromEntries(extra.map((k) => [k, 'campo desconhecido'])) })
-    const t = now()
-    try {
-      reapExpired(stateDir, t)
-    } catch {
-      /* segue com o que estiver gravado */
-    }
-    const cur = readRequest(stateDir, id)
-    if (!cur) return sendError(res, 404, 'pedido não encontrado')
-    const justAccepted = 'a sessão acabou de aceitar; dá para descartar depois de 2 min'
-    const closed = 'o pedido já foi encerrado'
-    try {
-      if (cur.state === 'pendente') {
-        const at = new Date(t).toISOString()
-        const dir = requestsDir(stateDir)
-        if (!createExclusive(path.join(dir, `${id}.claim`), { by: 'painel', pid: process.pid, at })) return sendError(res, 409, justAccepted)
-        if (!createExclusive(path.join(dir, `${id}.final`), { by: 'painel', state: 'falhou', at })) return sendError(res, 409, closed)
-        const base = readRequest(stateDir, id) || cur
-        const request = {
-          ...base,
-          state: 'falhou',
-          reason: 'cancelado no painel',
-          finishedAt: at,
-          updatedAt: at,
-          history: [...(base.history || []), { state: 'falhou', at, by: 'painel' }],
-        }
-        writeJsonAtomic(path.join(dir, `${id}.json`), request)
-        tick()
-        return send(res, 200, { request })
-      }
-      if (cur.state === 'aceito') {
-        if (!isAcceptedDiscardable(cur, t)) return sendError(res, 409, justAccepted)
-        const r = discardAccepted(stateDir, id, { reason: 'descartado no painel: a sessão não confirmou', now: t })
-        if (!r.ok) return sendError(res, 409, closed)
-        tick()
-        return send(res, 200, { request: r.req })
-      }
-    } catch (e) {
-      return sendError(res, 500, `não consegui gravar o pedido: ${e.message}`)
-    }
-    return sendError(res, 409, closed)
-  }
-
-  // A4: só os ouvintes vivos, com a sessão encurtada (a página usa `actions.listening` do Modelo).
-  function getListeners(res) {
-    let ls = []
-    try {
-      ls = readListeners(stateDir, now())
-    } catch {
-      /* ninguém ouvindo */
-    }
-    const ms = (iso) => {
-      const t = Date.parse(iso || '')
-      return Number.isNaN(t) ? null : t
-    }
-    const sessions = ls.filter((l) => l.live).map((l) => ({ session: String(l.session).slice(0, 8), project: l.project ?? null, wf: l.wf ?? null, beatAt: ms(l.beatAt), until: ms(l.listenUntil) }))
-    return send(res, 200, { sessions, staleMs: LISTEN_FRESH_MS })
-  }
 
   // A5/A6: a pasta sai da contenção `resolveRunDir` da run (vale para wf superado: é só leitura); o nome é o
   // segmento cru, precisa casar com ARTIFACT_RE e estar na listagem atual.
@@ -1369,12 +1166,6 @@ export function createPanelServer(opts = {}) {
       if (req.method === 'PUT') return putConfig(req, res, host)
       return sendError(res, 405, 'use GET ou PUT', { Allow: 'GET, PUT' })
     }
-    // tabela de escrita antes da regra GET-only (C10); OPTIONS continua 405
-    const rq = requestRoute(pathname)
-    if (rq) {
-      if (req.method !== 'POST') return sendError(res, 405, 'use POST', { Allow: 'POST' })
-      return rq.kind === 'create' ? postRequest(req, res, host) : cancelRequest(req, res, host, rq.id)
-    }
     const write = orgRoute(pathname)
     if (write) {
       if (req.method !== 'POST') return sendError(res, 405, 'use POST', { Allow: 'POST' })
@@ -1412,16 +1203,21 @@ export function createPanelServer(opts = {}) {
     if (parts.length === 2 && parts[1] === 'health') return send(res, 200, { app: 'graph-watch', version: 1, pid: process.pid })
     if (parts.length === 2 && parts[1] === 'events') return openEvents(req, res)
     if (parts.length === 2 && parts[1] === 'runs') return send(res, 200, listBody(await index.scanAll(now())))
-    if (parts.length === 2 && parts[1] === 'listeners') return getListeners(res)
-    if (parts.length === 3 && parts[1] === 'requests') return getRequest(res, parts[2])
 
     if (parts[1] === 'runs' && parts[3] === 'artifacts' && (parts.length === 4 || parts.length === 5)) {
+      if (V2_RUN_RE.test(parts[2])) return sendError(res, 404, 'artefatos v2 indisponíveis nesta entrega')
       if (!WF_RE.test(parts[2])) return sendError(res, 400, 'id de run inválido')
       return getArtifacts(res, parts[2], parts[4])
     }
 
     if (parts[1] === 'runs' && (parts.length === 3 || (parts.length === 5 && parts[3] === 'nodes'))) {
       const wf = parts[2]
+      if (V2_RUN_RE.test(wf)) {
+        const hit = (await index.scanAll(now())).byWf.get(wf)
+        if (!hit || hit.run.generation !== 'v2') return sendError(res, 404, `run ${wf} não encontrada`)
+        if (parts.length !== 3) return sendError(res, 404, 'detalhes de nós não existem nesta projeção v2')
+        return send(res, 200, publicV2Model(hit.run))
+      }
       if (!WF_RE.test(wf)) return sendError(res, 400, 'id de run inválido')
       if (parts.length === 5 && !NODE_RE.test(parts[4])) return sendError(res, 400, 'id de nó inválido')
       const hit = (await index.scanAll(now())).byWf.get(wf)
@@ -1435,18 +1231,16 @@ export function createPanelServer(opts = {}) {
         throw e
       }
       if (parts.length === 3) {
-        // status/stop/planOnly vêm do RunResumo (run.*): é o mesmo cálculo, com o stallMinutes da config e a
-        // presença da dona. Os campos do I5 (C11) medem as ações contra a execução atual da key.
+        // status/stop/planOnly vêm do RunResumo (run.*): é o mesmo cálculo da lista, com o stallMinutes da config.
         const cur = hit.run
         const superseded = run.wf !== cur.wf
-        const nodes = model.nodes.map((n) => ({ ...n, rerun: nodeRerun(n, { superseded, current: cur.wf, status: run.status }), dependents: dependentsOf(model.nodes, n.id) }))
         return send(res, 200, {
           ...model,
-          nodes,
           status: run.status,
           stop: run.stop,
           planOnly: run.planOnly,
           project: run.project,
+          generation: run.generation || 'legacy',
           goal: run.goal,
           mode: run.mode,
           economy: run.economy,
@@ -1456,8 +1250,6 @@ export function createPanelServer(opts = {}) {
           current: cur.wf,
           supersededBy: superseded ? cur.wf : null,
           runDir: cur.runDir,
-          requests: cur.reqs.slice(0, REQUESTS_IN_MODEL),
-          actions: actionsFor(run, cur),
         })
       }
       const id = parts[4]

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "graph-eng",
+  "version": "2.0.0",
+  "description": "Planeja e executa tarefas complexas como grafos pequenos com checks verificáveis e evidências locais.",
+  "author": {
+    "name": "Douglas Oliveira"
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Graph Eng",
+        "shortDescription": "Grafo com checks confiáveis",
+        "longDescription": "Planeje ou implemente tarefas complexas com esforço controlado, checks confiáveis, evidências locais e painel desacoplado.",
+        "developerName": "Douglas Oliveira",
+        "category": "Developer tools",
+        "capabilities": [
+          "Interactive"
+        ],
+        "defaultPrompt": "Ajude a planejar ou executar esta tarefa com o graph-eng."
+      }
+    }
+  }
+}

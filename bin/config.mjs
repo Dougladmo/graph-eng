@@ -1,162 +1,145 @@
-// Config do graph-eng em ~/.claude/graph-eng/config.json: leitura tolerante, validação campo a campo,
-// precedência flag > arquivo > padrão e gravação atômica (tmp + rename). Node puro, sem dependências.
-// Quem usa: o CLI bin/graph-config.mjs (a skill o roda antes de disparar o Workflow, que não tem acesso a
-// disco) e o painel (GET/PUT /api/config em bin/ui-server.mjs). A fórmula de alvos não é copiada aqui: vem
-// de bin/ui/agent-target.mjs. Contrato: .graph-runs/20260928-0213-fases-esforco-teto/D2.md §2-§5.
-
+// Configuração pública do graph-eng: somente effort. Campos operacionais ficam no envelope privado.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 
-import { DEFAULTS, EFFORTS_GRAPH, CEILING_MAX, floorOf, validateCeiling, targetTable, targetRange } from './ui/agent-target.mjs'
-
-export const CONFIG_KEYS = ['effort', 'ceiling', 'economy', 'planGate', 'maxRounds', 'maxRepairs', 'stallMinutes'] // ordem de gravação
-export const ECONOMIES = ['lean', 'balanced', 'max']
+export const CONFIG_KEYS = ['effort']
+export const LIMITS = { effort: ['low', 'medium', 'max'] }
+export const DEFAULTS = { effort: 'medium' }
 export const MAX_BODY = 4096
-export const LIMITS = {
-  ceiling: { min: floorOf(), max: CEILING_MAX },
-  maxRounds: { min: 1, max: 5 },
-  maxRepairs: { min: 1, max: 3 },
-  stallMinutes: { min: 1, max: 60 },
-  effort: EFFORTS_GRAPH,
-  economy: ECONOMIES,
-}
-
-// Padrão de campos que não vêm da tabela de alvos (bin/ui/agent-target.mjs, que tem teste de
-// paridade com o DEFAULTS_TARGET do workflow e não pode ganhar um campo à toa). Ver spec
-// docs/specs/2026-09-28-acoes-no-painel.md C6 (D1 §3.6).
-export const PANEL_DEFAULTS = { stallMinutes: 5 }
+const OPERATIONAL_DEFAULTS = { stallMinutes: 5 }
+const LEGACY_KEYS = new Set(['ceiling', 'economy', 'planGate', 'maxRounds', 'maxRepairs', 'width', 'models', 'model', 'targets', 'stallMinutes'])
+const EFFORTS = LIMITS.effort
 
 export function defaultConfigPath(env = process.env, home = os.homedir()) {
   return env.GRAPH_ENG_CONFIG || path.join(home, '.claude', 'graph-eng', 'config.json')
 }
 
-// `stateDir` (spec C1): pasta com config.json, organize.json, requests/ e listeners/. Fica ao lado do
-// config.json por padrão, e `GRAPH_ENG_STATE_DIR` sobrepõe os dois (para os testes, que nunca tocam
-// `~/.claude`). bin/requests.mjs a reexporta; o servidor a importa daqui, sem depender de requests.mjs.
 export function defaultStateDir(env = process.env, home = os.homedir()) {
   return env.GRAPH_ENG_STATE_DIR || path.dirname(defaultConfigPath(env, home))
 }
 
-export const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+export const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
 
-function intIn(v, { min, max }) {
-  return typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max
-}
-
-// Uma mensagem por campo (pt-BR, mostrada como vem no modal e no CLI), ou null se o valor vale.
-const CHECK = {
-  effort: (v) => (EFFORTS_GRAPH.includes(v) ? null : 'use manual, auto, low, medium, high ou max'),
-  ceiling: (v, mode) => {
-    // sem coerção: "24" (string) e true não passam, ao contrário do validateCeiling, que aceita string
-    if (typeof v !== 'number' || !Number.isInteger(v)) return 'use um número inteiro'
-    const r = validateCeiling(v, mode)
-    return r.ok ? null : r.error
-  },
-  economy: (v) => (ECONOMIES.includes(v) ? null : 'use lean, balanced ou max'),
-  planGate: (v) => (typeof v === 'boolean' ? null : 'use true ou false'),
-  maxRounds: (v) => (intIn(v, LIMITS.maxRounds) ? null : 'de 1 a 5'),
-  maxRepairs: (v) => (intIn(v, LIMITS.maxRepairs) ? null : 'de 1 a 3'),
-  stallMinutes: (v) => (intIn(v, LIMITS.stallMinutes) ? null : 'de 1 a 60'),
-}
-
-// Estrita. `mode` só muda o piso do teto (ausente ou 'auto' → 8, o maior; a config vale para todo modo).
-// → { ok, value: { chaves válidas, na ordem de CONFIG_KEYS }, errors: { [campo]: mensagem } }
-export function validateConfig(obj, { mode } = {}) {
+export function validateConfig(obj) {
   if (!isPlainObject(obj)) return { ok: false, value: {}, errors: { config: 'o corpo deve ser um objeto' } }
-  // pares [campo, mensagem] + Object.fromEntries: uma chave "__proto__" vinda do JSON vira propriedade
-  // própria do objeto de erros, em vez de trocar o protótipo dele
   const errs = []
-  for (const k of Object.keys(obj)) {
-    if (!Object.hasOwn(CHECK, k)) errs.push([k, 'campo desconhecido'])
+  for (const key of Object.keys(obj)) {
+    if (key !== 'effort') errs.push([key, 'campo desconhecido'])
+    else if (!EFFORTS.includes(obj[key])) errs.push([key, 'use low, medium ou max'])
   }
   const value = {}
-  for (const k of CONFIG_KEYS) {
-    if (!Object.hasOwn(obj, k) || obj[k] === undefined) continue
-    const e = CHECK[k](obj[k], mode)
-    if (e) errs.push([k, e])
-    else value[k] = obj[k]
-  }
+  if (Object.hasOwn(obj, 'effort') && EFFORTS.includes(obj.effort)) value.effort = obj.effort
   return { ok: errs.length === 0, value, errors: Object.fromEntries(errs) }
 }
 
-// Nunca lança por conteúdo (arquivo editado à mão não derruba a skill nem o painel): o campo inválido fica
-// fora de `stored` e vira aviso. Só erro de E/S que não seja ENOENT sobe.
+function operationalFrom(obj) {
+  const n = obj?.operational?.stallMinutes ?? obj?.stallMinutes
+  return { stallMinutes: Number.isInteger(n) && n >= 1 && n <= 60 ? n : OPERATIONAL_DEFAULTS.stallMinutes }
+}
+
+// Leitura é tolerante e nunca grava. `raw` serve apenas para a gravação explícita fazer backup exato.
 export function readConfig(file) {
-  let text
-  try {
-    text = fs.readFileSync(file, 'utf8')
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return { stored: {}, warnings: [] }
-    throw e
+  let raw
+  try { raw = fs.readFileSync(file) } catch (error) {
+    if (error?.code === 'ENOENT') return { stored: {}, operational: { ...OPERATIONAL_DEFAULTS }, warnings: [], raw: null, needsBackup: false }
+    throw error
   }
+  const text = raw.toString('utf8')
   let parsed
-  try {
-    parsed = JSON.parse(text)
-  } catch (e) {
-    return { stored: {}, warnings: [`config.json ilegível: ${e.message}; usando padrões`] }
+  try { parsed = JSON.parse(text) } catch (error) {
+    return { stored: {}, operational: { ...OPERATIONAL_DEFAULTS }, warnings: [`config.json ilegível: ${error.message}; usando padrões`], raw, needsBackup: true }
   }
-  if (!isPlainObject(parsed)) return { stored: {}, warnings: ['config.json ilegível: não é um objeto JSON; usando padrões'] }
-  const { value, errors } = validateConfig(parsed)
-  return { stored: value, warnings: Object.entries(errors).map(([k, msg]) => `${k}: ${msg} (ignorado)`) }
+  if (!isPlainObject(parsed)) return { stored: {}, operational: { ...OPERATIONAL_DEFAULTS }, warnings: ['config.json ilegível: não é um objeto JSON; usando padrões'], raw, needsBackup: true }
+
+  const isEnvelope = Object.hasOwn(parsed, 'schemaVersion') || Object.hasOwn(parsed, 'operational')
+  if (isEnvelope && parsed.schemaVersion !== 2) {
+    return { stored: {}, operational: { ...OPERATIONAL_DEFAULTS }, warnings: [`schemaVersion desconhecida (${JSON.stringify(parsed.schemaVersion)}); usando padrões`], raw, needsBackup: true }
+  }
+  const input = isEnvelope ? { effort: parsed.effort } : parsed
+  const checked = validateConfig(input)
+  const stored = checked.value
+  const legacyEffort = parsed.effort !== undefined && !EFFORTS.includes(parsed.effort)
+  const warnings = Object.entries(checked.errors)
+    .filter(([key]) => !(key === 'effort' && legacyEffort) && key !== 'stallMinutes')
+    .map(([key, message]) => `${key}: ${message} (ignorado)`)
+  for (const key of Object.keys(parsed)) {
+    if (key === 'stallMinutes') continue
+    if (LEGACY_KEYS.has(key)) warnings.push(`${key}: opção legada ignorada`)
+    else if (isEnvelope && !['schemaVersion', 'effort', 'operational'].includes(key) && key !== 'stallMinutes') warnings.push(`${key}: campo desconhecido (ignorado)`)
+  }
+  if (legacyEffort) {
+    warnings.push(`effort: ${JSON.stringify(parsed.effort)} legado ou inválido; usando medium`)
+    stored.effort = 'medium'
+  }
+  return { stored, operational: operationalFrom(parsed), warnings, raw, needsBackup: !isEnvelope }
 }
 
 let seq = 0
-
-// `value` já validado. Grava num tmp do mesmo diretório e renomeia por cima: quem lê vê o arquivo antigo
-// ou o novo, nunca um pela metade; dois PUTs simultâneos → vence o último rename.
-export function writeConfig(file, value) {
-  const ordered = {}
-  for (const k of CONFIG_KEYS) if (value[k] !== undefined) ordered[k] = value[k]
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
-  const tmp = `${file}.tmp-${process.pid}-${++seq}`
+function backupOriginal(file, bytes) {
+  const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 12)
+  const backup = `${file}.v1-backup-${digest}`
   try {
-    fs.writeFileSync(tmp, JSON.stringify(ordered, null, 2) + '\n', { mode: 0o600, flag: 'wx' })
-    fs.renameSync(tmp, file)
-  } catch (e) {
-    try {
-      fs.unlinkSync(tmp)
-    } catch {
-      /* tmp nem chegou a existir */
-    }
-    throw e
+    fs.writeFileSync(backup, bytes, { mode: 0o600, flag: 'wx' })
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw new Error(`não consegui criar backup ${backup}: ${error.message}`)
+    let existing
+    try { existing = fs.readFileSync(backup) } catch (readError) { throw new Error(`não consegui conferir backup ${backup}: ${readError.message}`) }
+    if (!existing.equals(bytes)) throw new Error(`colisão no backup ${backup}; arquivo original preservado`)
   }
-  return ordered
+  return backup
 }
 
-// Campo a campo: flag > arquivo > padrão. `flags` já validadas (o CLI chama validateConfig antes).
+// Setter público estrito. Preserva operacional e migra bytes antigos somente na gravação explícita.
+export function writeConfig(file, value) {
+  const checked = validateConfig(value)
+  if (!checked.ok) throw new TypeError(`configuração inválida: ${Object.entries(checked.errors).map(([k, v]) => `${k}: ${v}`).join('; ')}`)
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+  const before = readConfig(file)
+  const original = before.raw
+  const operational = before.operational
+  if (original && before.needsBackup) backupOriginal(file, original)
+  const envelope = { schemaVersion: 2, effort: checked.value.effort ?? DEFAULTS.effort, operational }
+  const tmp = `${file}.tmp-${process.pid}-${++seq}`
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(envelope, null, 2) + '\n', { mode: 0o600, flag: 'wx' })
+    let current = null
+    try { current = fs.readFileSync(file) } catch (error) { if (error?.code !== 'ENOENT') throw error }
+    if ((original === null && current !== null) || (original !== null && (!current || !current.equals(original)))) {
+      throw new Error('config.json mudou durante a gravação; tente novamente')
+    }
+    fs.renameSync(tmp, file)
+  } catch (error) {
+    try { fs.unlinkSync(tmp) } catch { /* tmp pode não existir */ }
+    throw error
+  }
+  return { effort: envelope.effort }
+}
+
 export function resolveConfig({ flags = {}, stored = {} } = {}) {
   const config = {}
   const source = {}
-  for (const k of CONFIG_KEYS) {
-    if (flags[k] !== undefined) [config[k], source[k]] = [flags[k], 'flag']
-    else if (stored[k] !== undefined) [config[k], source[k]] = [stored[k], 'config']
-    else [config[k], source[k]] = [DEFAULTS[k] !== undefined ? DEFAULTS[k] : PANEL_DEFAULTS[k], 'default']
+  for (const key of CONFIG_KEYS) {
+    if (flags[key] !== undefined) [config[key], source[key]] = [flags[key], 'flag']
+    else if (stored[key] !== undefined) [config[key], source[key]] = [stored[key], 'config']
+    else [config[key], source[key]] = [DEFAULTS[key], 'default']
   }
   return { config, source, warnings: [] }
 }
 
-export function describeTargets(config, mode) {
-  return {
-    mode: mode || null,
-    floor: floorOf(mode),
-    targets: targetTable(config.ceiling, mode),
-    range: targetRange(config.ceiling, mode),
-    ask: config.effort === 'manual',
-  }
+/** @deprecated Alvos saíram da configuração pública. */
+export function describeTargets(_config, mode) {
+  return { mode: mode || null, targets: null, range: null, ask: false }
 }
 
-// Caminho para mostrar ao usuário, com o home trocado por ~ (não expõe o nome do usuário no painel).
 export function displayPath(file, home = os.homedir()) {
   const rel = path.relative(home, file)
   return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? path.join('~', rel) : file
 }
 
-// Corpo do GET /api/config e do PUT 200 (D2 §4.3). A tabela de alvos não vem daqui: o modal a calcula.
 export function publicConfig(file, { home = os.homedir() } = {}) {
   const { stored, warnings } = readConfig(file)
   const { config, source } = resolveConfig({ stored })
-  const defaults = {}
-  for (const k of CONFIG_KEYS) defaults[k] = DEFAULTS[k] !== undefined ? DEFAULTS[k] : PANEL_DEFAULTS[k]
-  return { config, source, defaults, limits: LIMITS, file: displayPath(file, home), warnings }
+  return { config, source, defaults: { ...DEFAULTS }, limits: { ...LIMITS }, file: displayPath(file, home), warnings }
 }

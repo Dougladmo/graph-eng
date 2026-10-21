@@ -10,16 +10,7 @@ import os from 'node:os'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { estimateAgents as estimateTarget, targetFor } from './ui/agent-target.mjs'
-import { defaultStateDir, ownerPathInfo, listRequests, isEligible, isPendingExpired, markSeen, requestEventLine, writeHeartbeat, readListeners, ownerPresence, HEARTBEAT_MS, hasTerminatedMarker, markTerminated } from './requests.mjs'
-
-const PLUGIN_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-function pluginVersion() {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version || null
-  } catch {
-    return null
-  }
-}
+import { defaultStateDir } from './config.mjs'
 
 // ── Erros ──
 export class GraphWatchError extends Error {
@@ -49,7 +40,6 @@ const STOP_PSEUDO_KINDS = new Set(['plan', 'critic', 'synth', 'design-review', '
 const STOP_REASON_TEXT = {
   orcamento: 'orçamento esgotado',
   interrompida: 'interrompida',
-  'sessao-encerrada': 'sessão encerrada',
 }
 
 function stopReasonText(reason, idleSec) {
@@ -155,14 +145,14 @@ export function classifyTail(tail) {
 
 // Avalia um agente aberto (started sem result/failed): parado?, motivo, idleSec. Sem `agent-<id>.jsonl`
 // (agente ainda não escreveu nada), usa o mtime do journal como aproximação (D1 §3.3 passo 3).
-function evalOpenAgent(runDir, agentId, journalMtimeMs, now, L, ownerGone, ownerListening) {
+function evalOpenAgent(runDir, agentId, journalMtimeMs, now, L) {
   const { mtimeMs, tail } = readAgentTail(runDir, agentId)
   const effectiveMtime = mtimeMs === null ? journalMtimeMs : mtimeMs
   const kind = classifyTail(tail)
   const idleSec = Math.max(0, Math.round((now - effectiveMtime) / 1000))
   const stopped = kind !== 'vivo' || idleSec > L
   if (!stopped) return { stopped, idleSec }
-  const reason = kind === 'orcamento' || kind === 'interrompida' ? kind : !ownerListening && ownerGone ? 'sessao-encerrada' : 'sem-atividade'
+  const reason = kind === 'orcamento' || kind === 'interrompida' ? kind : 'sem-atividade'
   return { stopped, idleSec, reason }
 }
 
@@ -175,11 +165,9 @@ export function computeStop({
   planOnly = false,
   now = Date.now(),
   stallMinutes = 5,
-  ownerListening = false,
-  ownerGone = false,
 } = {}) {
   if (terminated || planOnly) return null
-  const L = stallMinutes * 60 * (ownerListening ? 3 : 1)
+  const L = stallMinutes * 60
   let journalMtimeMs = now
   try {
     journalMtimeMs = fs.statSync(path.join(runDir, 'journal.jsonl')).mtimeMs
@@ -188,11 +176,11 @@ export function computeStop({
   }
 
   if (openAgentIds.length) {
-    const evals = openAgentIds.map((id) => evalOpenAgent(runDir, id, journalMtimeMs, now, L, ownerGone, ownerListening))
+    const evals = openAgentIds.map((id) => evalOpenAgent(runDir, id, journalMtimeMs, now, L))
     // Numa fase paralela, um agente ainda vivo basta para a run seguir viva (D1 §3.3 passo 5).
     if (evals.some((e) => !e.stopped)) return null
     const idleSec = Math.max(...evals.map((e) => e.idleSec))
-    const priority = ['orcamento', 'interrompida', 'sessao-encerrada', 'sem-atividade']
+    const priority = ['orcamento', 'interrompida', 'sem-atividade']
     const reason = priority.find((r) => evals.some((e) => e.reason === r)) || 'sem-atividade'
     return { reason, text: stopReasonText(reason, idleSec), idleSec }
   }
@@ -205,7 +193,7 @@ export function computeStop({
   const kind = classifyTail(tail)
   const stopped = (kind !== 'vivo' && idleSec > 60) || idleSec > L
   if (!stopped) return null
-  const reason = kind === 'orcamento' || kind === 'interrompida' ? kind : !ownerListening && ownerGone ? 'sessao-encerrada' : 'sem-atividade'
+  const reason = kind === 'orcamento' || kind === 'interrompida' ? kind : 'sem-atividade'
   return { reason, text: stopReasonText(reason, idleSec), idleSec }
 }
 
@@ -237,8 +225,8 @@ export function readJournalTolerant(journalPath) {
 }
 
 // ── Retomada (I8, spec C8/D2 §5.3.9 "loadResume"): leitura tolerante de <runDir>/resume/<rs>.json,
-// gravado por bin/graph-resume.mjs de forma atômica (tmp wx 0600 + rename). Usada pelo CLI e pelo
-// fallback de buildModel abaixo (`readWfPrefixInfo`), para não criar ciclo de import com graph-resume.mjs.
+// gravado pelo motor da run (resume/<rs>.json, na pasta da run retomada). Lido só para desenhar a run
+// retomada (nós prontos herdados); este módulo não escreve nada.
 export function loadResume(runDir, rs) {
   if (typeof runDir !== 'string' || !runDir || typeof rs !== 'string' || !/^rs-\d{8}-\d{6}(-\d+)?$/.test(rs)) return null
   try {
@@ -488,8 +476,6 @@ export async function buildModel(opts = {}) {
     ceiling,
     now = Date.now(),
     stallMinutes = 5,
-    ownerListening = false,
-    ownerGone = false,
   } = opts
   const journalPath = path.join(runDir, 'journal.jsonl')
   let stat
@@ -982,16 +968,16 @@ export async function buildModel(opts = {}) {
   const attemptLabels = [...byKey.values()].map((s) => s.label)
   const planOnly = attemptLabels.length > 0 && attemptLabels.every((l) => l === 'plan') && openAgentIds.length === 0
 
-  const stop = computeStop({ runDir, openAgentIds, terminated: synthDone, planOnly, now, stallMinutes, ownerListening, ownerGone })
+  const stop = computeStop({ runDir, openAgentIds, terminated: synthDone, planOnly, now, stallMinutes })
   const status = synthDone || planOnly ? 'terminado' : stop ? 'parada?' : 'rodando'
 
   // Nó parado (D1 §3.3 "Nó parado"): mesmo que a run siga viva por outro nó paralelo, o nó cujo
   // agente está parado ganha `n.stop`, com o mesmo motivo/idleSec do agente dele.
   if (!synthDone && !planOnly) {
-    const L = stallMinutes * 60 * (ownerListening ? 3 : 1)
+    const L = stallMinutes * 60
     for (const n of nodes) {
       if (!n.running || !n.running.agentId) continue
-      const ev = evalOpenAgent(runDir, n.running.agentId, stat.mtimeMs, now, L, ownerGone, ownerListening)
+      const ev = evalOpenAgent(runDir, n.running.agentId, stat.mtimeMs, now, L)
       if (ev.stopped) n.stop = { reason: ev.reason, text: stopReasonText(ev.reason, ev.idleSec), idleSec: ev.idleSec }
     }
   }
@@ -1629,92 +1615,7 @@ export async function runEventsMode(runDir, opts = {}) {
   let paradaEmitted = false
   let synthEmitted = false
 
-  // ── Sinal de vida e fila de pedidos (spec C1-C4). Só existem quando o caminho do wf tem a forma
-  // <slug>/<sessão>/subagents/workflows/<wf> (ownerPathInfo): um watcher sobre um --run-dir solto,
-  // como os testes de hoje, não grava listener nem entra em "listen" (C3).
-  const clock = () => (opts.now ? opts.now() : Date.now())
-  const stateDir = opts.stateDir || defaultStateDir()
-  const owner = ownerPathInfo(runDir)
-  const startedAtIso = new Date(clock()).toISOString()
-  let exitedHeartbeat = false
-  // 'run' até o TERMINADO; vira 'listen' só na fase de escuta pós-TERMINADO (P2, C3). --run
-  // (explicitRun) só escolhe a run a acompanhar num rearme e não tem relação com esta fase.
-  let heartbeatMode = 'run'
-  let listenUntilIso = null
-
-  function beat(exitedAt = null) {
-    if (!owner) return
-    try {
-      writeHeartbeat(stateDir, {
-        session: owner.session,
-        project: owner.project,
-        cwd: opts.cwd ?? process.cwd(),
-        pid: process.pid,
-        wf: owner.wf,
-        runId: opts.runId ?? null,
-        mode: heartbeatMode,
-        startedAt: startedAtIso,
-        beatAt: new Date(clock()).toISOString(),
-        listenUntil: listenUntilIso,
-        exitedAt,
-        plugin: pluginVersion(),
-      })
-    } catch {
-      /* sinal de vida é melhor esforço: nunca derruba o watcher */
-    }
-  }
-
-  function beatExit() {
-    if (exitedHeartbeat || !owner) return
-    exitedHeartbeat = true
-    beat(new Date(clock()).toISOString())
-  }
-
-  let heartbeatTimer = null
-  if (owner) {
-    beat()
-    heartbeatTimer = setInterval(beat, opts.heartbeatMs || HEARTBEAT_MS)
-    if (heartbeatTimer.unref) heartbeatTimer.unref()
-  }
-
-  const seenLocally = new Set()
-  function checkRequests() {
-    if (!owner) return
-    const now = clock()
-    for (const req of listRequests(stateDir)) {
-      if (req.state !== 'pendente' || seenLocally.has(req.id)) continue
-      if (isPendingExpired(req, now)) continue
-      if (!isEligible(req, { session: owner.session, project: owner.project })) continue
-      seenLocally.add(req.id)
-      if (!markSeen(stateDir, req.id, owner.session)) continue
-      console.log(requestEventLine(req, { root: PLUGIN_ROOT, session: owner.session }))
-    }
-  }
-
-  const onSignal = () => {
-    beatExit()
-    if (heartbeatTimer) clearInterval(heartbeatTimer)
-    process.exit(0)
-  }
-  if (owner) {
-    process.once('SIGINT', onSignal)
-    process.once('SIGTERM', onSignal)
-  }
-
-  // Presença da dona (C3, "no I3 o events passa a ler os listeners"): o próprio watcher É a dona
-  // ouvindo (ou rearmando), então sua janela de parada é 3·N (computeStop) em vez de N.
-  function presenceFlags() {
-    if (!owner) return { ownerListening: false, ownerGone: false }
-    const now = clock()
-    let presence
-    try {
-      presence = ownerPresence(readListeners(stateDir, now), owner.session, now)
-    } catch {
-      return { ownerListening: false, ownerGone: false }
-    }
-    return { ownerListening: presence === 'ouvindo', ownerGone: presence === 'encerrada' }
-  }
-  const snap = (cutLine) => buildModel({ runDir, economy, mode: modeFlag, effort, ceiling, cutLine, ...presenceFlags() })
+  const snap = (cutLine) => buildModel({ runDir, economy, mode: modeFlag, effort, ceiling, cutLine })
 
   function checkParada(model) {
     if (paradaEmitted || model.status !== 'parada?') return
@@ -1777,72 +1678,17 @@ export async function runEventsMode(runDir, opts = {}) {
     }
   }
 
-  function finish(code) {
-    beatExit()
-    if (heartbeatTimer) clearInterval(heartbeatTimer)
-    process.removeListener('SIGINT', onSignal)
-    process.removeListener('SIGTERM', onSignal)
-    return code
-  }
-
-  function hhmm(ms) {
-    const d = new Date(ms)
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  }
-
-  // P2 (spec C3/C4): depois do TERMINADO, com dona e --listen-min > 0 (padrão 120), o watcher
-  // segue ouvindo o painel até terminadoEm + listenMin, em vez de sair na hora. --listen-min 0
-  // (ou sem dona) mantém o comportamento de hoje: sai assim que emite o TERMINADO.
-  //
-  // `terminadoEm` vem de markTerminated (persistido em stateDir/terminated/<wf>.json), não de
-  // `clock()` direto: cada rearme do Monitor (timeout de 30 min, doc da tool) é um *processo novo*
-  // de `graph-watch events --run`, e sem essa persistência `terminatedAt` recomeçava a cada arme,
-  // empurrando `listenUntil` + 2h a cada vez e sem nunca chegar em "escuta do painel encerrada"
-  // (C4). `rearmContinuing` só controla a linha impressa (`ouvindo…` em vez de
-  // `ouvindo o painel até HH:MM`, C4) — a janela em si já é a persistida, rearme ou não.
-  const listenMin = opts.listenMin != null ? Number(opts.listenMin) : 120
-  async function afterTerminated({ rearmContinuing = false } = {}) {
-    if (!owner || !(listenMin > 0)) return finish(0)
-    const terminatedAt = markTerminated(stateDir, owner.wf, clock())
-    const until = terminatedAt + listenMin * 60000
-    listenUntilIso = new Date(until).toISOString()
-    heartbeatMode = 'listen'
-    beat()
-    if (clock() >= until) {
-      // Rearme depois da janela já ter passado: nem entra em listen, só fecha o episódio (C4).
-      console.log(`graph-eng ${owner.wf} · escuta do painel encerrada`)
-      return finish(0)
-    }
-    console.log(rearmContinuing ? `graph-eng ${owner.wf} · ouvindo…` : `graph-eng ${owner.wf} · ouvindo o painel até ${hhmm(until)}`)
-    while (clock() < until) {
-      await sleep(150)
-      try {
-        checkRequests()
-      } catch {
-        /* leitura transitória: tenta de novo no próximo tick */
-      }
-    }
-    console.log(`graph-eng ${owner.wf} · escuta do painel encerrada`)
-    return finish(0)
-  }
-
   let total = countReadyEvents(journalPath)
   const retomandoModel = await snap(total)
   console.log(eventLine(retomandoModel, `retomando: ${summarizeActive(retomandoModel)}`))
-  checkRequests()
 
   let previous = retomandoModel
   if (explicitRun) {
     // `--run` explícito: a história antes deste arme já foi notificada por um watch anterior
     // (§5.2). Não repete marco nenhum: só confere se a run já terminou.
     if (retomandoModel.synth === 'pronto') {
-      synthEmitted = true
-      // Já tem marcador de término (C4): este `--run` é um rearme de um episódio que outro
-      // processo já anunciou. Não repete o `TERMINADO` — só a linha `ouvindo…` (dentro de
-      // afterTerminated).
-      const rearmContinuing = !!owner && listenMin > 0 && hasTerminatedMarker(stateDir, owner.wf)
-      if (!rearmContinuing) console.log(eventLine(retomandoModel, 'TERMINADO'))
-      return afterTerminated({ rearmContinuing })
+      console.log(eventLine(retomandoModel, 'TERMINADO'))
+      return 0
     }
     checkParada(retomandoModel)
   } else {
@@ -1852,23 +1698,13 @@ export async function runEventsMode(runDir, opts = {}) {
       emitDiff(previous, cur)
       previous = cur
     }
-    if (synthEmitted) return afterTerminated()
+    if (synthEmitted) return 0
     if (!previous) previous = retomandoModel
     checkParada(previous)
   }
 
-  let sinceReqCheck = 0
   for (;;) {
     await sleep(150)
-    sinceReqCheck += 150
-    if (sinceReqCheck >= 1000) {
-      sinceReqCheck = 0
-      try {
-        checkRequests()
-      } catch {
-        /* leitura transitória: tenta de novo no próximo tick */
-      }
-    }
     let now
     try {
       now = countReadyEvents(journalPath)
@@ -1882,7 +1718,7 @@ export async function runEventsMode(runDir, opts = {}) {
         previous = cur
       }
       total = now
-      if (synthEmitted) return afterTerminated()
+      if (synthEmitted) return 0
     } else {
       try {
         checkParada(await snap(total))
@@ -1988,7 +1824,7 @@ export async function runLive(runDir, opts = {}) {
 }
 
 // ── CLI ──
-const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n', '--port', '--ceiling', '--effort', '--state-dir', '--listen-min'])
+const FLAGS_WITH_VALUE = new Set(['--run-dir', '--projects-dir', '--wait-ms', '--economy', '--mode', '--run', '--run-id', '--cols', '--rows', '-n', '--port', '--ceiling', '--effort'])
 
 function parseArgs(rest) {
   const opts = {}
@@ -2122,9 +1958,7 @@ async function main() {
     console.log(view.text)
     process.exit(0)
   } else if (mode === 'events') {
-    const stateDir = opts['--state-dir']
-    const listenMin = opts['--listen-min'] != null ? Number(opts['--listen-min']) : undefined
-    const code = await runEventsMode(runDir, { economy, modeFlag, effort: effortFlag, ceiling: ceilingFlag, explicitRun: !!opts['--run'], stateDir, listenMin })
+    const code = await runEventsMode(runDir, { economy, modeFlag, effort: effortFlag, ceiling: ceilingFlag, explicitRun: !!opts['--run'] })
     process.exit(code)
   } else if (mode === 'live') {
     // `--svg` virou alias do painel web: garante o painel (instância única) e segue como `live`.

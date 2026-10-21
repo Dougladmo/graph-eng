@@ -214,9 +214,8 @@ describe('fixtures dedicadas de estado', () => {
     assert.equal(model.status, 'parada?')
   })
 
-  test('wf_long_healthy: agente aberto sem escrita há 4 min segue rodando (N=5); a 12 min, parada só sem ouvinte', async () => {
-    // Copia (o git não preserva mtime) e envelhece journal + agent-*.jsonl separado, como o D1 §5 pede:
-    // "sessão dona ouvindo" triplica o limiar (3·5 = 15 min), e por isso 12 min ainda é saudável com ela.
+  test('wf_long_healthy: agente aberto sem escrita há 4 min segue rodando (N=5); a 12 min, parada', async () => {
+    // Copia (o git não preserva mtime) e envelhece journal + agent-*.jsonl separado, como o D1 §5 pede.
     function copyAged(name, journalAgeMin, agentAgeMin) {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `graph-watch-${name}-`))
       fs.cpSync(fx(name), tmpDir, { recursive: true })
@@ -235,10 +234,6 @@ describe('fixtures dedicadas de estado', () => {
     assert.equal(m1.stop, null)
 
     const stale = copyAged('wf_long_healthy', 40, 12)
-    const m2 = await buildModel({ runDir: stale, ownerListening: true })
-    assert.equal(m2.status, 'rodando', 'com a dona ouvindo, o limiar vira 3·N = 15 min')
-    assert.equal(m2.stop, null)
-
     const m3 = await buildModel({ runDir: stale })
     assert.equal(m3.status, 'parada?')
     assert.equal(m3.stop.reason, 'sem-atividade')
@@ -246,18 +241,14 @@ describe('fixtures dedicadas de estado', () => {
     assert.equal(nodeById(m3, 'X').stop.reason, 'sem-atividade')
   })
 
-  test('wf_dead: agente sem escrita há 20 min é sempre parada; motivo depende de ownerGone', async () => {
+  test('wf_dead: agente sem escrita há 20 min é parada, com motivo sem-atividade', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-wf-dead-'))
     fs.cpSync(fx('wf_dead'), tmpDir, { recursive: true })
     const old = new Date(Date.now() - 20 * 60 * 1000)
     for (const f of fs.readdirSync(tmpDir)) fs.utimesSync(path.join(tmpDir, f), old, old)
 
-    const gone = await buildModel({ runDir: tmpDir, ownerGone: true })
-    assert.equal(gone.status, 'parada?')
-    assert.equal(gone.stop.reason, 'sessao-encerrada')
-    assert.equal(gone.stop.text, 'sessão encerrada')
-
     const noProof = await buildModel({ runDir: tmpDir })
+    assert.equal(noProof.status, 'parada?')
     assert.equal(noProof.status, 'parada?')
     assert.equal(noProof.stop.reason, 'sem-atividade')
     assert.equal(noProof.stop.text, 'sem atividade há 20 min')
@@ -408,14 +399,14 @@ describe('motivo do nó (n.reason)', () => {
   // rodar). Cobre, com evidência real, os 3 sabores de "pulado" e os 2 de "falhou".
   describe('fixture real: wf_reasons_real (execução anterior desta run, teto de 50 agentes)', () => {
     test('I5 pulado por orçamento (nenhuma dependência dele ficou pulada/bloqueada)', async () => {
-      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ceiling: 50 })
       const i5 = nodeById(model, 'I5')
       assert.equal(i5.state, 'pulado')
       assert.equal(i5.reason, 'pulado: sem orçamento — o teto de 50 agentes acabou antes deste nó')
     })
 
     test('I7, I8 e I9 pulados em cascata: reason aponta a dependência I5, que foi pulada', async () => {
-      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ceiling: 50 })
       for (const id of ['I7', 'I8', 'I9']) {
         assert.equal(nodeById(model, id).state, 'pulado')
         assert.equal(nodeById(model, id).reason, 'pulado: não rodou porque a dependência I5 foi pulada')
@@ -423,7 +414,7 @@ describe('motivo do nó (n.reason)', () => {
     })
 
     test('I3 e I6 falhos: reason com o bloqueio real do verificador e o destino do reparo', async () => {
-      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ceiling: 50 })
       const i3 = nodeById(model, 'I3')
       const i6 = nodeById(model, 'I6')
       assert.equal(i3.state, 'falhou')
@@ -437,7 +428,7 @@ describe('motivo do nó (n.reason)', () => {
     })
 
     test('DS terminou pronto (verificado e aprovado na revisão do design): sem reason', async () => {
-      const model = await buildModel({ runDir: fx('wf_reasons_real'), ownerGone: true, ceiling: 50 })
+      const model = await buildModel({ runDir: fx('wf_reasons_real'), ceiling: 50 })
       const ds = nodeById(model, 'DS')
       assert.equal(ds.state, 'pronto')
       assert.equal(ds.reason, undefined)
@@ -700,9 +691,9 @@ describe('wf_phases: esqueleto de fases, effort/ceiling, revisão do design e po
   test('paridade dos trilhos com o motor (harness do I1)', async () => {
     async function planOnlyNodes(mode, rawNodes) {
       const script = defaultScript({
-        plan: () => ({ goal: 'g', complexity: 'moderate', doneWhen: ['ok'], nodes: rawNodes, effort: { level: 'high', why: 't' } }),
+        plan: () => ({ goal: 'g', complexity: 'moderate', doneWhen: ['ok'], nodes: rawNodes, effort: { level: 'max', why: 't' } }),
       })
-      const { result } = await runWorkflow({ task: 'x', mode, effort: 'high', planOnly: true }, script)
+      const { result } = await runWorkflow({ task: 'x', mode, effort: 'max', planOnly: true }, script)
       assert.ok(result && result.planOnly, 'planOnly devolveu resultado')
       return result
     }

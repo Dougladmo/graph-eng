@@ -56,8 +56,6 @@
   <main id="board">
     <header id="run-header"></header>
     <div id="run-actions" hidden></div>
-    <p id="act-why" class="act-why"></p>
-    <p id="req-status" role="status" aria-live="polite" data-state="" hidden></p>
     <p id="conn" role="alert"></p>
     <p id="empty-msg" role="status">Procurando runs do graph-eng…</p>
     <div id="map-scroll">
@@ -98,52 +96,17 @@
         <h2 id="settings-title">Configurações</h2>
         <button id="settings-close" type="button" aria-label="Fechar configurações"><span class="x" aria-hidden="true"></span></button>
       </div>
-      <p id="settings-desc" class="settings-desc">Valem a partir da próxima run. Flags na chamada ganham do arquivo.</p>
+      <p id="settings-desc" class="settings-desc">O esforço define a profundidade e o orçamento interno da próxima run. Checks e revisões permanecem obrigatórios.</p>
     </div>
     <div class="settings-body">
       <fieldset class="settings-section">
-        <legend>Agentes</legend>
-        <label for="cfg-ceiling">Teto de agentes</label>
-        <input id="cfg-ceiling" name="ceiling" type="number" inputmode="numeric" step="1" min="8" max="100" aria-describedby="cfg-ceiling-hint cfg-ceiling-err">
-        <p id="cfg-ceiling-hint" class="hint">De 8 a 100. Nenhuma run passa disso.</p>
-        <p id="cfg-ceiling-err" class="field-err" hidden></p>
+        <legend>Esforço</legend>
         <fieldset class="seg" aria-describedby="cfg-effort-help">
-          <legend>Esforço</legend>
-          <label><input type="radio" name="effort" value="manual"><span>Manual</span></label>
-          <label><input type="radio" name="effort" value="auto"><span>Automático</span></label>
           <label><input type="radio" name="effort" value="low"><span>Baixo</span></label>
           <label><input type="radio" name="effort" value="medium"><span>Médio</span></label>
-          <label><input type="radio" name="effort" value="high"><span>Alto</span></label>
           <label><input type="radio" name="effort" value="max"><span>Máximo</span></label>
         </fieldset>
-        <p id="cfg-effort-help" class="hint"></p>
-        <p id="cfg-preview" class="preview" aria-live="polite"></p>
-        <p id="cfg-table" class="hint mono"></p>
-      </fieldset>
-      <fieldset class="settings-section">
-        <legend>Modelos</legend>
-        <fieldset class="seg">
-          <legend>Economia</legend>
-          <label><input type="radio" name="economy" value="lean"><span>Econômico</span></label>
-          <label><input type="radio" name="economy" value="balanced"><span>Equilibrado</span></label>
-          <label><input type="radio" name="economy" value="max"><span>Máximo</span></label>
-        </fieldset>
-        <p id="cfg-economy-help" class="hint">Só troca o modelo dos agentes; não muda quantos rodam.</p>
-      </fieldset>
-      <fieldset class="settings-section">
-        <legend>Execução</legend>
-        <div class="row"><span id="cfg-plan-gate-label">Sempre pedir aprovação do plano</span>
-          <button id="cfg-plan-gate" class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="cfg-plan-gate-label"><span class="knob" aria-hidden="true"></span></button></div>
-        <label for="cfg-max-rounds">Máximo de rounds da crítica</label>
-        <input id="cfg-max-rounds" name="maxRounds" type="number" inputmode="numeric" step="1" min="1" max="5" aria-describedby="cfg-max-rounds-err">
-        <p id="cfg-max-rounds-err" class="field-err" hidden></p>
-        <label for="cfg-max-repairs">Máximo de reparos por nó</label>
-        <input id="cfg-max-repairs" name="maxRepairs" type="number" inputmode="numeric" step="1" min="1" max="3" aria-describedby="cfg-max-repairs-err">
-        <p id="cfg-max-repairs-err" class="field-err" hidden></p>
-        <label for="cfg-stall">Considerar parada depois de</label>
-        <input id="cfg-stall" name="stallMinutes" type="number" inputmode="numeric" step="1" min="1" max="60" aria-describedby="cfg-stall-hint cfg-stall-err">
-        <p id="cfg-stall-hint" class="hint">Sem escrita no histórico do agente em execução por mais que isso, a run vai para Paradas. Com a sessão dona ouvindo, vale o triplo. De 1 a 60 min.</p>
-        <p id="cfg-stall-err" class="field-err" hidden></p>
+        <p id="cfg-effort-help" class="hint">Baixo, médio ou máximo controlam a profundidade e o orçamento interno.</p>
       </fieldset>
       <fieldset class="settings-section">
         <legend>Aparência</legend>

@@ -18,6 +18,7 @@ const MULTI = path.join(__dirname, 'fixtures', 'multi')
 
 const { ensurePanel, createRunIndex } = await import('../bin/ui-server.mjs')
 const { writeConfig } = await import('../bin/config.mjs')
+const { registerRun } = await import('../bin/run-registry.mjs')
 
 const RUNS = {
   'wf_aaaa0000-alfa-ativo': ['-exemplo-projeto-alfa', 'sess-alfa', 10], // rodando
@@ -37,7 +38,7 @@ function copyMulti() {
   return dir
 }
 
-// Estado do painel (config.json, organize.json, fila…) sempre num dir temporário: nenhum teste lê nem
+// Estado do painel (config.json, organize.json) sempre num dir temporário: nenhum teste lê nem
 // grava em ~/.claude (spec C1).
 function tmpState() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-eng-ui-state-'))
@@ -173,7 +174,7 @@ describe('painel web: API (itens 3, 4, 5, 8)', () => {
     // rodando; a prova de que não há mais ACTIVE_WINDOW_MS é o teste anterior, com beta a 1 h de idade.
     const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-watch-stall-cfg-'))
     const configPath = path.join(cfgDir, 'config.json')
-    writeConfig(configPath, { stallMinutes: 1 })
+    fs.writeFileSync(configPath, JSON.stringify({ schemaVersion: 2, effort: 'medium', operational: { stallMinutes: 1 } }))
     const index = createRunIndex(projectsDir, { configPath })
     const runs = await index.scan()
     const ativo = runs.find((r) => r.wf === 'wf_aaaa0000-alfa-ativo')
@@ -371,41 +372,38 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
     await panel.close()
   })
 
-  test('GET sem arquivo: config efetiva de fábrica (24/auto), limites e origem default', async () => {
+  test('GET sem arquivo: config effort medium, limites e origem default', async () => {
     const r = await request(port, 'GET', '/api/config')
     assert.equal(r.status, 200)
     assert.match(r.headers['content-type'], /application\/json/)
     assert.equal(r.headers['access-control-allow-origin'], undefined)
-    assert.equal(r.json.config.ceiling, 24)
-    assert.equal(r.json.config.effort, 'auto')
-    assert.equal(r.json.source.ceiling, 'default')
-    assert.equal(r.json.limits.ceiling.min, 8)
-    assert.equal(r.json.limits.ceiling.max, 100)
-    assert.deepEqual(r.json.defaults, { effort: 'auto', ceiling: 24, economy: 'balanced', planGate: false, maxRounds: 3, maxRepairs: 2, stallMinutes: 5 })
+    assert.deepEqual(r.json.config, { effort: 'medium' })
+    assert.deepEqual(r.json.source, { effort: 'default' })
+    assert.deepEqual(r.json.limits, { effort: ['low', 'medium', 'max'] })
+    assert.deepEqual(r.json.defaults, { effort: 'medium' })
+    assert.equal(JSON.stringify(r.json).includes('stallMinutes'), false)
     assert.deepEqual(r.json.warnings, [])
     assert.equal(fs.existsSync(configPath), false, 'GET não grava nada')
   })
 
   test('PUT válido grava o arquivo (atômico, sem sobra de tmp) e o GET seguinte mostra origem config', async () => {
-    const r = await put({ ceiling: 30, effort: 'high' })
+    const r = await put({ effort: 'max' })
     assert.equal(r.status, 200, r.body)
-    assert.equal(r.json.config.ceiling, 30)
-    assert.equal(r.json.config.effort, 'high')
-    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { effort: 'high', ceiling: 30 })
-    assert.deepEqual(fs.readdirSync(cfgDir), ['config.json'])
+    assert.deepEqual(r.json.config, { effort: 'max' })
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { schemaVersion: 2, effort: 'max', operational: { stallMinutes: 5 } })
+    assert.deepEqual(fs.readdirSync(cfgDir).sort(), ['config.json'])
     const g = await request(port, 'GET', '/api/config')
-    assert.equal(g.json.source.ceiling, 'config')
-    assert.equal(g.json.source.economy, 'default')
-    // localhost também é origem do painel; charset no Content-Type é aceito; PUT substitui (effort volta ao padrão)
-    const l = await request(port, 'PUT', '/api/config', { Host: `localhost:${port}`, Origin: `http://localhost:${port}`, 'Content-Type': 'application/json; charset=utf-8' }, '{"ceiling":40}')
+    assert.equal(g.json.source.effort, 'config')
+    // localhost também é origem do painel; charset no Content-Type é aceito.
+    const l = await request(port, 'PUT', '/api/config', { Host: `localhost:${port}`, Origin: `http://localhost:${port}`, 'Content-Type': 'application/json; charset=utf-8' }, '{"effort":"low"}')
     assert.equal(l.status, 200, l.body)
-    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { ceiling: 40 })
-    assert.equal(l.json.source.effort, 'default')
-    // C6: stallMinutes (padrão de parada) grava e volta como número
-    const s = await put({ stallMinutes: 12 })
-    assert.equal(s.status, 200, s.body)
-    assert.equal(s.json.config.stallMinutes, 12)
-    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { stallMinutes: 12 })
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { schemaVersion: 2, effort: 'low', operational: { stallMinutes: 5 } })
+    assert.equal(l.json.source.effort, 'config')
+    assert.equal((await put({ stallMinutes: 12 })).status, 400)
+    fs.writeFileSync(configPath, '{"effort":"low","stallMinutes":12,"ceiling":30}')
+    const migrated = await put({ effort: 'medium' })
+    assert.equal(migrated.status, 200, migrated.body)
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), { schemaVersion: 2, effort: 'medium', operational: { stallMinutes: 12 } })
   })
 
   test('PUT com Origin ausente, null, de fora ou de outra porta → 403 e o arquivo fica igual', async () => {
@@ -413,7 +411,7 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
     for (const o of [undefined, 'null', 'http://evil.example', 'http://127.0.0.1:1', `https://127.0.0.1:${port}`]) {
       const headers = { 'Content-Type': 'application/json' }
       if (o !== undefined) headers.Origin = o
-      const r = await request(port, 'PUT', '/api/config', headers, '{"ceiling":50}')
+      const r = await request(port, 'PUT', '/api/config', headers, '{"effort":"medium"}')
       assert.equal(r.status, 403, `esperava 403 para Origin ${o}`)
       assert.equal(r.json.error, 'Origin não permitido')
     }
@@ -422,7 +420,7 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
 
   test('PUT com Host de fora → 403 (antes de tudo), mesmo com corpo e Origin válidos', async () => {
     const before = snapshot()
-    const r = await put({ ceiling: 50 }, { Host: 'evil.example' })
+    const r = await put({ effort: 'medium' }, { Host: 'evil.example' })
     assert.equal(r.status, 403)
     assert.equal(r.json.error, 'Host não permitido')
     assert.deepEqual(snapshot(), before)
@@ -433,7 +431,7 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
     for (const ct of ['text/plain', 'application/x-www-form-urlencoded', undefined]) {
       const headers = { Origin: origin }
       if (ct) headers['Content-Type'] = ct
-      const r = await request(port, 'PUT', '/api/config', headers, '{"ceiling":50}')
+      const r = await request(port, 'PUT', '/api/config', headers, '{"effort":"medium"}')
       assert.equal(r.status, 415, `esperava 415 para ${ct}`)
     }
     assert.deepEqual(snapshot(), before)
@@ -449,26 +447,19 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
       assert.equal(r.status, 400, body)
       assert.equal(r.json.error, 'o corpo deve ser um objeto')
     }
-    const low = await put({ ceiling: 7 })
-    assert.equal(low.status, 400)
-    assert.equal(low.json.error, 'config inválida')
-    assert.equal(low.json.fields.ceiling, 'mínimo 8')
-    assert.equal((await put({ ceiling: 101 })).json.fields.ceiling, 'máximo 100')
-    assert.equal((await put({ ceiling: '24' })).json.fields.ceiling, 'use um número inteiro')
-    const unknown = await put({ foo: 1, ceiling: 30 })
+    const unknown = await put({ foo: 1, effort: 'low' })
     assert.equal(unknown.status, 400)
     assert.deepEqual(unknown.json.fields, { foo: 'campo desconhecido' })
-    // C6: stallMinutes (padrão de parada) segue a mesma trava do resto da config
-    assert.equal((await put({ stallMinutes: 0 })).json.fields.stallMinutes, 'de 1 a 60')
-    assert.equal((await put({ stallMinutes: 61 })).json.fields.stallMinutes, 'de 1 a 60')
-    const many = await put({ effort: 'xhigh', maxRounds: 9, planGate: 'sim' })
+    const removed = await put({ stallMinutes: 12 })
+    assert.equal(removed.status, 400)
+    const many = await put({ effort: 'high', maxRounds: 9, planGate: false })
     assert.deepEqual(Object.keys(many.json.fields).sort(), ['effort', 'maxRounds', 'planGate'])
     assert.deepEqual(snapshot(), before, 'nada gravado em caminho de erro')
   })
 
   test('PUT com corpo acima de 4096 bytes → 413 (declarado ou em chunks) e o arquivo fica igual', async () => {
     const before = snapshot()
-    const big = JSON.stringify({ ceiling: 30, pad: 'x'.repeat(5000) })
+    const big = JSON.stringify({ effort: 'medium', pad: 'x'.repeat(5000) })
     assert.equal((await put(big)).status, 413)
     // sem Content-Length (chunked): o limite vale na leitura
     const chunked = await new Promise((resolve, reject) => {
@@ -487,13 +478,13 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
   test('métodos: POST/DELETE/OPTIONS em /api/config → 405 com Allow GET, PUT; PUT em outra rota → 405 com Allow GET', async () => {
     const before = snapshot()
     for (const m of ['POST', 'DELETE', 'PATCH', 'OPTIONS']) {
-      const r = await request(port, m, '/api/config', { Origin: origin, 'Content-Type': 'application/json' }, '{"ceiling":50}')
+      const r = await request(port, m, '/api/config', { Origin: origin, 'Content-Type': 'application/json' }, '{"effort":"medium"}')
       assert.equal(r.status, 405, m)
       assert.equal(r.headers.allow, 'GET, PUT')
       assert.equal(r.headers['access-control-allow-origin'], undefined)
     }
     for (const p of ['/api/runs', '/api/config/x', '/', '/api/health']) {
-      const r = await request(port, 'PUT', p, { Origin: origin, 'Content-Type': 'application/json' }, '{"ceiling":50}')
+      const r = await request(port, 'PUT', p, { Origin: origin, 'Content-Type': 'application/json' }, '{"effort":"medium"}')
       assert.equal(r.status, 405, `PUT ${p}`)
       assert.equal(r.headers.allow, 'GET')
     }
@@ -507,12 +498,12 @@ describe('painel web: /api/config (GET/PUT, única escrita)', () => {
   })
 
   test('GET com arquivo inválido no disco: 200 com o padrão e o aviso', async () => {
-    fs.writeFileSync(configPath, JSON.stringify({ ceiling: 5, economy: 'lean' }))
+    fs.writeFileSync(configPath, JSON.stringify({ effort: 'auto', ceiling: 5, stallMinutes: 12 }))
     const r = await request(port, 'GET', '/api/config')
     assert.equal(r.status, 200)
-    assert.equal(r.json.config.ceiling, 24)
-    assert.equal(r.json.config.economy, 'lean')
-    assert.deepEqual(r.json.warnings, ['ceiling: mínimo 8 (ignorado)'])
+    assert.deepEqual(r.json.config, { effort: 'medium' })
+    assert.ok(r.json.warnings.some((warning) => warning.includes('effort')))
+    assert.equal(JSON.stringify(r.json).includes('stallMinutes'), false)
   })
 
   test('estático /agent-target.mjs sai do painel como JavaScript', async () => {
@@ -587,6 +578,94 @@ describe('painel web: SSE /api/events (item 6)', () => {
       if (req) req.destroy()
       await panel.close()
     }
+  })
+})
+
+describe('painel web: descoberta v2 e bloqueio 6C3', () => {
+  test('mescla fixture no formato real, projeta dados seguros e não expõe ações nem grava fila', async (t) => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-eng-ui-v2-'))
+    const projectsDir = copyMulti()
+    const stateDir = path.join(base, 'state')
+    const configPath = path.join(stateDir, 'config.json')
+    const cwd = path.join(base, 'workspace')
+    const runDir = path.join(cwd, '.graph-runs', 'opaque-run')
+    fs.mkdirSync(runDir, { recursive: true })
+    fs.writeFileSync(path.join(runDir, '.graph-eng-state-root'), 'graph-eng trusted run state v2\n', { mode: 0o600 })
+    fs.writeFileSync(path.join(runDir, 'identity.json'), JSON.stringify({ schemaVersion: 2, runId: 'opaque-run' }) + '\n', { mode: 0o600 })
+    fs.writeFileSync(path.join(runDir, 'run.meta.json'), JSON.stringify({ schemaVersion: 2, runId: 'opaque-run', host: 'codex', cwd, runDir, task: 'Tarefa v2 fixture' }) + '\n', { mode: 0o600 })
+    const registered = await registerRun({ stateDir, cwd, runDir, runId: 'opaque-run', host: 'codex' })
+    assert.equal(registered.registered, true)
+    const feedback = { kind: 'BLOCK', reason: 'receipt pendente', severity: 'high', affectedNodes: ['A1'], evidenceIds: ['receipt-1'] }
+    const agentA = 'a' + '1'.repeat(16)
+    const agentB = 'a' + '2'.repeat(16)
+    const agentC = 'a' + '3'.repeat(16)
+    const agentD = 'a' + '4'.repeat(16)
+    const keyA = 'v2:' + 'a'.repeat(32)
+    const keyB = 'v2:' + 'b'.repeat(32)
+    const keyC = 'v2:' + 'c'.repeat(32)
+    const keyD = 'v2:' + 'd'.repeat(32)
+    const events = [
+      { type: 'started', agentId: agentA, key: keyA, payload: { role: 'executor', model: 'alias-nao-usado-como-efetivo', requestedModel: 'modelo-solicitado', effectiveModel: null } },
+      { type: 'result', agentId: agentA, key: keyA, payload: { role: 'executor', model: 'alias-nao-usado-como-efetivo', requestedModel: 'modelo-solicitado', effectiveModel: null, usage: { input_tokens: 12, output_tokens: 3 }, feedback, checkId: 'check-1', identity: 'a'.repeat(64), valid: false } },
+      { type: 'started', agentId: agentB, key: keyB, payload: { role: 'executor', requestedModel: 'modelo-solicitado', effectiveModel: null } },
+      { type: 'result', agentId: agentB, key: keyB, payload: { role: 'executor', usage: { input_tokens: 5 } } },
+      { type: 'started', agentId: agentC, key: keyC, payload: { role: 'planner', requestedModel: 'modelo-falha', effectiveModel: null } },
+      { type: 'failed', agentId: agentC, key: keyC, payload: { role: 'planner', model: 'modelo-falha' } },
+      { type: 'started', agentId: agentD, key: keyD, payload: { role: 'executor', requestedModel: 'modelo-zero', effectiveModel: null } },
+      { type: 'result', agentId: agentD, key: keyD, payload: { role: 'executor', usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } },
+    ].map((event, index) => ({ schemaVersion: 2, runId: 'opaque-run', seq: index + 1, at: `2026-10-18T04:00:0${index}.000Z`, planVersion: 2, ...event }))
+    fs.writeFileSync(path.join(runDir, 'journal.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + '\n', { mode: 0o600 })
+    fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({ schemaVersion: 2, runId: 'opaque-run', lastSeq: events.length, planVersion: 2, feedback }) + '\n', { mode: 0o600 })
+    const identityBefore = fs.readFileSync(path.join(runDir, 'identity.json'))
+    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath, stateDir })
+    t.after(async () => {
+      await panel.close()
+      fs.rmSync(base, { recursive: true, force: true })
+      fs.rmSync(projectsDir, { recursive: true, force: true })
+    })
+
+    const listing = await getJson(panel.port, '/api/runs')
+    const v2Run = listing.json.runs.find((run) => run.generation === 'v2')
+    assert.equal(listing.json.runs.filter((run) => run.generation === 'legacy').length, 3)
+    assert.ok(v2Run)
+    assert.match(v2Run.wf, /^v2-[a-f0-9]{64}$/)
+    assert.equal(v2Run.runId, 'opaque-run')
+    assert.equal(v2Run.status, 'desconhecida')
+    assert.equal(v2Run.runDir, null)
+    assert.equal(v2Run.wf.startsWith('wf_'), false)
+
+    const detail = await getJson(panel.port, `/api/runs/${v2Run.wf}`)
+    assert.equal(detail.status, 200)
+    assert.equal(detail.json.generation, 'v2')
+    assert.equal(detail.json.status, 'desconhecida')
+    assert.equal(detail.json.v2.planVersion, 2)
+    assert.equal(detail.json.v2.feedback.kind, 'BLOCK')
+    assert.match(detail.json.v2.supportWarning, /Os dados por nó e de preservação ainda não estão disponíveis/)
+    assert.match(detail.json.goal, /Dados de preservação e invalidação indisponíveis para esta execução/)
+    assert.doesNotMatch(detail.json.goal, /contrato B3|supervisor/)
+    assert.match(detail.json.stop.text, /status final desta execução ainda não está disponível/)
+    assert.equal(detail.json.v2.callCount, 4, 'started/result/failed da mesma agentId contam uma chamada cada')
+    assert.deepEqual(detail.json.v2.roleCounts, [{ role: 'executor', count: 3 }, { role: 'planner', count: 1 }])
+    assert.equal(detail.json.v2.usage.inputTokens, 17)
+    assert.equal(detail.json.v2.usage.outputTokens, 3)
+    assert.equal(detail.json.v2.usage.totalTokens, 0, 'zero informado é dado observado, não ausência')
+    assert.equal(detail.json.v2.usage.partial, true, 'uso do segundo result e da chamada com falha não pode parecer completo')
+    assert.deepEqual(detail.json.v2.usage.coverage.inputTokens, { observedCalls: 3, totalCalls: 4 })
+    assert.deepEqual(detail.json.v2.usage.coverage.outputTokens, { observedCalls: 2, totalCalls: 4 })
+    assert.deepEqual(detail.json.v2.usage.coverage.totalTokens, { observedCalls: 1, totalCalls: 4 })
+    assert.equal(detail.json.v2.modelCounts.some((item) => item.label.includes('solicitado · modelo-solicitado')), true)
+    assert.equal(detail.json.v2.modelCounts.some((item) => item.label.includes('efetivo · não informado')), true)
+    assert.equal(detail.json.actions, undefined, 'o Modelo não traz mais ações (painel só de visualização)')
+    assert.equal(JSON.stringify(detail.json).includes('alias-nao-usado-como-efetivo'), false)
+    const gone = await request(panel.port, 'POST', '/api/requests', { Origin: `http://127.0.0.1:${panel.port}`, 'Content-Type': 'application/json' }, JSON.stringify({ type: 'stop', wf: v2Run.wf }))
+    assert.equal(gone.status, 405, 'a rota de pedidos saiu do painel: POST fora das rotas de escrita é 405 (só leitura)')
+    const org = await request(panel.port, 'POST', '/api/org/delete', { Origin: `http://127.0.0.1:${panel.port}`, 'Content-Type': 'application/json' }, JSON.stringify({ wf: v2Run.wf, confirm: 'opaque-run' }))
+    assert.equal(org.status, 409)
+    assert.match(org.json.error, /Exclusão física.*bloqueada/)
+    const pin = await request(panel.port, 'POST', '/api/org/pin', { Origin: `http://127.0.0.1:${panel.port}`, 'Content-Type': 'application/json' }, JSON.stringify({ wf: v2Run.wf, pinned: true }))
+    assert.equal(pin.status, 409)
+    assert.equal(fs.existsSync(path.join(stateDir, 'requests')), false)
+    assert.deepEqual(fs.readFileSync(path.join(runDir, 'identity.json')), identityBefore)
   })
 })
 
@@ -685,5 +764,66 @@ describe('`live --svg` vira alias do painel (item 9)', () => {
     } finally {
       await panel.close()
     }
+  })
+})
+
+describe('painel web: resumo v2 com reparos, replanejamentos, feedback, memória e status terminal', () => {
+  test('conta reparos e replanos pelos control.transition, lista feedback e memória só por ID e mostra concluída', async (t) => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-eng-ui-v2-resumo-'))
+    const projectsDir = copyMulti()
+    const stateDir = path.join(base, 'state')
+    const configPath = path.join(stateDir, 'config.json')
+    const cwd = path.join(base, 'workspace')
+    const runDir = path.join(cwd, '.graph-runs', 'resumo-run')
+    fs.mkdirSync(runDir, { recursive: true })
+    fs.writeFileSync(path.join(runDir, '.graph-eng-state-root'), 'graph-eng trusted run state v2\n', { mode: 0o600 })
+    fs.writeFileSync(path.join(runDir, 'identity.json'), JSON.stringify({ schemaVersion: 2, runId: 'resumo-run' }) + '\n', { mode: 0o600 })
+    fs.writeFileSync(path.join(runDir, 'run.meta.json'), JSON.stringify({ schemaVersion: 2, runId: 'resumo-run', host: 'codex', cwd, runDir, task: 'Tarefa resumo' }) + '\n', { mode: 0o600 })
+    const registered = await registerRun({ stateDir, cwd, runDir, runId: 'resumo-run', host: 'codex' })
+    assert.equal(registered.registered, true)
+    const selA = `sel-${'a'.repeat(64)}`
+    const selB = `sel-${'b'.repeat(64)}`
+    const agent = 'a' + '1'.repeat(16)
+    const events = [
+      { type: 'started', agentId: agent, key: 'v2:' + 'a'.repeat(32), planVersion: 1, payload: { role: 'executor' } },
+      { type: 'control.transition', planVersion: 1, payload: { stage: 'plan-approved' } },
+      { type: 'control.transition', planVersion: 2, payload: { stage: 'plan-approved', previousPlanVersion: 1 } },
+      { type: 'control.transition', planVersion: 2, payload: { stage: 'design-fix-intent' } },
+      { type: 'control.transition', planVersion: 3, payload: { stage: 'plan-approved', previousPlanVersion: 2 } },
+      { type: 'result', agentId: agent, key: 'v2:' + 'a'.repeat(32), planVersion: 3, payload: { role: 'critic', feedback: { kind: 'FIX_LOCAL', reason: '<script>x</script> falha', severity: 'medium', affectedNodes: ['A1'] } } },
+      { type: 'memory.selected', planVersion: 3, payload: { role: 'planner', selectionId: selA, records: [{ id: 'mem-1' }], summary: 'texto livre não aparece' } },
+      { type: 'memory.selected', planVersion: 3, payload: { role: 'worker', selectionId: selB, reused: true } },
+      { type: 'run.finished', planVersion: 3, payload: { status: 'done', feedback: { kind: 'DONE', reason: 'concluído' } } },
+    ].map((event, index) => ({ schemaVersion: 2, runId: 'resumo-run', seq: index + 1, at: `2026-10-18T05:00:0${index}.000Z`, ...event }))
+    fs.writeFileSync(path.join(runDir, 'journal.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + '\n', { mode: 0o600 })
+    const panel = await ensurePanel({ port: 0, projectsDir, pollMs: 100, configPath, stateDir })
+    t.after(async () => {
+      await panel.close()
+      fs.rmSync(base, { recursive: true, force: true })
+      fs.rmSync(projectsDir, { recursive: true, force: true })
+    })
+
+    const listing = await getJson(panel.port, '/api/runs')
+    const v2Run = listing.json.runs.find((run) => run.generation === 'v2')
+    assert.ok(v2Run)
+    assert.equal(v2Run.status, 'concluída')
+    const detail = await getJson(panel.port, `/api/runs/${v2Run.wf}`)
+    assert.equal(detail.status, 200)
+    assert.equal(detail.json.status, 'concluída')
+    assert.equal(detail.json.statusReason, 'run_finished_event')
+    assert.equal(detail.json.v2.repairs, 1, 'um design-fix-intent conta como reparo')
+    assert.equal(detail.json.v2.replans, 2, 'dois plan-approved com previousPlanVersion são replanos')
+    assert.deepEqual(detail.json.v2.feedbackHistory.map((item) => item.kind), ['FIX_LOCAL', 'DONE'])
+    assert.equal(detail.json.v2.feedbackHistory[0].reason, '<script>x</script> falha', 'texto de feedback é dado, a página o exibe como texto')
+    assert.equal(detail.json.v2.feedbackHistory[0].severity, 'medium')
+    assert.deepEqual(detail.json.v2.feedbackHistory[0].affectedNodes, ['A1'])
+    assert.equal(detail.json.v2.memorySelections.total, 2)
+    assert.deepEqual(detail.json.v2.memorySelections.byRole, [{ role: 'planner', count: 1 }, { role: 'worker', count: 1 }])
+    assert.deepEqual(detail.json.v2.memorySelections.selectionIds, [selA, selB])
+    assert.equal(detail.json.v2.memorySelections.reused, 1)
+    assert.equal(JSON.stringify(detail.json).includes('texto livre não aparece'), false)
+    assert.match(detail.json.goal, /Reparos 1 · Replanejamentos 2/)
+    assert.doesNotMatch(detail.json.goal, /Reparos e replanejamentos ainda não estão disponíveis/)
+    assert.equal(detail.json.actions, undefined, 'o Modelo não traz ações, nem com status terminal')
   })
 })

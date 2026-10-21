@@ -1,0 +1,16 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { textoPublico } from '../src/c.mjs'
+
+test('C normal: texto público com registro aparado', () => {
+  assert.equal(textoPublico('  João  '), 'Registro: João')
+})
+
+test('C vazio: registro vazio vira marcador fixo', () => {
+  assert.equal(textoPublico(''), 'Registro: (vazio)')
+  assert.equal(textoPublico('   '), 'Registro: (vazio)')
+})
+
+test('C acento: preserva acentos', () => {
+  assert.equal(textoPublico(' São Paulo '), 'Registro: São Paulo')
+})

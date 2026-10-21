@@ -1,6 +1,5 @@
-// Montagem de runs do graph-eng em dirs temporários, para os testes do painel com ações (spec
-// docs/specs/2026-09-28-acoes-no-painel.md, C10-C12; D3 §8.1). Usado por test/ui-server-actions.test.mjs e
-// pelo e2e do I8. Nada aqui lê nem grava em ~/.claude: todo caminho vem do chamador.
+// Montagem de runs do graph-eng em dirs temporários, para os testes do painel (visualização ao vivo).
+// Nada aqui lê nem grava em ~/.claude: todo caminho vem do chamador.
 
 import fs from 'node:fs'
 import http from 'node:http'
@@ -8,9 +7,8 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { ensurePanel } from '../../bin/ui-server.mjs'
-import { writeHeartbeat } from '../../bin/requests.mjs'
 
-// Sessões com a forma de uuid (SESSION_RE): só elas dão dona e sinal de vida (C3).
+// Sessões com a forma de uuid (a pasta da run tem a forma <slug>/<sessão>/subagents/workflows/<wf>).
 export const SESS = {
   a: 'aaaaaaaa-0000-4000-8000-000000000001',
   b: 'bbbbbbbb-0000-4000-8000-000000000002',
@@ -95,12 +93,6 @@ export function mkRunDir(parent, runId, files = { 'plan.md': '# plano\n' }) {
   fs.mkdirSync(d, { recursive: true })
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(d, name), text)
   return d
-}
-
-// Sinal de vida de um watcher (C3), com o pid deste processo (vivo). `beatAt`/`exitedAt` em ms.
-export function writeListener(stateDir, { session, project = SLUG, wf = null, beatAt = Date.now(), exitedAt = null, pid = process.pid } = {}) {
-  const iso = (ms) => (ms == null ? null : new Date(ms).toISOString())
-  return writeHeartbeat(stateDir, { session, project, pid, wf, mode: 'run', startedAt: iso(beatAt), beatAt: iso(beatAt), exitedAt: iso(exitedAt) })
 }
 
 export function request(port, method, p, headers = {}, body) {
