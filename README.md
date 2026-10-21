@@ -188,36 +188,39 @@ Regras que valem sempre:
 
 ## Benchmark
 
-`bin/graph-benchmark.mjs` roda a **mesma tarefa** com a lógica da 0.1 (`v1-normalized`) e com a 1.0 (`adaptive`). Quem dá a nota é um conjunto de **testes de aceitação externos**, que os agentes não veem. Detalhe de todas as rodadas em [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md).
+`bin/graph-benchmark.mjs` roda uma tarefa fixa numa cópia limpa do repositório, com Claude real. Quem dá a nota é um conjunto de **testes de aceitação externos**, que os agentes não veem. Detalhe de todas as rodadas em [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md).
 
-**Rodada f366, com Claude real:**
+**Rodada f366:**
 
-| | Lógica 0.1 | **graph-eng 1.0** |
-| --- | --- | --- |
-| O que o motor disse | PARTIAL (não sabe se terminou) | ✅ **DONE** |
-| Testes externos | ✅ 10/10 | ✅ **10/10** |
-| DONE falso | não | **não** |
-| Chamadas de modelo | 10 | 21 |
-| Tokens (entrada / saída) | 519k / 41k | 605k / 36k |
-| Tempo do motor | 261 s | 292 s |
-
-A 1.0 gasta mais chamadas porque revisa e testa cada nó. Em troca, ela **sabe** que terminou e prova isso.
-
-**Chamadas por papel no graph-eng 1.0 (rodada f366):**
-
-| Papel | Chamadas |
+| | graph-eng 1.0 |
 | --- | --- |
-| ⚙️ executor | `████████████████` 8 |
-| 🔍 verificador | `██████████` 5 |
-| 🧠 planner | `████` 2 |
-| 🧠 revisor do plano | `████` 2 |
-| 🧠 critic | `████` 2 |
-| 🧠 revisor do design | `██` 1 |
-| ⚙️ synth | `██` 1 |
+| 💵 Custo da rodada | **US$ 0,80** |
+| ✅ Testes externos | **10/10** |
+| 🏁 O que o motor disse | **DONE** com evidência |
+| 🔒 DONE falso | **não** |
+| 📞 Chamadas de modelo | 21 |
+| 🔤 Tokens (entrada / saída) | 605k / 36k |
+| ⏱️ Tempo do motor | 292 s |
 
-- 💰 **Custo:** cerca de US$ 1 por rodada. Antes eram US$ 88, porque o host vazava cerca de 75k tokens de contexto por chamada; isolado, cerca de 6,5k.
-- 📈 **Histórico:** em 13 rodadas reais, a 1.0 nunca deu DONE falso. Cada BLOCK virou correção com teste de regressão, até fechar DONE na f366.
-- ⚠️ **Codex real:** ainda não validado.
+**Onde vai o dinheiro:**
+
+| Papel | Modelo | Chamadas | US$ |
+| --- | --- | --- | --- |
+| 🧠 critic | forte | 2 | `██████` 0,31 |
+| 🧠 planner | forte | 2 | `████` 0,18 |
+| 🧠 revisor do plano | forte | 2 | `███` 0,17 |
+| 🧠 revisor do design | forte | 1 | `██` 0,10 |
+| ⚙️ executor | operacional | 8 | 0,015 |
+| 🔍 verificador | operacional | 5 | 0,011 |
+| ⚙️ synth | operacional | 1 | 0,005 |
+| **Total** | | **21** | **0,80** |
+
+O modelo forte responde por cerca de 95% do custo. As 14 chamadas do modelo operacional somam só 3 centavos. Para baixar o custo, o lugar é nas chamadas fortes (critic, planner e revisores), e esse trabalho segue em aberto.
+
+- 💰 O isolamento do host derrubou o custo de cerca de US$ 88 para menos de US$ 1 por rodada: o host deixou de vazar cerca de 75k tokens de contexto por chamada e agora manda cerca de 6,5k.
+- 📈 Em 13 rodadas reais, a 1.0 nunca deu DONE falso. Cada BLOCK virou correção com teste de regressão, até fechar DONE na f366.
+- 🧪 O cenário ainda é simples. Falta um cenário mais difícil.
+- ⚠️ O host Codex real ainda não foi validado.
 
 ## Detalhes de execução
 
