@@ -13,7 +13,7 @@ import path from 'node:path'
 
 import { isPlainObject } from './config.mjs'
 
-// Formato do runId da skill (`$(date +%Y%m%d-%H%M)-<slug>`, skills/graph-eng/SKILL.md). É a regex única da
+// Formato do runId da skill (`$(date +%Y%m%d-%H%M)-<slug>`, skills/grapheng/SKILL.md). É a regex única da
 // chave da run, da contenção do apagar e do CLI de retomada: um runId fora dela não tem pasta de
 // artefatos, retomada nem herança de organização.
 export const RUN_ID_RE = /^\d{8}-\d{4}-[a-z0-9][a-z0-9-]{0,63}$/

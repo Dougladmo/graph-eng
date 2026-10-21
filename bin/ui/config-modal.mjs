@@ -1,326 +1,111 @@
-// Modal de engrenagem: lê e grava ~/.claude/graph-eng/config.json via GET/PUT /api/config
-// (bin/ui-server.mjs, contrato em .graph-runs/20260928-0213-fases-esforco-teto/D2.md §6). Também move
-// para aqui o switch de tema, que sai do rodapé da lateral (index.html). Sem inner/outerHTML: todo texto
-// vindo da API ou do usuário entra por textContent ou .value.
-//
-// Exporta initSettings(), chamado uma vez por app.js.
-
-import { targetFor, targetTable, targetRange, validateCeiling } from './agent-target.mjs'
-
+// Modal de configuração pública: effort e tema. Texto externo sempre entra por textContent/value.
 const $ = (id) => document.getElementById(id)
-
-const EFFORT_LEVELS = ['low', 'medium', 'high', 'max']
-const CLOSE_MS = 400 // reserva se `transitionend` não disparar (movimento reduzido, aba em segundo plano)
+const CLOSE_MS = 400
 
 export function initSettings() {
   const dialog = $('settings')
-  if (!dialog) return // painel antigo sem o markup do modal
-
+  if (!dialog) return
   const form = $('settings-form')
   const openBtn = $('settings-open')
   const closeBtn = $('settings-close')
-  const backdrop = dialog // ::backdrop não é um elemento acessível por id; o clique é detectado por event.target
   const status = $('settings-status')
   const resetBtn = $('settings-reset')
   const saveBtn = $('settings-save')
-
-  const els = {
-    ceiling: $('cfg-ceiling'),
-    ceilingErr: $('cfg-ceiling-err'),
-    effortHelp: $('cfg-effort-help'),
-    preview: $('cfg-preview'),
-    table: $('cfg-table'),
-    economyHelp: $('cfg-economy-help'),
-    planGate: $('cfg-plan-gate'),
-    maxRounds: $('cfg-max-rounds'),
-    maxRoundsErr: $('cfg-max-rounds-err'),
-    maxRepairs: $('cfg-max-repairs'),
-    maxRepairsErr: $('cfg-max-repairs-err'),
-    stall: $('cfg-stall'),
-    stallErr: $('cfg-stall-err'),
-    themeSwitch: $('theme-switch'),
-    themeLabel: $('theme-label'),
-  }
-  const effortRadios = [...form.querySelectorAll('input[name="effort"]')]
-  const economyRadios = [...form.querySelectorAll('input[name="economy"]')]
-  const fields = [els.ceiling, els.planGate, els.maxRounds, els.maxRepairs, els.stall, ...effortRadios, ...economyRadios]
-
+  const themeSwitch = $('theme-switch')
+  const radios = [...form.querySelectorAll('input[name="effort"]')]
   let opener = null
-  let defaults = null
+  let defaults = { effort: 'medium' }
   let loaded = false
 
-  // ── Tema (movido do rodapé; não depende do GET/PUT) ──
-  function syncThemeSwitch() {
-    const dark = window.graphEngTheme ? window.graphEngTheme.get() === 'dark' : false
-    els.themeSwitch.setAttribute('aria-checked', String(dark))
+  function syncTheme() {
+    const dark = window.graphEngTheme?.get() === 'dark'
+    themeSwitch.setAttribute('aria-checked', String(dark))
   }
-  els.themeSwitch.addEventListener('click', () => {
+  themeSwitch.addEventListener('click', () => {
     if (!window.graphEngTheme) return
     window.graphEngTheme.set(window.graphEngTheme.get() === 'dark' ? 'light' : 'dark')
-    syncThemeSwitch()
+    syncTheme()
   })
-  new MutationObserver(syncThemeSwitch).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
-  syncThemeSwitch()
+  new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+  syncTheme()
 
-  // ── Preenchimento (sempre .value/.checked/aria-checked, nunca HTML bruto) ──
-  function fill(config) {
-    els.ceiling.value = String(config.ceiling)
-    for (const r of effortRadios) r.checked = r.value === config.effort
-    for (const r of economyRadios) r.checked = r.value === config.economy
-    setSwitch(els.planGate, !!config.planGate)
-    els.maxRounds.value = String(config.maxRounds)
-    els.maxRepairs.value = String(config.maxRepairs)
-    els.stall.value = String(config.stallMinutes)
-    clearErrors()
-    updatePreview()
+  function fill(config = {}) {
+    const effort = ['low', 'medium', 'max'].includes(config.effort) ? config.effort : 'medium'
+    for (const radio of radios) radio.checked = radio.value === effort
   }
-
-  function setSwitch(btn, on) {
-    btn.setAttribute('aria-checked', String(on))
-  }
-
+  function currentEffort() { return radios.find((radio) => radio.checked)?.value || 'medium' }
   function setEnabled(enabled) {
-    for (const f of fields) f.disabled = !enabled
+    for (const radio of radios) radio.disabled = !enabled
     saveBtn.disabled = !enabled
     resetBtn.disabled = !enabled
   }
-
-  function setStatus(text) {
-    status.textContent = text || ''
-  }
-
-  function clearErrors() {
-    for (const [input, err] of [[els.ceiling, els.ceilingErr], [els.maxRounds, els.maxRoundsErr], [els.maxRepairs, els.maxRepairsErr], [els.stall, els.stallErr]]) {
-      input.removeAttribute('aria-invalid')
-      err.hidden = true
-      err.textContent = ''
-    }
-  }
-
-  function setFieldError(input, err, message) {
-    input.setAttribute('aria-invalid', 'true')
-    err.textContent = message
-    err.hidden = false
-  }
-
-  // ── Prévia, recalculada a cada input/change (D2 §6.3) ──
-  function currentEffort() {
-    return (effortRadios.find((r) => r.checked) || {}).value || 'auto'
-  }
-
-  function updatePreview() {
-    const raw = els.ceiling.value
-    const ceiling = Number(raw)
-    const level = currentEffort()
-    const v = validateCeiling(raw)
-    if (!v.ok) {
-      setText(els.preview, '—')
-    } else if (level === 'manual') {
-      setText(els.preview, 'Você escolhe ao disparar')
-    } else if (level === 'auto') {
-      const r = targetRange(ceiling)
-      setText(els.preview, `≈ ${r.min}–${r.max} agentes por run`)
-    } else {
-      setText(els.preview, `≈ ${targetFor(level, ceiling)} agentes por run`)
-    }
-    setText(
-      els.effortHelp,
-      level === 'manual'
-        ? 'Manual: a cada disparo a skill pergunta o nível e mostra quantos agentes cada um usa. Sem humano para responder, vale o automático.'
-        : level === 'auto'
-          ? 'Automático: o Claude escolhe o nível pela complexidade da tarefa e diz por quê no plan gate.'
-          : 'Tamanho fixo do grafo.',
-    )
-    if (v.ok) {
-      const t = targetTable(ceiling)
-      setText(els.table, `Baixo ${t.low} · Médio ${t.medium} · Alto ${t.high} · Máximo ${t.max}`)
-    } else {
-      setText(els.table, '')
-    }
-  }
-
-  function setText(e, text) {
-    if (e.textContent !== text) e.textContent = text
-  }
-
-  // ── Validação local, igual à do servidor ──
-  function validate() {
-    clearErrors()
-    let ok = true
-    let firstInvalid = null
-    const c = validateCeiling(els.ceiling.value)
-    if (!c.ok) {
-      setFieldError(els.ceiling, els.ceilingErr, c.error)
-      ok = false
-      firstInvalid = firstInvalid || els.ceiling
-    }
-    const rounds = Number(els.maxRounds.value)
-    if (!Number.isInteger(rounds) || rounds < 1 || rounds > 5) {
-      setFieldError(els.maxRounds, els.maxRoundsErr, 'de 1 a 5')
-      ok = false
-      firstInvalid = firstInvalid || els.maxRounds
-    }
-    const repairs = Number(els.maxRepairs.value)
-    if (!Number.isInteger(repairs) || repairs < 1 || repairs > 3) {
-      setFieldError(els.maxRepairs, els.maxRepairsErr, 'de 1 a 3')
-      ok = false
-      firstInvalid = firstInvalid || els.maxRepairs
-    }
-    const stall = Number(els.stall.value)
-    if (!Number.isInteger(stall) || stall < 1 || stall > 60) {
-      setFieldError(els.stall, els.stallErr, 'de 1 a 60')
-      ok = false
-      firstInvalid = firstInvalid || els.stall
-    }
-    if (!ok && firstInvalid) firstInvalid.focus()
-    return ok
-  }
-
-  function payload() {
-    return {
-      effort: currentEffort(),
-      ceiling: Number(els.ceiling.value),
-      economy: (economyRadios.find((r) => r.checked) || {}).value || 'balanced',
-      planGate: els.planGate.getAttribute('aria-checked') === 'true',
-      maxRounds: Number(els.maxRounds.value),
-      maxRepairs: Number(els.maxRepairs.value),
-      stallMinutes: Number(els.stall.value),
-    }
-  }
-
-  // ── Abrir / fechar (foco preso, Esc, animação) ──
-  async function open() {
-    opener = document.activeElement
-    dialog.showModal()
-    requestAnimationFrame(() => dialog.setAttribute('data-state', 'open'))
-    els.ceiling.focus({ preventScroll: true })
-    setStatus('')
-    setEnabled(false)
-    loaded = false
-    try {
-      const res = await fetch('/api/config')
-      if (!res.ok) throw new Error('not ok')
-      const body = await res.json()
-      defaults = body.defaults
-      els.ceiling.min = String(body.limits.ceiling.min)
-      els.ceiling.max = String(body.limits.ceiling.max)
-      if (body.limits.stallMinutes) {
-        els.stall.min = String(body.limits.stallMinutes.min)
-        els.stall.max = String(body.limits.stallMinutes.max)
-      }
-      fill(body.config)
-      setEnabled(true)
-      loaded = true
-      // o campo estava desabilitado durante o GET e perdeu o foco; devolve para quem usa teclado
-      if (dialog.open) els.ceiling.focus({ preventScroll: true })
-    } catch {
-      setStatus('Não consegui ler a config. Painel antigo? Reinicie o graph-watch ui.')
-      closeBtn.focus({ preventScroll: true })
-    }
-  }
-
+  function focusEffort() { (radios.find((radio) => radio.checked && !radio.disabled) || radios.find((radio) => !radio.disabled))?.focus({ preventScroll: true }) }
   function close() {
-    if (dialog.getAttribute('data-state') === 'closed') return
-    dialog.setAttribute('data-state', 'closing')
+    if (!dialog.open || dialog.dataset.state === 'closing') return
+    dialog.dataset.state = 'closing'
     let done = false
     const finish = () => {
       if (done) return
       done = true
       dialog.close()
-      dialog.setAttribute('data-state', 'closed')
-      const card = form
-      card.removeEventListener('transitionend', onEnd)
+      dialog.dataset.state = 'closed'
+      form.removeEventListener('transitionend', onEnd)
       if (opener && document.contains(opener)) opener.focus({ preventScroll: true })
       else openBtn.focus({ preventScroll: true })
     }
-    const onEnd = (e) => {
-      if (e.target === form && e.propertyName === 'transform') finish()
-    }
+    const onEnd = (event) => { if (event.target === form && event.propertyName === 'transform') finish() }
     form.addEventListener('transitionend', onEnd)
     setTimeout(finish, CLOSE_MS)
   }
 
+  async function open() {
+    opener = document.activeElement
+    dialog.showModal()
+    requestAnimationFrame(() => { dialog.dataset.state = 'open' })
+    status.textContent = ''
+    setEnabled(false)
+    loaded = false
+    focusEffort()
+    try {
+      const response = await fetch('/api/config')
+      if (!response.ok) throw new Error('leitura recusada')
+      const body = await response.json()
+      defaults = body.defaults || { effort: 'medium' }
+      fill(body.config)
+      setEnabled(true)
+      loaded = true
+      if (dialog.open) focusEffort()
+    } catch {
+      status.textContent = 'Não consegui ler a config. Reinicie o graph-watch ui.'
+      closeBtn.focus({ preventScroll: true })
+    }
+  }
+
   openBtn.addEventListener('click', open)
   closeBtn.addEventListener('click', close)
-  dialog.addEventListener('cancel', (e) => {
-    e.preventDefault() // não corta a animação de saída
-    close()
+  dialog.addEventListener('cancel', (event) => { event.preventDefault(); close() })
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) close() })
+  dialog.addEventListener('keydown', (event) => {
+    if (event.key !== 'Tab') return
+    const focusable = [...dialog.querySelectorAll('button, input, [tabindex]')].filter((el) => !el.disabled && el.getClientRects().length)
+    if (!focusable.length) return
+    const first = focusable[0]
+    const last = focusable.at(-1)
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
   })
-  dialog.addEventListener('click', (e) => {
-    if (e.target === dialog) close() // clique no backdrop
-  })
-
-  function focusable() {
-    return [...dialog.querySelectorAll('button, input, [tabindex]')].filter((e) => !e.disabled && e.getClientRects().length > 0)
-  }
-  dialog.addEventListener('keydown', (e) => {
-    if (e.key !== 'Tab') return
-    const list = focusable()
-    if (!list.length) return
-    const first = list[0]
-    const last = list[list.length - 1]
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault()
-      last.focus()
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault()
-      first.focus()
-    }
-  })
-
-  for (const f of [els.ceiling, ...effortRadios]) {
-    f.addEventListener('input', updatePreview)
-    f.addEventListener('change', updatePreview)
-  }
-  els.ceiling.addEventListener('input', () => {
-    els.ceiling.removeAttribute('aria-invalid')
-    els.ceilingErr.hidden = true
-  })
-
-  for (const btn of [els.planGate]) {
-    btn.addEventListener('click', () => setSwitch(btn, btn.getAttribute('aria-checked') !== 'true'))
-  }
-
-  resetBtn.addEventListener('click', () => {
-    if (!defaults) return
-    fill(defaults)
-  })
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault()
-    if (!loaded || !validate()) return
+  resetBtn.addEventListener('click', () => fill(defaults))
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    if (!loaded) return
     saveBtn.disabled = true
-    setStatus('Salvando…')
+    status.textContent = 'Salvando…'
     try {
-      const res = await fetch('/api/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload()),
-      })
-      const body = await res.json().catch(() => ({}))
-      if (res.ok) {
-        setStatus('Salvo.')
-        close()
-      } else if (res.status === 400 && body.fields) {
-        for (const [key, err] of [
-          ['ceiling', els.ceilingErr],
-          ['maxRounds', els.maxRoundsErr],
-          ['maxRepairs', els.maxRepairsErr],
-          ['stallMinutes', els.stallErr],
-        ]) {
-          if (body.fields[key]) {
-            const input = key === 'ceiling' ? els.ceiling : key === 'maxRounds' ? els.maxRounds : key === 'maxRepairs' ? els.maxRepairs : els.stall
-            setFieldError(input, err, body.fields[key])
-          }
-        }
-        setStatus(body.error || 'config inválida')
-      } else {
-        setStatus(body.error || 'não consegui salvar')
-      }
-    } catch {
-      setStatus('sem conexão com o painel')
-    } finally {
-      saveBtn.disabled = false
-    }
+      const response = await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ effort: currentEffort() }) })
+      const body = await response.json().catch(() => ({}))
+      if (response.ok) { status.textContent = 'Salvo.'; close() }
+      else status.textContent = body.error || (body.fields ? `Configuração inválida: ${Object.values(body.fields).join(', ')}` : 'Não consegui salvar.')
+    } catch { status.textContent = 'Sem conexão com o painel.' }
+    finally { saveBtn.disabled = false }
   })
 }

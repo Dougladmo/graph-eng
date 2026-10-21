@@ -1,0 +1,6 @@
+import { normalizarRegistro } from './a.mjs'
+
+export function textoPublico(texto) {
+  const normalizado = normalizarRegistro(texto)
+  return normalizado === '' ? 'Registro: (vazio)' : 'Registro: ' + normalizado
+}

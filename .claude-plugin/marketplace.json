@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "graph-eng",
-  "description": "Graph engineering enxuto para o Claude Code.",
+  "description": "Graph engineering enxuto para Claude Code e Codex.",
   "owner": {
     "name": "Douglas Oliveira",
     "url": "https://github.com/Dougladmo"

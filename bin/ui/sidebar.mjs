@@ -28,6 +28,10 @@ export function sectionOf(run) {
 // Título legível: runId sem o prefixo `AAAAMMDD-HHMM-`; sem runId, o goal cortado em 80; sem os dois, o wf
 // curto (D4 §4.4).
 export function titleOf(run) {
+  if (run.generation === 'v2' && typeof run.goal === 'string' && run.goal.trim()) {
+    const goal = run.goal.trim()
+    return goal.length > 80 ? `${goal.slice(0, 80)}…` : goal
+  }
   if (typeof run.runId === 'string' && run.runId) {
     const stripped = run.runId.replace(RUN_ID_PREFIX_RE, '')
     return stripped || run.runId

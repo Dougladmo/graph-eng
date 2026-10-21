@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { runWorkflow, defaultScript } from './helpers/run-workflow.mjs'
 
-const BASE = { task: 'tarefa de teste', runDir: '.graph-runs/test', checks: [] }
+const BASE = { task: 'tarefa de teste', runDir: '.graph-runs/test', checks: [{ id: 'test', command: 'node', args: ['--test'] }] }
 
 function planWith(nodes, extra) {
   return Object.assign({ goal: 'g', complexity: 'moderate', doneWhen: ['ok'], nodes, effort: { level: 'medium', why: 't' } }, extra)
@@ -110,12 +110,12 @@ test('revisão reprovada impede qualquer agente work de implementação', async 
   const routes = {
     'design-review': () => ({ pass: false, confidence: 'high', blocking: [{ issue: 'falta contrato', where: 'D1', fix: 'definir', node: 'D1' }], checked: {} }),
   }
-  const { result, calls } = await runWorkflow({ ...BASE, mode: 'implement', plan, maxRepairs: 1 }, defaultScript(routes))
+  const { result, calls } = await runWorkflow({ ...BASE, mode: 'implement', plan }, defaultScript(routes))
   assert.ok(!calls.some((c) => c.startsWith('work:I1')), 'work:I1 não devia rodar')
   assert.ok(!calls.some((c) => c.startsWith('verify:I1')))
   assert.equal(result.status, 'blocked')
   assert.equal(result.designReview.pass, false)
-  assert.equal(calls.filter((c) => c === 'design-repair:D1').length, 1, 'exatamente 1 reparo de design (maxRepairs:1)')
+  assert.equal(calls.filter((c) => c === 'design-repair:D1').length, 1, 'reparo de design consome o banco local global')
   assert.ok(calls.includes('synth'))
   assert.ok(!calls.some((c) => c.startsWith('critic:')), 'crítica não devia rodar')
 })
@@ -130,28 +130,29 @@ test('sem atalho trivial: 1 nó implement ainda passa por design-review, critic 
   assert.ok(calls.includes('synth'))
 })
 
-test('orçamento: esforço low com teto 24 (alvo 8) gasta no máximo 8 agentes', async () => {
+test('orçamento low reserva o esqueleto e todos os gates', async () => {
   const plan = planWith([
     { id: 'R1', kind: 'research', title: 'r', brief: 'b', deps: [], risk: 'low', acceptance: ['a'] },
     { id: 'D1', kind: 'design', title: 'd', brief: 'b', deps: ['R1'], risk: 'low', acceptance: ['a'] },
     { id: 'I1', kind: 'implement', title: 'i', brief: 'b', deps: ['D1'], risk: 'low', acceptance: ['a'], files: ['x.js'] },
-  ])
-  const { calls } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'low', ceiling: 24, plan }, defaultScript())
-  const agentCalls = calls.filter((c) => !c.startsWith('#'))
-  assert.ok(agentCalls.length <= 8, `gastou ${agentCalls.length} agentes, esperado <= 8`)
+  ], { effort: { level: 'low', why: 'teste' } })
+  const { calls, result } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'low', plan }, defaultScript())
+  assert.equal(result.status, 'done')
+  assert.deepEqual(result.stats.dropped, [])
+  for (const gate of ['plan-review:r1', 'design-review:r1', 'verify:I1', 'critic:r1', 'polish:1', 'synth']) assert.ok(calls.includes(gate), `${gate} não foi reservado`)
+  assert.equal(result.budget.limitsByRole.executor, 6)
+  assert.equal(result.budget.limitsByRole.verifier, 6)
 })
 
 test('orçamento: 2 implementações paralelas (arquivos disjuntos) reservam verify para as duas', async () => {
-  // effort medium / ceiling 30 -> alvo 12, exatamente o necessário: plan + R1 + D1 + design-review
-  // + (I1,I2 work+verify) + critic + 2 polidores + synth = 12. Sem a reserva de (a), work:I2 (que
-  // roda em paralelo por arquivo disjunto) podia gastar a vaga que garantia verify:I1.
+  // O orçamento medium cobre plan-review, os dois verifies, polish e o gate final.
   const plan = planWith([
     { id: 'R1', kind: 'research', title: 'r', brief: 'b', deps: [], risk: 'low', acceptance: ['a'] },
     { id: 'D1', kind: 'design', title: 'd', brief: 'b', deps: ['R1'], risk: 'low', acceptance: ['a'] },
     { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: ['D1'], risk: 'low', acceptance: ['a'], files: ['a.js'] },
     { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: ['D1'], risk: 'low', acceptance: ['a'], files: ['b.js'] },
   ])
-  const { calls, result } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', ceiling: 30, plan }, defaultScript())
+  const { calls, result } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan }, defaultScript())
   const impl = result.nodes.filter((n) => n.kind === 'implement')
   assert.equal(impl.length, 2)
   for (const n of impl) {
@@ -163,24 +164,17 @@ test('orçamento: 2 implementações paralelas (arquivos disjuntos) reservam ver
   assert.equal(result.status, 'done')
 })
 
-test('orçamento: implementação excedente ao teto não sai "done" sem verificação', async () => {
-  // effort medium / ceiling 24 -> alvo 10, max 3 nós; com R1/R3 injetando research-base e
-  // design-base (plano só com 3 implementações), o trilho maxNodes corta o excedente antes de
-  // rodar. Nenhuma implementação sobrevivente pode terminar "done" sem estar verified, e nem
-  // todas as 3 pedidas pelo usuário conseguem rodar.
+test('plano acima do node cap bloqueia sem remover implementações aprovadas', async () => {
   const plan = planWith([
     { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['a.js'] },
     { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['b.js'] },
     { id: 'I3', kind: 'implement', title: 'i3', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['c.js'] },
-  ])
-  const { result } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', ceiling: 24, plan }, defaultScript())
-  const impl = result.nodes.filter((n) => n.kind === 'implement')
-  for (const n of impl) {
-    if (n.status === 'done') assert.ok(n.verified, `${n.id} saiu done sem verified (orçamento insuficiente)`)
-  }
-  const doneVerified = impl.filter((n) => n.status === 'done' && n.verified)
-  assert.ok(doneVerified.length < 3, 'as 3 implementações pedidas não podiam caber e sair verificadas com esse teto')
-  assert.ok(result.rails.some((r) => r.rule === 'maxNodes'), 'trilho maxNodes não registrou o corte')
+  ], { effort: { level: 'low', why: 'teste' } })
+  const { result, calls } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'low', plan }, defaultScript())
+  assert.equal(result.feedback.reason, 'approved_plan_exceeds_effort_node_cap')
+  assert.equal(result.feedback.affectedNodes.length, 5)
+  assert.equal(result.plan.nodes.filter((n) => n.kind === 'implement').length, 3)
+  assert.ok(!calls.some((label) => label.startsWith('work:')))
 })
 
 test('crítica sempre roda no piso, em implement e em architecture', async () => {
@@ -189,7 +183,7 @@ test('crítica sempre roda no piso, em implement e em architecture', async () =>
     { id: 'D1', kind: 'design', title: 'd', brief: 'b', deps: ['R1'], risk: 'low', acceptance: ['a'] },
     { id: 'I1', kind: 'implement', title: 'i', brief: 'b', deps: ['D1'], risk: 'low', acceptance: ['a'], files: ['x.js'] },
   ])
-  const implRun = await runWorkflow({ ...BASE, mode: 'implement', effort: 'low', ceiling: 24, plan: planImpl }, defaultScript())
+  const implRun = await runWorkflow({ ...BASE, mode: 'implement', effort: 'low', plan: planWith(planImpl.nodes, { effort: { level: 'low', why: 'teste' } }) }, defaultScript())
   assert.ok(implRun.calls.includes('critic:r1'))
   assert.ok(implRun.calls.includes('design-review:r1'))
   assert.ok(implRun.calls.includes('synth'))
@@ -198,19 +192,19 @@ test('crítica sempre roda no piso, em implement e em architecture', async () =>
     { id: 'R1', kind: 'research', title: 'r', brief: 'b', deps: [], risk: 'low', acceptance: ['a'] },
     { id: 'D1', kind: 'design', title: 'd', brief: 'b', deps: ['R1'], risk: 'low', acceptance: ['a'] },
   ])
-  const archRun = await runWorkflow({ ...BASE, mode: 'architecture', effort: 'low', ceiling: 24, plan: planArch }, defaultScript())
+  const archRun = await runWorkflow({ ...BASE, mode: 'architecture', effort: 'low', plan: planWith(planArch.nodes, { effort: { level: 'low', why: 'teste' } }) }, defaultScript())
   assert.ok(archRun.calls.includes('critic:r1'))
   assert.ok(archRun.calls.includes('design-review:r1'))
   assert.ok(archRun.calls.includes('synth'))
 })
 
-test('paralelo: implementações com arquivos disjuntos rodam juntas; com sobreposição, nunca simultâneas', async () => {
+test('implementações são serializadas para atribuir diffs; arquivos sobrepostos também nunca rodam juntos', async () => {
   const plan = planWith([
     { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['a.js'] },
     { id: 'I3', kind: 'implement', title: 'i3', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['b.js'] },
   ])
-  const { maxLive } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'max', ceiling: 24, plan }, defaultScript())
-  assert.ok(maxLive >= 2, `esperado paralelo (maxLive >= 2), veio ${maxLive}`)
+  const { maxLive } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan }, defaultScript())
+  assert.equal(maxLive, 1, `implementações disjuntas devem preservar a escrita serial, veio ${maxLive}`)
 
   const overlapPlan = planWith([
     { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['a.js'] },
@@ -229,7 +223,7 @@ test('paralelo: implementações com arquivos disjuntos rodam juntas; com sobrep
       return { status: 'done', summary: label + ' ok', confidence: 'high', checks: [] }
     },
   }
-  await runWorkflow({ ...BASE, mode: 'implement', effort: 'max', ceiling: 24, plan: overlapPlan }, defaultScript(routes))
+  await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan: overlapPlan }, defaultScript(routes))
   assert.equal(sawConcurrentWork, false, 'work:I2 e work:I3 rodaram juntos apesar de compartilhar arquivo')
 })
 
@@ -239,13 +233,13 @@ test('polidores: 3 implementações prontas com arquivos disjuntos geram 2 rótu
     { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['b.js'] },
     { id: 'I3', kind: 'implement', title: 'i3', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['c.js'] },
   ])
-  const { calls } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'max', ceiling: 48, plan }, defaultScript())
+  const { calls } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan }, defaultScript())
   const polishCalls = calls.filter((c) => c.startsWith('polish:'))
   assert.equal(polishCalls.length, 2, `esperado 2 polidores (ceil(2*3/3)), veio ${polishCalls.length}: ${polishCalls}`)
   assert.ok(calls.indexOf('synth') > calls.indexOf(polishCalls[polishCalls.length - 1]))
 })
 
-test('polidor: prompt não usa git checkout e manda restaurar do backup em polish-1', async () => {
+test('polidor: prompt não usa git checkout, cita só as refs de backup do supervisor e não manda copiar para RUN_DIR', async () => {
   const plan = planWith([
     { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['a.js'] },
   ])
@@ -256,19 +250,26 @@ test('polidor: prompt não usa git checkout e manda restaurar do backup em polis
       return { status: 'done', summary: label + ' ok', confidence: 'high', checks: [] }
     },
   }
-  await runWorkflow({ ...BASE, mode: 'implement', effort: 'max', ceiling: 48, plan }, defaultScript(routes))
+  await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan }, defaultScript(routes))
   assert.ok(polishPrompt, 'rótulo polish:1 não disparou')
   assert.ok(!/git checkout/.test(polishPrompt), 'prompt do polidor ainda manda git checkout')
   assert.ok(!/git (restore|stash|reset)/.test(polishPrompt), 'prompt do polidor ainda manda git restore/stash/reset')
-  assert.ok(polishPrompt.includes('polish-1'), 'prompt do polidor não cita o backup em polish-1')
+  // (1) cita a ref real do backup criado pelo supervisor e manda restaurar a partir dela
+  assert.ok(polishPrompt.includes(`a.js <- ${BASE.runDir}/polish-backups/fake/a.js`), 'prompt do polidor não cita a ref do backup do supervisor')
+  assert.match(polishPrompt, /restore each of your area files from the backup/, 'prompt do polidor não manda restaurar a partir do backup')
+  // (2) não manda copiar nem escrever nada em RUN_DIR
+  assert.ok(!/Before editing, copy/.test(polishPrompt), 'prompt do polidor ainda manda copiar antes de editar')
+  assert.ok(!/into \S*polish-\d/.test(polishPrompt), 'prompt do polidor ainda manda gravar em polish-N dentro de RUN_DIR')
+  assert.match(polishPrompt, /read-only for you: do not create, edit or delete any backup/, 'refs de backup não são declaradas somente leitura')
 })
 
-test('manual: esforço manual chega ao workflow e vira auto, registrado no log', async () => {
+test('effort high é rejeitado pelo motor', async () => {
   const plan = planWith([
     { id: 'I1', kind: 'implement', title: 'i', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['x.js'] },
   ])
-  const { logs } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'manual', plan }, defaultScript())
-  assert.ok(logs.some((l) => l.includes('tratado como auto')))
+  const { result, calls } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'high', plan }, defaultScript())
+  assert.equal(result.feedback.reason, 'invalid_effort')
+  assert.deepEqual(calls, [])
 })
 
 test('architecture sem implementação: nó implement do planner vira design', async () => {
@@ -284,86 +285,6 @@ test('architecture sem implementação: nó implement do planner vira design', a
   assert.ok(calls.includes('design-review:r1'))
   assert.ok(calls.includes('critic:r1'))
   assert.ok(calls.includes('synth'))
-})
-
-test('maxNodes: 3 research + 2 design + 3 implement com maxNodes 3 mantém ao menos 1 de cada kind', async () => {
-  // ceiling 8 é o mínimo para implement (MODE_FLOOR.implement), o que força maxNodes a cair no
-  // piso de sizing() (minNodes=3) independente do effort — exatamente o teto que a spec pede
-  // testar (3), igual ao piso de 1 nó por kind obrigatório (research+design+implement).
-  const plan = planWith([
-    { id: 'R1', kind: 'research', title: 'r1', brief: 'b', deps: [], risk: 'low', acceptance: ['a'] },
-    { id: 'R2', kind: 'research', title: 'r2', brief: 'b', deps: [], risk: 'low', acceptance: ['a'] },
-    { id: 'R3', kind: 'research', title: 'r3', brief: 'b', deps: [], risk: 'low', acceptance: ['a'] },
-    { id: 'D1', kind: 'design', title: 'd1', brief: 'b', deps: ['R1', 'R2', 'R3'], risk: 'low', acceptance: ['a'] },
-    { id: 'D2', kind: 'design', title: 'd2', brief: 'b', deps: ['R1', 'R2', 'R3'], risk: 'low', acceptance: ['a'] },
-    { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: ['D1', 'D2'], risk: 'low', acceptance: ['a'], files: ['a.js'] },
-    { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: ['D1', 'D2'], risk: 'low', acceptance: ['a'], files: ['b.js'] },
-    { id: 'I3', kind: 'implement', title: 'i3', brief: 'b', deps: ['D1', 'D2'], risk: 'low', acceptance: ['a'], files: ['c.js'] },
-  ])
-  const { result } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'low', ceiling: 8, planOnly: true, plan }, defaultScript())
-  const nodes = result.plan.nodes
-  const byId = new Map(nodes.map((n) => [n.id, n]))
-  const kinds = new Set(nodes.map((n) => n.kind))
-  assert.ok(kinds.has('research'), 'perdeu todo research')
-  assert.ok(kinds.has('design'), 'perdeu todo design')
-  assert.ok(kinds.has('implement'), 'perdeu todo implement')
-  assert.ok(result.rails.some((r) => r.rule === 'maxNodes'), 'trilho maxNodes não registrado')
-
-  const ancestorsOf = (n) => {
-    const seen = new Set()
-    const stack = [...n.deps]
-    while (stack.length) {
-      const id = stack.pop()
-      if (seen.has(id)) continue
-      seen.add(id)
-      const m = byId.get(id)
-      if (m) stack.push(...m.deps)
-    }
-    return seen
-  }
-  for (const n of nodes) {
-    if (n.kind === 'design') {
-      const anc = ancestorsOf(n)
-      assert.ok([...anc].some((id) => byId.get(id).kind === 'research'), `${n.id} (design) sem pesquisa entre os ancestrais`)
-    }
-    if (n.kind === 'implement') {
-      const anc = ancestorsOf(n)
-      assert.ok([...anc].some((id) => byId.get(id).kind === 'design'), `${n.id} (implement) sem design entre os ancestrais`)
-    }
-  }
-})
-
-test('auto: plano maior que o nível escolhido sobe o esforço em vez de cortar entrega', async () => {
-  // Teto 24, implement: low comporta 3 nós, medium 3, high 6. O planner escolheu low, mas montou 5
-  // nós; no automático quem manda no tamanho é o plano, então o nível sobe para high e nada é cortado.
-  const plan = planWith([
-    { id: 'R1', kind: 'research', title: 'r1', brief: 'b', deps: [], risk: 'low', acceptance: ['a'] },
-    { id: 'D1', kind: 'design', title: 'd1', brief: 'b', deps: ['R1'], risk: 'low', acceptance: ['a'] },
-    { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: ['D1'], risk: 'low', acceptance: ['a'], files: ['a.js'] },
-    { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: ['D1'], risk: 'low', acceptance: ['a'], files: ['b.js'] },
-    { id: 'I3', kind: 'implement', title: 'i3', brief: 'b', deps: ['D1'], risk: 'low', acceptance: ['a'], files: ['c.js'] },
-  ], { effort: { level: 'low', why: 'parece simples' } })
-  const { result } = await runWorkflow({ ...BASE, mode: 'implement', ceiling: 24, planOnly: true, plan }, defaultScript())
-  assert.equal(result.effort.level, 'high')
-  assert.equal(result.effort.target, 17)
-  assert.equal(result.plan.nodes.filter((n) => n.kind === 'implement').length, 3, 'cortou implementação')
-  assert.ok(result.rails.some((r) => r.rule === 'effort'), 'trilho effort não registrado')
-  assert.ok(!result.rails.some((r) => r.rule === 'maxNodes'), 'não devia cortar nada')
-  assert.match(result.effort.why, /subiu de low para high/)
-})
-
-test('nível fixado pelo usuário não sobe: o plano grande é cortado, mantendo o esqueleto', async () => {
-  const plan = planWith([
-    { id: 'R1', kind: 'research', title: 'r1', brief: 'b', deps: [], risk: 'low', acceptance: ['a'] },
-    { id: 'D1', kind: 'design', title: 'd1', brief: 'b', deps: ['R1'], risk: 'low', acceptance: ['a'] },
-    { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: ['D1'], risk: 'low', acceptance: ['a'], files: ['a.js'] },
-    { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: ['D1'], risk: 'low', acceptance: ['a'], files: ['b.js'] },
-  ])
-  const { result } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'low', ceiling: 24, planOnly: true, plan }, defaultScript())
-  assert.equal(result.effort.level, 'low')
-  assert.ok(!result.rails.some((r) => r.rule === 'effort'))
-  assert.ok(result.rails.some((r) => r.rule === 'maxNodes'))
-  assert.equal(result.plan.nodes.length, 3)
 })
 
 // Os nós de uma run dividem a árvore de trabalho, e nada da run está commitado. Um `git stash` de um
@@ -383,11 +304,69 @@ test('todo agente recebe a regra de não usar stash, reset, checkout, restore ne
     prompts.set(label, prompt)
     return base(label, prompt, opts)
   }
-  await runWorkflow({ ...BASE, mode: 'implement', effort: 'high', ceiling: 24, plan }, script)
+  await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan }, script)
   const kinds = new Set([...prompts.keys()].map((l) => l.split(':')[0]))
   for (const k of ['work', 'verify', 'design-review', 'critic', 'synth']) assert.ok(kinds.has(k), `nenhum agente ${k} rodou`)
   for (const [label, prompt] of prompts) {
     assert.match(prompt, /Never use git's stash, reset, checkout, restore or clean commands/, `${label} sem a regra`)
-    assert.match(prompt, /git worktree add --detach <tmp> HEAD/, `${label} sem a saída pela linha de base`)
+    // Sem shell de agente (Claude), a saída pela linha de base vira o aviso de que o supervisor roda os checks.
+    assert.match(prompt, /git worktree add --detach <tmp> HEAD|You cannot run commands\. The supervisor runs the approved checks/, `${label} sem a saída pela linha de base`)
   }
+})
+
+// C8: o motor não manda o modelo escrever relatório privado em RUN_DIR; o resultado estruturado é a prova.
+test('C8: prompt de implement e de repair não manda escrever arquivo em RUN_DIR', async () => {
+  const plan = planWith([
+    { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['a.js'] },
+  ])
+  const defaults = defaultScript()
+  const prompts = {}
+  const script = (label, prompt, opts) => {
+    if (label === 'work:I1' || label === 'repair:I1') prompts[label] = prompt
+    if (label === 'verify:I1') return { pass: false, confidence: 'high', blocking: [{ issue: 'falha real', where: 'I1', fix: 'reparar' }] }
+    return defaults(label, prompt, opts)
+  }
+  await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan }, script)
+  const runDirMd = new RegExp(`${BASE.runDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[^\\s\`"]*\\.md`)
+  for (const label of ['work:I1', 'repair:I1']) {
+    assert.ok(prompts[label], `${label} não disparou`)
+    assert.ok(!/Write the full output to/.test(prompts[label]), `${label} ainda manda escrever o relatório`)
+    assert.ok(!runDirMd.test(prompts[label]), `${label} cita arquivo .md dentro de RUN_DIR como destino`)
+  }
+})
+
+test('C8: artifact devolvido pelo modelo não vira caminho nos prompts de verify nem de dependente', async () => {
+  const plan = planWith([
+    { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['a.js'] },
+    { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: ['I1'], risk: 'low', acceptance: ['a'], files: ['b.js'] },
+  ])
+  const defaults = defaultScript()
+  const prompts = {}
+  const script = (label, prompt, opts) => {
+    if (label === 'verify:I1' || label === 'work:I2') prompts[label] = prompt
+    if (label === 'work:I1') return { status: 'done', summary: 'feito', confidence: 'high', checks: [], artifact: `${BASE.runDir}/state.json`, filesChanged: ['a.js'] }
+    return defaults(label, prompt, opts)
+  }
+  await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan }, script)
+  assert.ok(prompts['verify:I1'], 'verify:I1 não disparou')
+  assert.ok(prompts['work:I2'], 'work:I2 não disparou')
+  for (const label of ['verify:I1', 'work:I2']) {
+    assert.ok(!prompts[label].includes('state.json'), `${label} trata artifact do modelo como caminho`)
+  }
+})
+
+test('C8: judge de rascunhos não cita .a.md/.b.md quando os rascunhos não trazem artifact', async () => {
+  const plan = planWith([
+    { id: 'D1', kind: 'design', title: 'd', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], explore: true },
+  ], { effort: { level: 'max', why: 't' } })
+  const defaults = defaultScript()
+  let judgePrompt = null
+  const script = (label, prompt, opts) => {
+    if (label === 'judge:D1') judgePrompt = prompt
+    if (label.startsWith('draft-')) return { status: 'done', summary: `rascunho ${label}`, confidence: 'high', checks: [] }
+    return defaults(label, prompt, opts)
+  }
+  await runWorkflow({ ...BASE, mode: 'architecture', effort: 'max', plan }, script)
+  assert.ok(judgePrompt, 'judge:D1 não disparou')
+  assert.ok(!/\.[ab]\.md/.test(judgePrompt), 'judge cita arquivo de rascunho que nunca foi escrito')
 })

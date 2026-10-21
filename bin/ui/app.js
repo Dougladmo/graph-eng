@@ -32,7 +32,7 @@ import { STATE_TEXT, variantOf, hasRun, buildGraph, layoutGraph, placeGraph, lan
 import { initSettings } from './config-modal.mjs'
 import { PAGE, STEP, sectionOf, titleOf, metaOf, stripOf, buildSections } from './sidebar.mjs'
 import { openConfirm } from './confirm.mjs'
-import * as Actions from './actions.mjs'
+import * as Artifacts from './artifacts.mjs'
 
 // ── DOM ──
 const $ = (id) => document.getElementById(id)
@@ -130,6 +130,28 @@ const edgeEls = new Map()
 let scrolledTo = null // `${wf}#${coluna}` da última rolagem automática (só rola de novo quando a etapa muda)
 
 function renderGraph(model) {
+  if (model.generation === 'v2') {
+    for (const e of [...laneEls.values(), ...nodeEls.values(), ...edgeEls.values()]) e.remove()
+    laneEls.clear()
+    nodeEls.clear()
+    edgeEls.clear()
+    setStyle(els.graph, { width: `${els.mapScroll.clientWidth}px`, height: '0px' })
+    setData(els.graph, { status: model.status || '', generation: 'v2' })
+    const legend = document.getElementById('legend')
+    if (legend) {
+      legend.hidden = true
+      legend.style.display = 'none'
+    }
+    setText(els.emptyMsg, 'Os dados por nó ainda não estão disponíveis para esta execução.')
+    return
+  }
+  setData(els.graph, { generation: 'legacy' })
+  const legend = document.getElementById('legend')
+  if (legend) {
+    legend.hidden = false
+    legend.style.display = ''
+  }
+  if (els.emptyMsg.textContent === 'Os dados por nó ainda não estão disponíveis para esta execução.') setText(els.emptyMsg, '')
   const graph = buildGraph(model)
   const layout = layoutGraph(graph)
   const small = mobile.matches
@@ -261,7 +283,7 @@ let runs = []
 let selectedWf = new URLSearchParams(location.search).get('run') || null
 let currentModel = null
 let openNodeId = null
-let drawerMode = null // null | 'node' | 'run' (artefatos, Actions.openArtifactsDrawer)
+let drawerMode = null // null | 'node' | 'run' (artefatos, Artifacts)
 
 els.sidebarToggle.addEventListener('click', () => setSidebarOpen(!els.sidebar.classList.contains('open')))
 els.drawerClose.addEventListener('click', closeDrawer)
@@ -287,7 +309,7 @@ function closeDrawer() {
   setData(els.app, { drawer: 'closed' })
   for (const b of nodeEls.values()) setData(b, { selected: false })
   if (currentModel) renderGraph(currentModel)
-  Actions.onDrawerClosed()
+  Artifacts.onDrawerClosed()
 }
 
 // ── Lateral de runs (card flutuante; recolhe e expande) ──
@@ -312,8 +334,8 @@ syncRailButtons()
 // ── Configurações (modal de engrenagem, com o switch de tema dentro) ──
 initSettings()
 
-// ── Ações da run (retomar, parar, refazer nó, artefatos; bin/ui/actions.mjs, C14) ──
-Actions.initActions({
+// ── Artefatos da run (botão na barra da run e gaveta em modo run; bin/ui/artifacts.mjs, só leitura) ──
+Artifacts.initArtifacts({
   openArtifactsDrawer() {
     openNodeId = null
     drawerMode = 'run'
@@ -529,17 +551,20 @@ function createRunRow() {
   })
   row.append(btn, more)
   row.addEventListener('contextmenu', (e) => {
+    if (row.dataset.generation === 'v2') return
     e.preventDefault()
     openRunMenu(row.dataset.key, e.clientX, e.clientY, more)
   })
   row.addEventListener('keydown', (e) => {
     if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      if (row.dataset.generation === 'v2') return
       e.preventDefault()
       const r = row.getBoundingClientRect()
       openRunMenu(row.dataset.key, r.right, r.bottom, more)
     }
   })
   row.addEventListener('dragstart', (e) => {
+    if (row.dataset.generation === 'v2') { e.preventDefault(); return }
     e.dataTransfer.setData('application/x-graph-eng-run', row.dataset.wf)
     e.dataTransfer.setData('text/plain', title.textContent)
     e.dataTransfer.effectAllowed = 'move'
@@ -553,7 +578,8 @@ function createRunRow() {
 }
 
 function updateRunRow(row, r) {
-  setData(row, { key: r.key, wf: r.wf })
+  setData(row, { key: r.key, wf: r.wf, generation: r.generation || 'legacy' })
+  row.draggable = r.generation !== 'v2'
   const [btn, more] = row.children
   const sec = sectionOf(r)
   setData(btn, { status: r.status, stopped: sec === 'stopped' ? '1' : '0', archived: r.archived ? '1' : '0' })
@@ -567,6 +593,7 @@ function updateRunRow(row, r) {
   btn.title = [r.goal, r.project, r.runId || r.wf].filter(Boolean).join(' · ') + (meta ? ` · ${meta}` : '')
   updateRunRight(right, r)
   more.setAttribute('aria-label', `Mais ações para ${titleOf(r)}`)
+  more.hidden = r.generation === 'v2'
 }
 
 function updateRunRight(container, r) {
@@ -786,7 +813,7 @@ function openMenuAt(x, y, build, opener) {
 }
 function openRunMenu(key, x, y, opener) {
   const r = runs.find((x2) => x2.key === key)
-  if (!r) return
+  if (!r || r.generation === 'v2') return
   openMenuAt(x, y, (m) => {
     m.append(menuItem(r.pinned ? 'Desafixar' : 'Fixar', { onClick: () => orgCall('pin', { wf: r.wf, pinned: !r.pinned }) }))
     m.append(menuSep('Mover para'))
@@ -1065,7 +1092,7 @@ async function refresh() {
     renderHeader(currentModel)
     renderGraph(currentModel)
     if (openNodeId) await loadDetail(wf, openNodeId)
-    else if (drawerMode === 'run') Actions.refreshArtifacts()
+    else if (drawerMode === 'run') Artifacts.refreshArtifacts()
   } catch {
     /* sem rede: o #conn já avisa; o próximo evento tenta de novo */
   } finally {
@@ -1080,7 +1107,7 @@ async function refresh() {
 function renderHeader(model) {
   if (!model) {
     els.header.replaceChildren()
-    Actions.render(null)
+    Artifacts.renderRunTools(null)
     return
   }
   if (!els.header.firstChild) {
@@ -1089,31 +1116,72 @@ function renderHeader(model) {
     const chips = el('div', 'chips')
     const reason = el('span', 'chip chip-reason')
     reason.id = 'chip-reason'
-    const listen = el('span', 'chip-listen')
-    listen.id = 'chip-listen'
-    chips.append(el('span', 'chip chip-status'), el('span', 'chip'), el('span', 'chip'), reason, listen, el('span', 'warns'))
+    chips.append(el('span', 'chip chip-status'), el('span', 'chip'), el('span', 'chip'), reason, el('span', 'warns'))
     els.header.append(h1, chips, el('p', 'goal'))
   }
   const [h1, chips, goal] = els.header.children
   // O nome é o mesmo da lateral (titleOf): numa retomada o wf muda e o nome da run não. O wf da execução
-  // mostrada fica no title do h1, e a barra de ações avisa quando ela já foi retomada em outra.
+  // mostrada fica no title do h1, e a barra da run avisa quando ela já foi retomada em outra.
   const name = model.runId ? titleOf({ runId: model.runId }) : shortWf(model.wf)
   if (h1.firstChild.data !== (model.project ? `${model.project} — ` : '')) h1.firstChild.data = model.project ? `${model.project} — ` : ''
   setText(h1.lastChild, name)
   if (h1.title !== (model.wf || '')) h1.title = model.wf || ''
-  const [status, round, agents, , , warns] = chips.children
+  const [status, round, agents, reason, warns] = chips.children
   setText(status, model.status || '')
   setData(status, { status: model.status || '' })
-  setText(round, `round ${model.round}`)
+  setText(round, model.generation === 'v2' ? `plan version ${model.round}` : `round ${model.round}`)
   const est = model.estimate != null ? ` de ~${model.estimate}${model.ceiling != null ? ` (teto ${model.ceiling})` : ''}` : ''
   setText(agents, model.spent != null ? `${model.spent} agente${model.spent === 1 ? '' : 's'}${est}` : '')
+  // motivo da parada (chip laranja), só quando o Modelo dá um
+  setText(reason, model.stop && model.stop.text ? model.stop.text : '')
+  setData(reason, { reason: (model.stop && model.stop.reason) || '' })
   // avisos viram chips laranja (o wrapper .warns é display: contents, os chips ficam na mesma linha)
   const list = model.warns || []
   while (warns.children.length > list.length) warns.lastChild.remove()
   while (warns.children.length < list.length) warns.append(el('span', 'chip chip-warn'))
   list.forEach((w, i) => setText(warns.children[i], w))
   setText(goal, model.goal || '')
-  Actions.render(model)
+  renderV2Panel(model)
+  Artifacts.renderRunTools(model)
+}
+
+// Painel v2: status, plan version, reparos, replanejamentos, feedback e memória. Tudo entra por
+// textContent (el/setText); o texto vindo do journal é dado, nunca marcação.
+function renderV2Panel(model) {
+  let panel = els.header.querySelector('#v2-panel')
+  if (model.generation !== 'v2' || !model.v2) {
+    if (panel) panel.hidden = true
+    return
+  }
+  if (!panel) {
+    panel = el('section', 'v2-panel')
+    panel.id = 'v2-panel'
+    panel.setAttribute('aria-label', 'resumo da execução v2')
+    els.header.append(panel)
+  }
+  panel.hidden = false
+  const v2 = model.v2
+  const count = value => (value == null ? 'indisponível' : String(value))
+  const memory = v2.memorySelections
+  const memoryText = memory ? `${memory.total} (${memory.byRole.map(item => `${item.role} ${item.count}`).join(', ') || 'nenhuma'}${memory.reused ? `; reutilizadas ${memory.reused}` : ''})` : 'indisponível'
+  const feedbackItems = v2.feedbackHistory || []
+  const feedbackValue = feedbackItems.length ? el('ol', 'v2-feedback') : el('span', 'v2-value', 'indisponível')
+  for (const item of feedbackItems) {
+    const parts = [item.kind, item.reason, item.severity ? `gravidade ${item.severity}` : null, item.affectedNodes?.length ? `nós ${item.affectedNodes.join(', ')}` : null]
+    feedbackValue.append(el('li', '', parts.filter(Boolean).join(' · ')))
+  }
+  const rows = [
+    ['Status', model.status || 'desconhecida'],
+    ['Plan version', count(v2.planVersion)],
+    ['Reparos', count(v2.repairs)],
+    ['Replanejamentos', count(v2.replans)],
+    ['Seleções de memória', memoryText],
+  ]
+  panel.replaceChildren(
+    ...rows.flatMap(([label, value]) => [el('span', 'v2-label', label), el('span', 'v2-value', value)]),
+    el('span', 'v2-label', 'Feedback'),
+    feedbackValue,
+  )
 }
 
 // ── Detalhe ──
@@ -1122,10 +1190,9 @@ async function openDetail(id) {
   const wasOpen = !!openNodeId
   openNodeId = id
   drawerMode = 'node'
-  // Sai do modo run: vindo dos Artefatos sem fechar a gaveta, o artifactsState seguia preenchido, e
-  // cada refresh anexava a lista "Pedidos" na gaveta do nó. Zerar também faz desistir um
-  // loadArtifacts ainda em voo.
-  Actions.onDrawerClosed()
+  // Sai do modo run: vindo dos Artefatos sem fechar a gaveta, o estado da lista seguia preenchido.
+  // Zerar também faz desistir um loadArtifacts ainda em voo.
+  Artifacts.onDrawerClosed()
   setData(els.app, { drawer: 'open', drawerMode: 'node' })
   els.drawer.setAttribute('aria-label', 'detalhe do nó')
   for (const b of nodeEls.values()) setData(b, { selected: b.dataset.id === id })
@@ -1152,7 +1219,7 @@ async function loadDetail(wf, id) {
     renderDetail(detail)
     const v = buildGraph(currentModel || { nodes: [] }).V.find((x) => x.id === id) || {}
     const pseudo = v.kind ? v.kind !== 'node' : !!detail.pseudo
-    Actions.renderNodeActions(pseudo ? null : currentModel, id)
+    Artifacts.renderNodeOutput(pseudo ? null : currentModel, id)
     els.drawerBody.scrollTop = scroll
   } catch {
     /* mantém o que já estava desenhado */
@@ -1180,7 +1247,7 @@ function renderDetailHead(detail, id) {
   if (reason) setText(els.drawerReason, reason)
 }
 
-// Só o conteúdo dos agentes fica aqui dentro; `.node-actions-slot` (Actions.renderNodeActions) é irmão
+// Só o conteúdo dos agentes fica aqui dentro; `.node-output-slot` (Artifacts.renderNodeOutput) é irmão
 // dele em #drawer-body e nunca é tocado por esta função — senão o refresh de ~1 s fecharia o <details>
 // "Saída do nó" e descartaria o arquivo aberto a cada poll (ver I7.md, pendência do REPAIR).
 function agentContentEl() {
