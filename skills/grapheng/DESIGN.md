@@ -1,6 +1,6 @@
-# graph-eng 2.0: por que o desenho é este
+# graph-eng 1.0: por que o desenho é este
 
-Versão 2.0.0 (2026-10-20). Este documento explica as decisões de desenho da 2.0 e aponta a evidência de
+Versão 1.0.0 (2026-10-20). Este documento explica as decisões de desenho da 1.0 e aponta a evidência de
 cada uma. Comandos, bloqueios e uso do dia a dia estão no [README](../../README.md) e no [SKILL.md](SKILL.md).
 
 Graph engineering é modelar o trabalho como **nós ligados por arestas**, com um estado compartilhado. O
@@ -98,7 +98,7 @@ critic têm 5 chamadas cada, e synth tem 3. Executor e verifier não têm teto f
 do plano (nós pendentes, polidores e reserva para reparos) e reserva essa demanda antes do fan-out. Assim,
 o orçamento de um nó não come o da revisão.
 
-Knobs da 1.x (`ceiling`, `maxAgents`, `economy`, `width`, `maxNodes`, `maxRounds`, `maxRepairs`, `planGate`,
+Knobs da 0.1 (`ceiling`, `maxAgents`, `economy`, `width`, `maxNodes`, `maxRounds`, `maxRepairs`, `planGate`,
 `roleModels` e variantes) são recusados com `removed_budget_override`. Eles não podem sobrescrever a política
 nova por um argumento esquecido. Um `effort` fora de `low|medium|max` vira `invalid_effort`.
 
@@ -177,15 +177,15 @@ Antes da correção, pesquisa que queria rodar `node` ou `npm test` ficava `part
   exigem inspeção antes de qualquer remoção.
 - **Memória entre runs.** Fica em `~/.claude/graph-eng/memory/<repoId>`, fora da runDir. Cada worker recebe só
   os registros do próprio nó e contrato, dentro de um bloco marcado como dado não confiável e com `<`
-  escapado. As limitações da v2.0 (planner e critic não recebem memória) estão no README.
+  escapado. As limitações da v1.0 (planner e critic não recebem memória) estão no README.
 
 ## 9. Painel: só visualização
 
 `init` inicia ou reutiliza o painel local, desacoplado da sessão. Fechar a sessão não derruba o localhost. O
 painel mostra as runs ao vivo, as fases, o feedback tipado de cada revisão e o motivo dos bloqueios.
 
-A fila de ações da 1.x (pedidos `resume`, `stop` e `rerun-node` gravados em arquivo e atendidos por uma
-sessão que ficava ouvindo, além do comando `/graph-eng:painel`) saiu do desenho da 2.0. O painel não controla
+A fila de ações da 0.1 (pedidos `resume`, `stop` e `rerun-node` gravados em arquivo e atendidos por uma
+sessão que ficava ouvindo, além do comando `/graph-eng:painel`) saiu do desenho da 1.0. O painel não controla
 mais a execução.
 
 Saíram também `bin/requests.mjs`, `bin/ui/actions.mjs`, `bin/ui/commands.mjs`, as rotas `POST /api/requests*`
@@ -195,7 +195,7 @@ silêncio. A gaveta de artefatos continua, só leitura (`bin/ui/artifacts.mjs`, 
 ## 10. Benchmark e smoke: o que medem e o que falta
 
 **Benchmark** (`bin/graph-benchmark.mjs`). Compara duas variantes, cada uma com uma cópia limpa do mesmo
-workspace: `v1-normalized` (a lógica da 1.x com a política de modelos da 2.0) e `adaptive` (a 2.0). A
+workspace: `v1-normalized` (a lógica da 0.1 com a política de modelos da 1.0) e `adaptive` (a 1.0). A
 avaliação é externa, por testes de aceitação que ficam fora do workspace; o motor não avalia a si mesmo.
 Mede chamadas, tokens e custo. Marca `falseDone` quando o motor declara DONE e a avaliação externa reprova.
 

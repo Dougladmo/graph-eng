@@ -6,7 +6,7 @@ argument-hint: "plan <tarefa> | clarify | tasks | implemente [<tarefa>] | init, 
 
 # grapheng
 
-Esta skill é a entrada para o runner GraphEng2 do host atual. Papéis e modelos são definidos pelo adapter confiável do host; não escolha modelo, papéis, tamanho do grafo ou limites internos.
+Esta skill é a entrada para o runner do graph-eng no host atual. Papéis e modelos são definidos pelo adapter confiável do host; não escolha modelo, papéis, tamanho do grafo ou limites internos.
 
 Invocações nativas: Claude Code `/graph-eng:grapheng <comando>`, e também os commands `/graph-eng:plan`, `/graph-eng:clarify`, `/graph-eng:tasks`, `/graph-eng:implemente` e `/graph-eng:init`. No Codex, use o nome da skill que o cliente mostra (ex.: `graph-eng:grapheng`); o Codex não tem slash global do plugin, então não há atalho `/plan` ali.
 

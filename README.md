@@ -1,51 +1,225 @@
-# graph-eng
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg">
+    <img src="docs/assets/logo-light.svg" width="200" height="200" alt="Logo do graph-eng: quadrado escuro com quatro bolinhas em losango ligadas por linhas retas">
+  </picture>
+</p>
 
-GraphEng2 planeja ou executa tarefas complexas como grafos pequenos, com papéis definidos pelo host, checks confiáveis e evidências por execução. O pacote mantém a identidade `graph-eng` e descobre `skills/` em local portátil.
+<h1 align="center">graph-eng</h1>
 
-Versão atual: **2.0.0**. Veja o [CHANGELOG](CHANGELOG.md).
+<p align="center">
+  <em>Tarefa complexa vira um grafo pequeno de agentes: o feedback dos revisores volta pelo grafo, e só sai DONE com evidência.</em>
+</p>
 
-## Como funciona (2.0)
+<p align="center">
+  <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="stars"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.0.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versão 1.0.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-1d1d1f?style=flat-square" alt="licença MIT"></a>
+  <a href="#os-cinco-comandos"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="plugin do Claude Code"></a>
+  <a href="#os-cinco-comandos"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="plugin do Codex"></a>
+  <a href="#desenvolvimento"><img src="https://img.shields.io/badge/Node-22-1d1d1f?style=flat-square" alt="Node 22"></a>
+  <a href="#benchmark"><img src="https://img.shields.io/badge/benchmark%20Claude-DONE%2010%2F10-30d158?style=flat-square&labelColor=1d1d1f" alt="benchmark real com Claude: DONE com aceite externo 10/10"></a>
+</p>
 
-A 2.0 troca o motor 1.x por uma **orquestração bidirecional adaptativa**:
+<p align="center">
+  <a href="#instalação">Instalação</a> ·
+  <a href="#como-funciona">Como funciona</a> ·
+  <a href="#benchmark">Benchmark</a> ·
+  <a href="#os-cinco-comandos">Comandos</a> ·
+  <a href="#estado-final-no-painel">Painel</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="skills/grapheng/DESIGN.md">Por que o desenho é este</a>
+</p>
 
-1. O planner (papel forte) gera um plano como grafo de nós, com critérios de pronto (`doneWhen`) e o esforço pedido.
-2. O plan reviewer aprova ou devolve feedback. Os executores rodam os nós, cada um com inputs, outputs e arquivos aprovados.
-3. O feedback dos revisores volta pelo grafo com uma de quatro decisões, sempre com evidência:
-   - `FIX_LOCAL`: refaz só o nó afetado, com o motivo do revisor no prompt.
-   - `REPLAN`: plano novo, no máximo 2 por run. O `doneWhen` do usuário fica travado no prompt e no schema.
-   - `BLOCK`: para com motivo legível (por exemplo `original_plan_criteria_changed`).
-   - `DONE`: só com checks reais aprovados, critic aprovado e identidade de contrato atual.
-4. O supervisor roda os checks (`node --test` afetado por nó; suíte inteira no gate final) e sela a janela de proveniência de cada nó.
+<p align="center">
+  <strong>papel forte planeja e revisa · papel barato executa · checks reais por nó · DONE só com evidência · painel ao vivo</strong><br>
+  <sub>O graph-eng planeja ou executa tarefas complexas como grafos pequenos, com papéis definidos pelo host, checks confiáveis e evidências por execução. O pacote mantém a identidade <code>graph-eng</code> e descobre <code>skills/</code> em local portátil.</sub>
+</p>
 
-O motor nunca dá crédito de orçamento na retomada, os contadores nunca diminuem, e um DONE sem evidência é negado.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/painel-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/painel-light.png">
+    <img src="docs/assets/painel-light.png" width="860" alt="Painel do graph-eng com uma run fictícia rodando: na lateral, as runs em Fixadas, num grupo, Em andamento, Paradas e Finalizadas recolhida; no centro, o grafo em colunas de fase, com nós prontos, rodando, bloqueado, falho e pulado">
+  </picture>
+</p>
+
+---
+
+## Em 30 segundos
+
+> Você descreve a tarefa. Um modelo **forte** planeja e revisa, modelos **baratos** executam, e o supervisor roda **testes de verdade** em cada passo. A run só termina como **DONE** quando há evidência; senão, para com um **motivo legível**.
+
+| | |
+| --- | --- |
+| 🧠 **Planeja forte** | O modelo forte do host monta o plano como grafo e revisa cada etapa. |
+| ⚙️ **Executa barato** | O modelo operacional do host, mais barato, faz o trabalho de cada nó. |
+| 🧪 **Confere com testes** | `node --test` nos arquivos de cada nó e a suíte inteira no fim. |
+| 🔁 **Corrige pelo caminho** | O feedback dos revisores volta pelo grafo: refaz um nó, replaneja ou para. |
+| 🔒 **Sem DONE falso** | Sem testes aprovados, critic aprovado e evidência atual, o DONE é negado. |
+
+Versão atual: **1.0.0** · veja o [CHANGELOG](CHANGELOG.md).
+
+## Instalação
+
+Numa sessão do Claude Code, um comando de cada vez:
+
+```
+/plugin marketplace add Dougladmo/graph-eng
+```
+
+```
+/plugin install graph-eng@graph-eng
+```
+
+Pelo terminal:
+
+```bash
+claude plugin marketplace add Dougladmo/graph-eng
+claude plugin install graph-eng@graph-eng
+```
+
+Requisitos: `node` 22 no `PATH`. O pacote não tem dependência de runtime.
+
+## Os cinco comandos
+
+O caminho normal é de cima para baixo. Cada passo reaproveita o anterior enquanto ele ainda vale.
+
+```mermaid
+flowchart TD
+  I([init<br/>sobe o painel]) -.-> P
+  P[plan<br/>gera o plano] --> Q{tem perguntas?}
+  Q -- sim --> C[clarify<br/>responde as perguntas] --> T
+  Q -- não --> T[tasks<br/>quebra em tarefas]
+  T --> M[implemente<br/>executa e testa]
+  M --> R([DONE ou BLOCK<br/>com motivo])
+```
+
+| Comando | O que faz | Mexe no código? |
+| --- | --- | --- |
+| `plan <tarefa>` | Gera o plano. Se faltar informação, termina com `needs_clarification`. | ❌ |
+| `clarify` | Responde as perguntas pendentes do plano. Não inventa respostas. | ❌ |
+| `tasks` | Quebra o plano aprovado em tarefas (um grafo de dependências). | ❌ |
+| `implemente [<tarefa>]` | Executa as tarefas, roda os testes e decide DONE ou BLOCK. | ✅ |
+| `init` | Sobe (ou reaproveita) o painel local e mostra a porta. | ❌ |
+
+| Host | Como chamar |
+| --- | --- |
+| Claude Code | `/graph-eng:plan <tarefa>`, `/graph-eng:clarify`, `/graph-eng:tasks`, `/graph-eng:implemente [<tarefa>]`, `/graph-eng:init` (ou `/graph-eng:grapheng <comando>`) |
+| Codex | a skill `graph-eng:grapheng`, com os mesmos cinco comandos. Não há slash global do plugin no Codex |
+
+Há um slot de plano e um de tarefas por repositório, a **feature corrente**: um `plan` aprovado novo substitui o anterior. Se algo mudou desde o passo anterior, o runner recusa o reuso e diz o motivo (`workspace_changed`, `task_changed`, `tasks_plan_mismatch`, `source_unverified`, entre outros).
+
+## Como funciona
+
+### O ciclo inteiro
+
+```mermaid
+flowchart TD
+  P[🧠 Planner<br/>monta o plano] --> R{🧠 Revisor do plano}
+  R -- pede ajuste --> P
+  R -- aprova --> W[⚙️ Executores<br/>um por nó do grafo]
+  W --> C[🧪 Supervisor roda os testes do nó]
+  C --> V{🔍 Verificador do nó}
+  V -- FIX_LOCAL --> W
+  V -- aprovado --> PO[✨ Polish por área]
+  PO --> G[🧪 Gate final<br/>suíte inteira]
+  G --> K{🧠 Critic}
+  K -- FIX_LOCAL --> W
+  K -- REPLAN, no máximo 2 --> P
+  K -- BLOCK --> B([⛔ BLOCK com motivo])
+  K -- DONE com evidência --> D([✅ DONE])
+```
+
+### Quem faz o quê
+
+Os modelos de cada papel são fixos por host (Claude Code ou Codex): forte para planejar e revisar, operacional para executar. Não há flag para trocar.
+
+| Papel | Tipo | O que faz |
+| --- | --- | --- |
+| Planner | 🧠 forte | Monta o plano como grafo, com critérios de pronto (`doneWhen`). |
+| Revisores (plano e design) | 🧠 forte | Aprovam ou devolvem com o motivo. |
+| Critic | 🧠 forte | Confere cada critério de pronto contra a evidência e decide. |
+| Executor | ⚙️ barato | Faz o trabalho de um nó, só nos arquivos liberados para ele. |
+| Verificador | ⚙️ barato | Lê o que o executor fez e os recibos dos testes. |
+| Synth | ⚙️ barato | Escreve o resumo final. |
+| Supervisor | 🧪 código | Roda os testes, sela a evidência e nega DONE sem prova. Não é um modelo. |
+
+### As quatro decisões
+
+Todo revisor responde com uma destas, sempre com evidência:
+
+| Decisão | O que acontece | Limite |
+| --- | --- | --- |
+| 🔧 `FIX_LOCAL` | Refaz só o nó afetado, com o motivo do revisor no prompt. | conta no orçamento do nó |
+| 🗺️ `REPLAN` | Gera um plano novo. Os critérios de pronto do usuário ficam travados. | no máximo 2 por run |
+| ⛔ `BLOCK` | Para e mostra o motivo (por exemplo `original_plan_criteria_changed`). | — |
+| ✅ `DONE` | Fecha a run. Exige testes aprovados, critic aprovado e evidência atual. | negado sem prova |
+
+### Como um nó vira pronto
+
+```mermaid
+flowchart TD
+  E[⚙️ Executor altera só os arquivos liberados] --> D{🧪 Supervisor: o diff ficou<br/>dentro dos arquivos liberados?}
+  D -- não --> X([⛔ BLOCK])
+  D -- sim --> T[🧪 Supervisor roda node --test<br/>dos arquivos do nó]
+  T --> V{🔍 Verificador lê o diff<br/>e os recibos dos testes}
+  V -- FIX_LOCAL --> E
+  V -- aprova --> S([🔒 Supervisor sela a evidência do nó])
+```
+
+Regras que valem sempre:
+
+- O nó só mexe nos arquivos que o plano liberou para ele. Arquivo fora disso bloqueia.
+- A suíte inteira roda uma vez, no gate final, depois de todo polish.
+- A retomada nunca devolve orçamento, e os contadores nunca diminuem.
+
+### O que mudou da 0.1 para a 1.0
+
+| | 0.1 | 1.0 |
+| --- | --- | --- |
+| Fluxo | grafo de ida, com critic no fim | grafo **bidirecional**: o feedback volta e muda o plano |
+| Fim da run | relatório `PARTIAL`, sem saber se terminou | **DONE** com evidência, ou **BLOCK** com motivo |
+| Testes | comando livre por nó | `node --test` selecionado pelos arquivos do nó, suíte inteira no fim |
+| Configuração | esforço × teto de agentes, mais vários ajustes finos | só `--effort low\|medium\|max` |
+| Hosts | Claude | Claude e Codex |
+| Painel | visualização e fila de ações | visualização ao vivo, só leitura |
 
 ## Benchmark
 
-`bin/graph-benchmark.mjs` compara a lógica v1 normalizada com a adaptativa, num cenário fixo, com aceites externos que os agentes não veem. Rodadas reais com Claude (detalhe em [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md)):
+`bin/graph-benchmark.mjs` roda a **mesma tarefa** com a lógica da 0.1 (`v1-normalized`) e com a 1.0 (`adaptive`). Quem dá a nota é um conjunto de **testes de aceitação externos**, que os agentes não veem. Detalhe de todas as rodadas em [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md).
 
-- **Custo:** cerca de US$ 1 por rodada (antes, US$ 88: o host vazava cerca de 75k tokens de contexto por chamada; isolado, cerca de 6,5k).
-- **v1-normalized:** aceite externo PASS em 11 de 11 rodadas, mas sempre reporta PARTIAL: não sabe dizer se terminou.
-- **Adaptativa:** na rodada f366 fechou `DONE` com aceite externo 10/10 (21 chamadas, cerca de 292 s). Nenhum falso DONE em nenhuma rodada. Cada BLOCK anterior virou correção com teste de regressão.
-- **Codex real:** ainda não validado.
+**Rodada f366, com Claude real:**
 
-## Uso
+| | Lógica 0.1 | **graph-eng 1.0** |
+| --- | --- | --- |
+| O que o motor disse | PARTIAL (não sabe se terminou) | ✅ **DONE** |
+| Testes externos | ✅ 10/10 | ✅ **10/10** |
+| DONE falso | não | **não** |
+| Chamadas de modelo | 10 | 21 |
+| Tokens (entrada / saída) | 519k / 41k | 605k / 36k |
+| Tempo do motor | 261 s | 292 s |
 
-| Host | Invocação nativa |
+A 1.0 gasta mais chamadas porque revisa e testa cada nó. Em troca, ela **sabe** que terminou e prova isso.
+
+**Chamadas por papel no graph-eng 1.0 (rodada f366):**
+
+| Papel | Chamadas |
 | --- | --- |
-| Claude Code | `/graph-eng:plan <tarefa>`, `/graph-eng:clarify`, `/graph-eng:tasks`, `/graph-eng:implemente [<tarefa>]`, `/graph-eng:init` (ou `/graph-eng:grapheng <comando>`) |
-| Codex | a skill `graph-eng:grapheng`, com os mesmos cinco comandos; use o nome que o cliente mostra. Não há slash global do plugin no Codex |
+| ⚙️ executor | `████████████████` 8 |
+| 🔍 verificador | `██████████` 5 |
+| 🧠 planner | `████` 2 |
+| 🧠 revisor do plano | `████` 2 |
+| 🧠 critic | `████` 2 |
+| 🧠 revisor do design | `██` 1 |
+| ⚙️ synth | `██` 1 |
 
-Comandos disponíveis (cinco, todos no mesmo runner):
+- 💰 **Custo:** cerca de US$ 1 por rodada. Antes eram US$ 88, porque o host vazava cerca de 75k tokens de contexto por chamada; isolado, cerca de 6,5k.
+- 📈 **Histórico:** em 13 rodadas reais, a 1.0 nunca deu DONE falso. Cada BLOCK virou correção com teste de regressão, até fechar DONE na f366.
+- ⚠️ **Codex real:** ainda não validado.
 
-- `plan <tarefa>` gera o plano e o publica no slot de plano, sem executar implementação ou checks. Se houver perguntas, a run termina com `needs_clarification`.
-- `clarify` responde as perguntas pendentes do plano aprovado. Não recebe tarefa e não inventa respostas.
-- `tasks` decompõe o plano aprovado em tarefas (DAG) e publica no slot de tarefas. Não recebe tarefa e não executa nada.
-- `implemente [<tarefa>]` executa o fluxo e exige checks descobertos por mapeamento seguro. Sem tarefa, usa o plano da feature corrente.
-- `init` inicia ou reutiliza o painel local desacoplado e informa a porta real.
-
-Fluxo típico: `plan` → `clarify` (se houver perguntas) → `tasks` → `implemente`. Cada comando reutiliza o artefato anterior quando ele ainda vale; se algo mudou, o runner recusa o reuso e mostra o motivo (`workspace_changed`, `task_changed`, `tasks_plan_mismatch`, `source_unverified`, entre outros).
-
-Há um slot de plano e um de tarefas por repositório, a **feature corrente**: um `plan` aprovado novo substitui o anterior.
+## Detalhes de execução
 
 O esforço aceita `low`, `medium` (padrão) ou `max`, na forma separada (`--effort max`); `--effort` substitui a configuração em `plan`, `clarify`, `tasks` e `implemente`. Papéis e modelos são fixos pelo adapter confiável de Claude ou Codex. Não há flags públicas para modelos, papéis, largura ou limites internos.
 
@@ -88,12 +262,12 @@ Uma run seguinte no mesmo repositório seleciona esses registros por nó e contr
 
 Na retomada, a seleção fixada da run é reaproveitada só depois de conferida. O evento `memory.selected` sai de novo com `reused: true`, e o painel mostra essa marca. Se a conferência falhar, a run registra um diagnóstico `selection_reuse_rejected` e faz uma nova seleção.
 
-Limitações desta versão (v2.0):
+Limitações desta versão (v1.0):
 
 - **O planner não recebe seleção de memória.** Ele não tem nó nem caminho definidos no início da run, e a seleção exige um escopo que case com algum registro.
 - **O critic não recebe seleção de memória.** O ramo que selecionava por caminho não tinha produtor de registro com caminhos; foi retirado e não é relaxado. Registros de memória não entram na revisão crítica.
 - **Evidência da fase final fica fora.** Receipts de checks finais (depois do polish) não têm escopo por nó e não alimentam a memória. Só os receipts da fase de nó entram, com escopo `nodeId + contractIdentity`, e só o worker do mesmo nó e contrato os recebe.
-- **Contract, failure e version ficam fora da v2.0.** Esses tipos existem no modelo de registro, mas nenhum produtor os grava e nenhum papel os seleciona. Nada é alimentado sem consumidor.
+- **Contract, failure e version ficam fora da v1.0.** Esses tipos existem no modelo de registro, mas nenhum produtor os grava e nenhum papel os seleciona. Nada é alimentado sem consumidor.
 
 ## Estado final no painel
 
@@ -110,3 +284,17 @@ node --test --test-concurrency=2 test/grapheng.test.mjs test/packaging.test.mjs
 ```
 
 O projeto usa `node --test`; alterações de UI podem exigir `npm run css:build`. A justificativa histórica do desenho está em [DESIGN.md](skills/grapheng/DESIGN.md).
+
+## Licença
+
+[MIT](LICENSE)
+
+## Star History
+
+<a href="https://www.star-history.com/#Dougladmo/graph-eng&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date&theme=dark">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date">
+    <img alt="Star History do graph-eng" src="https://api.star-history.com/svg?repos=Dougladmo/graph-eng&type=Date">
+  </picture>
+</a>

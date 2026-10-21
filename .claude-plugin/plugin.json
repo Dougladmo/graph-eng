@@ -1,8 +1,8 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "graph-eng",
-  "version": "2.0.0",
-  "description": "GraphEng2: planeje ou implemente tarefas complexas com esforço controlado, checks verificáveis e evidências locais.",
+  "version": "1.0.0",
+  "description": "graph-eng: planeje ou implemente tarefas complexas com esforço controlado, checks verificáveis e evidências locais.",
   "author": {
     "name": "Douglas Oliveira",
     "url": "https://github.com/Dougladmo"
