@@ -50,6 +50,8 @@
 ## In 30 seconds
 
 > You describe the task. A **strong** model plans and reviews, **cheap** models do the work, and the supervisor runs **real tests** at every step. The run only ends as **DONE** when there is evidence; otherwise it stops with a **readable reason**.
+>
+> The point: complex tasks without paying the strong model's price for every line of work. The expensive model only thinks; the cheap one does the volume. See [why split the models](#benchmark).
 
 | | |
 | --- | --- |
@@ -216,6 +218,17 @@ Rules that always apply:
 | **Total** | | **21** | **0.80** |
 
 The strong model accounts for about 95% of the cost. The 14 operational-model calls add up to only 3 cents. Lowering the cost means working on the strong calls (critic, planner and reviewers), and that work is still open.
+
+**Why split the models:**
+
+In this run, each token on the strong model cost about **40×** a token on the operational one. That price gap is what graph-eng uses: the strong model only does the thinking (plan, review, final verdict), and the operational model does the volume of work.
+
+| Same 21 calls, same tokens | USD |
+| --- | --- |
+| ✅ graph-eng 1.0: strong plans and reviews, operational executes (measured) | `████` **0.80** |
+| 🧠 Every call on the strong model (estimate) | `██████████` 1.99 |
+
+Running the executor, verifier and synth calls on the strong model would cost about **2.5× more**. The estimate reprices the tokens each call really used at the strong model's rate. A single agent doing the whole task on its own would not use the same tokens, and that baseline has not been measured yet. Anthropic reported the same pattern in its [multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system): a strong lead agent with lighter subagents beat a single strong agent by 90.2% on its internal research eval.
 
 - 💰 Isolating the host cut the cost from about $88 to under $1 per run: the host stopped leaking about 75k tokens of context per call and now sends about 6.5k.
 - 📈 Across 13 real runs, 1.0 never gave a false DONE. Every BLOCK became a fix with a regression test, until it closed DONE on f366.
