@@ -369,6 +369,44 @@ Custo da adaptive por papel:
   - designer (Sonnet): 1 chamada, US$ 0,05.
   - Haiku: 11 chamadas, US$ 0,10.
 
+**Fluxo advisor (`grapheng implemente <tarefa> --flow advisor`, 22/10).** Esse fluxo nasceu da run 5, que gastou 71% do custo em planejamento e revisão. Ele corta o grafo:
+
+- 1 planner (Sonnet, só leitura) e 1 revisão do plano (Opus, só leitura). Um `REVISE` não abre outra rodada: as notas vão direto para o executor.
+- 1 sessão contínua do executor (Sonnet 5.5 com `--advisor opus`) faz toda a implementação com o contexto inteiro.
+  - O Bash dele só roda `npm test` e `npm run build`.
+  - Pode consultar o Opus no máximo 3 vezes, e só quando travar.
+- Para no gate externo do supervisor (`npm test` e `npm run build`). Se o gate reprovar, o executor ganha mais uma sessão com a saída da falha, até 2 sessões.
+
+Código em `bin/advisor-flow.mjs`. Evidência em `docs/benchmarks/runs/minecraft-20261022-advisor/`.
+
+| papel | modelo | custo | tempo |
+|---|---|---|---|
+| planner | Sonnet | US$ 0,17 | 52 s |
+| revisão do plano (`REVISE`, 5 notas) | Opus | US$ 0,20 | 40 s |
+| executor (1 sessão, DONE) | Sonnet | US$ 1,43 | 568 s |
+| gate (`npm test` e `npm run build`) | — | — | 3 s |
+| **total** | | **US$ 1,79** | **662 s** |
+
+Custo por tipo de token, nos preços de cada modelo (o total bate com o `costUSD` do CLI):
+
+| tipo | tokens | custo |
+|---|---|---|
+| entrada sem cache | 56 | US$ 0,00 |
+| escrita de cache (TTL de 1 h, 2x a entrada) | 158k | US$ 0,66 |
+| leitura de cache (0,1x a entrada) | 1,40M | US$ 0,26 |
+| saída | 92k | US$ 0,87 |
+
+**O que entregou:** 29 arquivos e 2.544 linhas em `src/`. O motor fecha os 55 ocultos e o executor escreveu os próprios testes em `src/engine/__tests__/`, sem tocar em `test/`. `main.jsx` está ligado, sem o texto "em construção". O smoke visual mostrou o menu com seed e distância de render, o mundo com árvores, a hotbar e o debug F3 (100 FPS, 69 chunks), com o console sem erro. Ficaram de fora da conferência na tela a mineração, o inventário e o crafting, pelo mesmo motivo das outras variantes: o pointer lock não funciona no painel.
+
+**Leitura.**
+
+1. **É a primeira entrega do graph-eng no Minecraft**, com o mesmo aceite do agente único (55/55, 11/11, jogo na tela), por 30% do custo dele (US$ 1,79 contra US$ 5,97) e em 48% do tempo (662 s contra 1375 s).
+2. **O planejamento caiu de 71% para 20% do custo** (US$ 0,36 de US$ 1,79). As notas da revisão do Opus apareceram no código: o cursor do inventário, o pause pelo `pointerlockchange`, o round-trip da seed e o remesh do vizinho.
+3. **O advisor não foi chamado nenhuma vez.** O executor não travou, então esta run não mede o valor do Opus como conselheiro, só o do executor contínuo. A única participação do Opus foi a revisão do plano.
+4. **O custo é quase todo cache e saída.** Uma sessão longa relê o próprio contexto a cada turno: 1,4M tokens de leitura de cache saíram por só US$ 0,26. Em contrapartida, a escrita de cache com TTL de 1 h custa 2x a entrada e foi 37% do total.
+
+**Limites.** É n=1, numa tarefa de spec fechada e bem testada. Ainda não houve uma run em que o executor travasse, gastasse o advisor ou precisasse de uma 2ª sessão do gate. O teto de 3 consultas é só instrução no prompt, porque o advisor é ferramenta do servidor e hook não o vê. A contagem sai da transcrição da sessão. O executor teve 1 negação de permissão, sem efeito no resultado. O "maior contexto" ficou "—" porque o CLI não expõe o pico por turno.
+
 **Bugs achados nas runs e corrigidos** (cada um com teste de regressão):
 
 1. **Xadrez:** no estágio `plan` enxuto, o planner esboçou nós de implementação e a run bloqueou com `plan_stage_non_research_node`. Os esboços agora viram achados para o estágio `tasks`.
@@ -411,6 +449,7 @@ Evidência em `docs/benchmarks/runs/minecraft-20261021/`.
 | graph-eng | 3 | BLOCK `provenance_unsealed_window:N2`, reparos esgotados (2/2) | — | — | não | 17 | US$ 1,45 | 888 s | 417k |
 | graph-eng | 4 | BLOCK `local_repair_budget_exhausted` no estágio `plan` | — | — | não | 9 | US$ 1,02 | 261 s | 82k |
 | graph-eng | 5 | BLOCK `provenance_unsealed_window:R3`, reparo sem progresso | 55/55 | 11/11 | não | 21 | US$ 2,23 | 2305 s | 1013k |
+| graph-eng `--flow advisor` (22/10) | 1 | DONE, gate verde de primeira | 55/55 | 11/11 | sim | 3 (0 advisor) | US$ 1,79 | 662 s | — |
 
 **O que cada variante entregou.**
 
