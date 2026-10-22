@@ -11,14 +11,21 @@ const MODEL_BY_ROLE = {
   claude: {
     planner: 'sonnet', planReviewer: 'opus', designReviewer: 'opus', critic: 'sonnet',
     researcher: 'sonnet', designer: 'sonnet', notetaker: 'haiku',
-    executor: 'haiku', verifier: 'haiku', synth: 'haiku',
+    executor: 'haiku', verifier: 'haiku', synth: 'haiku', advisedExecutor: 'sonnet',
   },
   codex: {
     planner: 'gpt-6.1-sol', planReviewer: 'gpt-6.1-sol', designReviewer: 'gpt-6.1-sol', critic: 'gpt-6.1-sol',
     researcher: 'gpt-6.1-sol', designer: 'gpt-6.1-sol', notetaker: 'gpt-6-luna',
-    executor: 'gpt-6-luna', verifier: 'gpt-6-luna', synth: 'gpt-6-luna',
+    executor: 'gpt-6-luna', verifier: 'gpt-6-luna', synth: 'gpt-6-luna', advisedExecutor: 'gpt-6-luna',
   },
 }
+// Fluxo advisor (--flow advisor): o executor faz a implementação inteira numa sessão e consulta o modelo forte quando
+// trava, na mesma sessão (--advisor do Claude Code, ferramenta de servidor que vê a transcrição inteira).
+const ADVISOR_BY_ROLE = { claude: { advisedExecutor: 'opus' } }
+const WRITE_SHELL_ROLES = new Set(['executor', 'advisedExecutor'])
+// Comando de check liberado ao executor: texto exato, sem metacaractere de shell nem curinga de permissão.
+const ALLOW_COMMAND = /^[A-Za-z0-9_./@=+:,-]+( [A-Za-z0-9_./@=+:,-]+)*$/
+export const isAllowCommand = value => typeof value === 'string' && value.length <= 200 && ALLOW_COMMAND.test(value)
 const ROLE_ALIASES = {
   'plan-review': 'planReviewer', 'design-review': 'designReviewer',
   worker: 'executor', verify: 'verifier', repair: 'executor', polish: 'executor',
@@ -254,6 +261,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     if (!request.schema || typeof request.schema !== 'object' || Array.isArray(request.schema)) throw new HostError('INVALID_SCHEMA', 'Cada solicitação exige JSON Schema')
     if (request.writeScope !== undefined) throw new HostError('UNSUPPORTED_WRITE_SCOPE', 'writeScope ainda não é aplicado pelo adaptador')
     if (request.effort !== undefined && !REASONING_EFFORTS.has(request.effort)) throw new HostError('INVALID_EFFORT', `effort deve ser um de ${[...REASONING_EFFORTS].join(', ')}`)
+    if (request.allowCommands !== undefined && (!Array.isArray(request.allowCommands) || request.allowCommands.some(c => !isAllowCommand(c)))) throw new HostError('INVALID_ALLOW_COMMANDS', 'allowCommands deve ser lista de comandos exatos, sem metacaractere de shell')
     assertSchema(request.schema)
     const effectiveTimeout = request.timeoutMs ?? timeoutMs
     if (!Number.isFinite(effectiveTimeout) || effectiveTimeout <= 0 || effectiveTimeout > MAX_TIMEOUT_MS) throw new HostError('INVALID_TIMEOUT', `timeoutMs deve estar entre 1 e ${MAX_TIMEOUT_MS}`)
@@ -267,9 +275,12 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     // e Edit(./**) (vale também para Write) a prende ao cwd do spawn.
     // Só o researcher (Sonnet, só leitura) lê a web: docs atuais da biblioteca na versão instalada. Nenhum papel de escrita tem web.
     const readTools = role === 'researcher' && readonly ? `Read,Glob,Grep,${WEB_TOOLS}` : 'Read,Glob,Grep'
+    // Laço de feedback do executor de escrita: Bash só nos comandos aprovados (o dontAsk nega qualquer outro comando).
+    const shell = WRITE_SHELL_ROLES.has(role) && !readonly ? (request.allowCommands || []) : []
+    const advisor = experimentalPolicy ? null : ADVISOR_BY_ROLE[host]?.[role] || null
     if (host === 'claude') return {
       role, model, readonly, schema: request.schema, wireSchema: strict,
-      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : 'Read,Glob,Grep,Edit(./**)', '--tools', readonly ? readTools : 'Read,Glob,Grep,Edit,Write', ...(request.effort ? ['--effort', request.effort] : [])],
+      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : ['Read,Glob,Grep,Edit(./**)', ...shell.map(c => `Bash(${c})`)].join(','), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
     }
     const schemaFile = path.join(runDir, `.host-${id}.schema.json`)
     const outputFile = path.join(runDir, `.host-${id}.output.json`)
@@ -511,6 +522,8 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
             handle.usage = envelope.modelUsage ?? envelope.usage ?? null
             // B3: negações de permissão do Claude ficam visíveis ao benchmark (calls.jsonl).
             handle.permissionDenials = Array.isArray(envelope.permission_denials) ? envelope.permission_denials : []
+            // Sessão do Claude Code: o fluxo advisor conta na transcrição quantas vezes o executor consultou o advisor.
+            handle.sessionId = typeof envelope.session_id === 'string' ? envelope.session_id : null
           } else {
             const rows = handle.stdout.split(/\r?\n/).filter(Boolean).map(row => JSON.parse(row))
     const failed = rows.find(row => row && typeof row === 'object' && (row.type === 'turn.failed' || row.type === 'error' || row.type === 'item.completed' && row.item?.type === 'error'))
@@ -531,7 +544,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
           error = failure instanceof HostError ? failure : new HostError('INVALID_OUTPUT', `${host}: saída estruturada inválida (${failure.message})`, { cause: failure })
         }
       }
-      await finish(error, { output, requestedModel: built.model, effectiveModel: handle.effectiveModel ?? null, usage: handle.usage ?? null, exitCode: actualExitCode, permissionDenials: handle.permissionDenials ?? [] })
+      await finish(error, { output, requestedModel: built.model, effectiveModel: handle.effectiveModel ?? null, usage: handle.usage ?? null, exitCode: actualExitCode, permissionDenials: handle.permissionDenials ?? [], sessionId: handle.sessionId ?? null })
     })
     child.stdin?.end(request.prompt)
     handle.timer = setTimeout(() => { if (!handle.settled) void terminate('timeout') }, effectiveTimeout)

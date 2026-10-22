@@ -660,3 +660,45 @@ test('C14 FIX4: falha ao gravar o schema do codex remove o que sobrou e solta o 
   assert.ok(schemaName, 'o diretório plantado precisa existir na runDir')
   await assert.rejects(guard.assertIntegrity(), error => error.code === 'run_integrity_violation' && error.paths.includes(schemaName))
 })
+
+// Fluxo advisor (benchmark Minecraft, 22/10): o executor contínuo roda no Sonnet com o Opus de advisor na mesma
+// sessão e ganha Bash só nos comandos do gate. O executor do grafo segue no Haiku, sem advisor e sem shell.
+test('advisedExecutor Claude roda no Sonnet com --advisor opus; executor e papéis do grafo não têm advisor', async t => {
+  const runDir = await tempRun(t)
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false, session_id: 'sess-1' })); close(child) } })
+  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
+  const result = await host.wait(await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema }))
+  const args = fake.calls.at(-1).args
+  assert.equal(args[args.indexOf('--model') + 1], 'sonnet')
+  assert.equal(args[args.indexOf('--advisor') + 1], 'opus')
+  assert.equal(result.sessionId, 'sess-1')
+  for (const role of ['executor', 'planner', 'planReviewer', 'verifier', 'critic', 'synth', 'researcher']) {
+    await host.wait(await host.spawn({ role, prompt: 'x', schema }))
+    assert.equal(fake.calls.at(-1).args.includes('--advisor'), false, role)
+  }
+  const graphExecutor = fake.calls.at(-7).args
+  assert.equal(graphExecutor[graphExecutor.indexOf('--model') + 1], 'haiku')
+})
+
+test('executor de escrita ganha Bash só nos comandos aprovados; leitura e papéis de revisão seguem sem shell', async t => {
+  const runDir = await tempRun(t)
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
+  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
+  const argsOf = async request => { await host.wait(await host.spawn({ prompt: 'x', schema, ...request })); const a = fake.calls.at(-1).args; return { tools: a[a.indexOf('--tools') + 1], allowed: a[a.indexOf('--allowedTools') + 1] } }
+  const writer = await argsOf({ role: 'advisedExecutor', allowCommands: ['npm test', 'npm run build'] })
+  assert.equal(writer.tools, 'Read,Glob,Grep,Edit,Write,Bash')
+  assert.equal(writer.allowed, 'Read,Glob,Grep,Edit(./**),Bash(npm test),Bash(npm run build)')
+  assert.equal((await argsOf({ role: 'advisedExecutor', readOnly: true, allowCommands: ['npm test'] })).tools.includes('Bash'), false)
+  assert.equal((await argsOf({ role: 'verifier', allowCommands: ['npm test'] })).tools.includes('Bash'), false)
+  assert.equal((await argsOf({ role: 'executor' })).tools, 'Read,Glob,Grep,Edit,Write')
+})
+
+test('allowCommands com metacaractere de shell, quebra de linha, curinga ou vazio é recusado antes do spawn', async t => {
+  const runDir = await tempRun(t)
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
+  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
+  for (const bad of [['npm test; touch x'], ['npm test && echo x'], ['npm test | cat'], ['echo $(id)'], ['npm\ntest'], [''], ['npm test *'], ['npm test > out'], 'npm test']) {
+    await assert.rejects(host.spawn({ role: 'advisedExecutor', prompt: 'x', schema, allowCommands: bad }), error => error.code === 'INVALID_ALLOW_COMMANDS', JSON.stringify(bad))
+  }
+  assert.equal(fake.calls.length, 0)
+})
