@@ -11,7 +11,7 @@ import { createHost } from '../bin/hosts.mjs'
 import { workspaceResourceOf } from '../bin/resource-lock.mjs'
 import * as bench from '../bin/graph-benchmark.mjs'
 import {
-  FIXTURE_DIR, EVIDENCE_ROOT, BASELINE, V1_LABEL_MAP,
+  FIXTURE_DIR, BASELINE, V1_LABEL_MAP,
   sha256, hashTree, diffTrees, grantPrefixes, auditWrites, extractBaseline, prepareWorkspace,
   applyFixtureReference, applyContractChange, policyFor, createAgentBridge, runV1, runAdaptive,
   runAcceptance, evaluateExternal, summarizeCalls, buildManifest, verifyManifest, runVariant,
@@ -28,9 +28,9 @@ const STATE_ROOT = await mkdtemp(path.join(os.tmpdir(), 'graph-eng-bench-state-'
 const previousStateDir = process.env.GRAPH_ENG_STATE_DIR
 process.env.GRAPH_ENG_STATE_DIR = STATE_ROOT
 
+// Fora do repo: num worktree em .claude/worktrees/ o caminho herdaria o segmento .claude e a guarda CWD_PROTECTED_PATH recusaria a escrita.
 async function tempDir(name) {
-  await mkdir(EVIDENCE_ROOT, { recursive: true })
-  const dir = await mkdtemp(path.join(EVIDENCE_ROOT, `_tests-${name}-`))
+  const dir = await mkdtemp(path.join(os.tmpdir(), `graph-eng-bench-${name}-`))
   created.push(dir)
   return dir
 }
@@ -831,6 +831,18 @@ async function singleAgentHost(fake) {
   const hostApi = createHost({ host: 'claude', cwd: ws, runDir: path.join(dir, 'host-runs'), transport: { spawn: fake.spawn }, killProcess: fake.killProcess, experimentalPolicy: bench.singleAgentPolicy('claude') })
   return { ws, hostApi, task: await readFile(path.join(ws, 'task.md'), 'utf8') }
 }
+
+// Regressão: com o repo num worktree em .claude/worktrees/, workspace criado dentro do repo herdava o segmento
+// .claude e a guarda CWD_PROTECTED_PATH recusava o papel de escrita antes do spawn (spawns ficava 0).
+test('single-agent: workspace de teste fica em os.tmpdir(), sem segmento .claude, mesmo com o repo sob .claude', { timeout: 30000 }, async () => {
+  const fake = fakeTransport({ output: () => ({ status: 'DONE', summary: 'feito' }) })
+  const { ws, hostApi, task } = await singleAgentHost(fake)
+  assert.ok(ws.startsWith(path.resolve(os.tmpdir()) + path.sep), ws)
+  assert.ok(!ws.startsWith(ROOT + path.sep), 'workspace não fica dentro do repo')
+  assert.ok(!ws.split(path.sep).includes('.claude'), ws)
+  await bench.runSingleAgent({ workspaceDir: ws, hostApi, task, rounds: 1, runChecks: async () => ({ exitCode: 0, tap: { pass: 1, fail: 0 }, outputTail: '' }) })
+  assert.equal(fake.spawns.length, 1, 'papel de escrita chega ao spawn')
+})
 
 test('single-agent: uma chamada do modelo forte, avaliação externa PASS e custo, tokens e maior contexto no run.json', { timeout: 60000 }, async () => {
   const dir = await tempDir('single-run')
