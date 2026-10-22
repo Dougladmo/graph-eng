@@ -354,3 +354,27 @@ test('lookup desconhecido preserva o lock e falha fechado', async t => {
   assert.equal(result.reason, 'artifact_slot_locked')
   assert.ok((await readFile(lock, 'utf8')).includes('tok-velho'))
 })
+
+// Fluxo adaptativo: o artefato grava o tier com que foi aprovado. Reuso só vale para tier vigente igual ou menor;
+// artefato sem tier (anterior ao adaptativo) conta como full.
+test('validateArtifact aceita tier válido ou ausente e recusa tier desconhecido', async t => {
+  const repo = await makeRepo(t)
+  const { contentHash, ...rest } = approvedPlan(repo)
+  assert.equal(validateArtifact(sealArtifact({ ...rest, tier: 'fast' }), 'plan').ok, true)
+  assert.equal(validateArtifact(approvedPlan(repo), 'plan').ok, true)
+  assert.equal(validateArtifact(sealArtifact({ ...rest, tier: 'turbo' }), 'plan').ok, false)
+})
+
+test('resolveReuse recusa artefato com tier menor que o vigente (reuse_tier_lower) e aceita igual, maior ou sem tier', async t => {
+  const repo = await makeRepo(t)
+  const { contentHash, ...rest } = approvedPlan(repo)
+  const fast = sealArtifact({ ...rest, tier: 'fast' })
+  const standard = sealArtifact({ ...rest, tier: 'standard' })
+  const legacy = approvedPlan(repo)
+  const at = (artifact, tier) => resolveReuse({ repo, kind: 'plan', slot: { artifact, invalid: false }, planningKey: planningKeyOf(inputsFor(repo)), workspace: { head: 'h1', identity: WS }, tier, ...fakeRun(repo, artifact) })
+  assert.equal((await at(fast, 'standard')).rejected[0].reason, 'reuse_tier_lower')
+  assert.equal((await at(standard, 'full')).rejected[0].reason, 'reuse_tier_lower')
+  assert.equal((await at(fast, 'fast')).ok, true)
+  assert.equal((await at(standard, 'fast')).ok, true)
+  assert.equal((await at(legacy, 'full')).ok, true)
+})

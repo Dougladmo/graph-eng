@@ -7,7 +7,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile, copyFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile, copyFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -20,14 +20,23 @@ import { executeGrapheng } from './grapheng.mjs'
 const execFileAsync = promisify(execFile)
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 export const FIXTURE_DIR = path.join(REPO_ROOT, 'test', 'fixtures', 'benchmark-v2')
+export const FATURAMENTO_FIXTURE_DIR = path.join(REPO_ROOT, 'test', 'fixtures', 'benchmark-v2-faturamento')
 export const EVIDENCE_ROOT = path.join(REPO_ROOT, '.graph-runs', 'benchmarks')
 export const BASELINE = Object.freeze({ commit: '91bf1dc', path: 'workflows/graph-eng.js', bytes: 77172, sha256: '099335e3cf21fa05aea179d75f6cc01deceba81c142e1fceeefcc7f32b0604f2' })
 export const DEFAULT_MAX_CALLS = 60
 export const DEFAULT_MAX_WALL_MS = 90 * 60 * 1000
 const EVAL_TIMEOUT_MS = 10 * 60 * 1000
 const HOSTS = ['codex', 'claude']
-const VARIANTS = ['v1-normalized', 'adaptive']
-const SCENARIOS = ['happy', 'contract-change']
+const VARIANTS = ['v1-normalized', 'adaptive', 'single-agent']
+// Cenário -> fixture. faturamento: 9 módulos com dependência, contratos espalhados em docs/ e aceites de borda.
+// chess: gerador de lances de xadrez conferido por perft (valores da Chess Programming Wiki).
+export const CHESS_FIXTURE_DIR = path.join(REPO_ROOT, 'test', 'fixtures', 'benchmark-chess')
+const SCENARIO_FIXTURES = Object.freeze({ happy: FIXTURE_DIR, 'contract-change': FIXTURE_DIR, faturamento: FATURAMENTO_FIXTURE_DIR, chess: CHESS_FIXTURE_DIR })
+const SCENARIOS = Object.keys(SCENARIO_FIXTURES)
+export function fixtureDirFor(scenario) {
+  if (!Object.hasOwn(SCENARIO_FIXTURES, scenario)) throw new TypeError(`cenário desconhecido: ${scenario}`)
+  return SCENARIO_FIXTURES[scenario]
+}
 const VOLATILE = new Set(['startedAt', 'endedAt', 'durationMs', 'engineMs', 'evaluatorMs', 'outDir', 'workspace', 'seq', 'createdAt', 'generatedAt', 'evidencePath', 'attemptId'])
 const POLICY_NAME = Object.freeze({ codex: 'lógica v1 com política Sol/Luna normalizada', claude: 'lógica v1 com política Opus/Haiku normalizada' })
 const MODEL_BY_STRENGTH = Object.freeze({
@@ -144,8 +153,12 @@ export async function extractBaseline({ repoRoot = REPO_ROOT, destDir, execGit =
   return { commit: BASELINE.commit, path: file, bytes: bytes.length, sha256: digest }
 }
 
+// Arquivo .mjs.txt do workspace (teste visível) vira .mjs na cópia: no repo ele não pode entrar no node --test do graph-eng.
 export async function prepareWorkspace({ fixtureDir = FIXTURE_DIR, destDir } = {}) {
   await cp(path.join(fixtureDir, 'workspace'), destDir, { recursive: true })
+  for (const rel of Object.keys(await hashTree(destDir)).filter(file => file.endsWith('.mjs.txt'))) {
+    await rename(path.join(destDir, rel), path.join(destDir, rel.slice(0, -'.txt'.length)))
+  }
   return { destDir, hashes: await hashTree(destDir) }
 }
 
@@ -156,8 +169,9 @@ export async function initWorkspaceRepo(dir, execGit = defaultGit) {
   await execGit(['-c', 'user.name=graph-eng-benchmark', '-c', 'user.email=benchmark@graph-eng.invalid', 'commit', '-q', '--allow-empty', '-m', 'benchmark: estado inicial'], dir)
 }
 
-export async function applyFixtureReference({ fixtureDir = FIXTURE_DIR, workspaceDir } = {}) {
-  const src = path.join(fixtureDir, 'reference', 'src')
+// folder: 'reference' (passa nos aceites) ou outra solução guardada na fixture, como a 'ingenua' do faturamento.
+export async function applyFixtureReference({ fixtureDir = FIXTURE_DIR, workspaceDir, folder = 'reference' } = {}) {
+  const src = path.join(fixtureDir, folder, 'src')
   const applied = []
   for (const name of await readdir(src)) {
     if (!name.endsWith('.mjs.txt')) continue
@@ -511,6 +525,85 @@ export async function runAdaptive({ workspaceDir, host, transportFactory = null,
   }
 }
 
+// Baseline de agente único: o modelo forte faz a tarefa inteira numa chamada só, no mesmo workspace limpo.
+// O supervisor roda o `npm test` do workspace (node --test) depois da chamada, como no gate final do graph-eng;
+// se falhar, a saída volta para uma nova chamada do mesmo modelo, até `rounds`. Escrita só em src/, como pede o task.md.
+export const DEFAULT_SINGLE_AGENT_ROUNDS = 3
+export const SINGLE_AGENT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: { status: { type: 'string', enum: ['DONE', 'BLOCKED'] }, summary: { type: 'string' } },
+  required: ['status', 'summary'],
+})
+
+// Todos os papéis no modelo forte; o agente único usa o transporte do executor (escrita no cwd).
+export function singleAgentPolicy(host) {
+  const base = policyFor(host)
+  const strong = MODEL_BY_STRENGTH[host].strong
+  const models = Object.fromEntries(Object.keys(base.models).map(role => [role, strong]))
+  return { host, name: `agente único no modelo forte (${strong})`, models: Object.freeze(models), readOnly: base.readOnly }
+}
+
+export function singleAgentPrompt(task, checkFailure = null) {
+  const parts = [
+    'Você é o único agente desta tarefa. Leia os arquivos do diretório atual e implemente a tarefa inteira.',
+    'Você não tem shell: o supervisor roda `npm test` (node --test) depois da sua resposta.',
+    'Responda DONE quando a tarefa estiver completa, ou BLOCKED com o motivo em summary.',
+    '',
+    task,
+  ]
+  if (checkFailure) parts.push('', '## Sua resposta anterior não passou no `npm test` do supervisor', 'Saída (final):', '```', checkFailure, '```')
+  return parts.join('\n')
+}
+
+export async function runSingleAgent({ workspaceDir, hostApi, task, rounds = DEFAULT_SINGLE_AGENT_ROUNDS, maxWallMs = DEFAULT_MAX_WALL_MS, simulated = false, control = null, runChecks = cwd => runNodeTest(cwd) } = {}) {
+  const tracker = createCallTracker({ maxCalls: rounds })
+  if (control) control.abort = (code, details) => { tracker.abort(code, details); return tracker.cancelAll() }
+  const host = tracker.wrap(hostApi)
+  const checks = []
+  let reportedStatus = null
+  let reason = null
+  let exception = null
+  const loop = async () => {
+    let checkFailure = null
+    for (let round = 1; round <= rounds; round++) {
+      const before = await hashTree(workspaceDir)
+      const handle = await host.spawn({ role: 'executor', prompt: singleAgentPrompt(task, checkFailure), schema: SINGLE_AGENT_SCHEMA })
+      const result = await host.wait(handle)
+      const outside = diffTrees(before, await hashTree(workspaceDir)).filter(file => !file.startsWith('src/'))
+      if (outside.length) { tracker.abort('grant_violation', { paths: outside, round }); return }
+      if (result.output?.status !== 'DONE') { reportedStatus = 'BLOCKED'; reason = 'single_agent_blocked'; return }
+      const check = await runChecks(workspaceDir)
+      checks.push({ round, exitCode: check.exitCode, tap: check.tap })
+      if (check.exitCode === 0) { reportedStatus = 'DONE'; return }
+      checkFailure = check.outputTail
+    }
+    reportedStatus = 'BLOCKED'
+    reason = 'single_agent_checks_failed'
+  }
+  try {
+    await withWallCap(loop(), maxWallMs)
+  } catch (error) {
+    if (error.code === 'wall_cap') tracker.abort('wall_cap', { limitMs: maxWallMs })
+    else exception = { code: error.code ?? 'EXCEPTION', message: error.message }
+  }
+  await tracker.cancelAll()
+  // O transporte é o do executor, mas o papel lógico é o agente único (modelo forte): calls.jsonl e byRole dizem isso.
+  for (const call of tracker.calls) call.role = 'singleAgent'
+  return {
+    engine: 'single-agent', simulated,
+    reportedStatus,
+    result: reason ? { status: 'blocked', feedback: { reason } } : null,
+    block: tracker.block,
+    exception,
+    calls: tracker.calls,
+    checks,
+    spawnAttempts: tracker.spawnAttempts,
+    inflight: tracker.openCount,
+    metricErrors: tracker.metricErrors,
+  }
+}
+
 // Lê o resumo do TAP do node --test: "# pass N" e "# fail N".
 export function parseTap(text) {
   const pass = /^# pass (\d+)\s*$/m.exec(text)
@@ -534,24 +627,29 @@ export async function runAcceptance({ workspaceDir, acceptanceDir, tmpRoot = pat
       await copyFile(path.join(acceptanceDir, name), path.join(accDir, target))
       files.push(path.join('__acceptance__', target))
     }
-    const started = Date.now()
-    let exitCode = 0
-    let output = ''
-    try {
-      // NODE_TEST_CONTEXT herdado de um node --test pai faz o filho reportar pelo IPC e sair com 0: removido para o exit code ser real.
-      const env = { ...process.env }
-      delete env.NODE_TEST_CONTEXT
-      const { stdout, stderr } = await execFileAsync(process.execPath, ['--test', '--test-concurrency=2', ...files], { cwd: wsCopy, env, timeout: EVAL_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 })
-      output = stdout + stderr
-    } catch (error) {
-      if (typeof error.code !== 'number') throw error
-      exitCode = error.code
-      output = String(error.stdout ?? '') + String(error.stderr ?? '')
-    }
-    return { exitCode, tap: parseTap(output), durationMs: Date.now() - started, files: files.map(file => toPosix(file)), outputTail: output.slice(-2000) }
+    return { ...await runNodeTest(wsCopy, files), files: files.map(file => toPosix(file)) }
   } finally {
     await rm(evalDir, { recursive: true, force: true })
   }
+}
+
+// node --test com concorrência 2 no cwd. Sem arquivos, usa a descoberta padrão (o `npm test` do workspace).
+export async function runNodeTest(cwd, files = []) {
+  const started = Date.now()
+  let exitCode = 0
+  let output = ''
+  try {
+    // NODE_TEST_CONTEXT herdado de um node --test pai faz o filho reportar pelo IPC e sair com 0: removido para o exit code ser real.
+    const env = { ...process.env }
+    delete env.NODE_TEST_CONTEXT
+    const { stdout, stderr } = await execFileAsync(process.execPath, ['--test', '--test-concurrency=2', ...files], { cwd, env, timeout: EVAL_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 })
+    output = stdout + stderr
+  } catch (error) {
+    if (typeof error.code !== 'number') throw error
+    exitCode = error.code
+    output = String(error.stdout ?? '') + String(error.stderr ?? '')
+  }
+  return { exitCode, tap: parseTap(output), durationMs: Date.now() - started, outputTail: output.slice(-2000) }
 }
 
 // Quantidade de testes de nível superior nos aceites (cada "test(" é um caso).
@@ -636,8 +734,29 @@ export function summarizeCalls(calls, { expectedCalls } = {}) {
       usage: { coverage: `${present(call => call.usage !== null && call.usage !== undefined).length}/${total}` },
       inputTokens: tokens('input'),
       outputTokens: tokens('output'),
+      // Maior entrada de uma chamada (soma dos turnos dela, cache incluso): o "maior contexto" comparável entre variantes.
+      maxCallInputTokens: (() => {
+        const values = calls.map(call => normalizeUsage(call.usage)?.input).filter(value => typeof value === 'number')
+        return { value: values.length ? Math.max(...values) : null, coverage: `${values.length}/${total}` }
+      })(),
+      // Só o Claude informa custo (modelUsage[*].costUSD, preço de tabela); Codex fica null.
+      costUSD: (() => {
+        const values = calls.map(call => callCostUSD(call.usage)).filter(value => typeof value === 'number')
+        return { value: values.length ? values.reduce((sum, value) => sum + value, 0) : null, coverage: `${values.length}/${total}` }
+      })(),
     },
   }
+}
+
+export function callCostUSD(usage) {
+  if (!usage || typeof usage !== 'object') return null
+  const costs = Object.values(usage).map(entry => entry?.costUSD).filter(value => typeof value === 'number')
+  return costs.length ? costs.reduce((sum, value) => sum + value, 0) : null
+}
+
+// Pasta opcional da fixture (contract-v2 só existe no benchmark-v2): ausente vale árvore vazia, e criá-la depois diverge do manifesto.
+async function hashTreeIfExists(dir) {
+  return existsSync(dir) ? hashTree(dir) : {}
 }
 
 async function treeDigest(dir, pattern) {
@@ -647,7 +766,7 @@ async function treeDigest(dir, pattern) {
   return sha256(parts.join('\n'))
 }
 
-export async function buildManifest({ id, host, scenario = 'happy', repoRoot = REPO_ROOT, fixtureDir = FIXTURE_DIR, evidenceDir, baseline, checks = ['node --test'] } = {}) {
+export async function buildManifest({ id, host, scenario = 'happy', repoRoot = REPO_ROOT, fixtureDir = fixtureDirFor(scenario), evidenceDir, baseline, checks = ['node --test'] } = {}) {
   if (!HOSTS.includes(host)) throw new TypeError(`host desconhecido: ${host}`)
   if (!SCENARIOS.includes(scenario)) throw new TypeError(`cenário desconhecido: ${scenario}`)
   const bin = path.join(repoRoot, 'bin')
@@ -664,7 +783,7 @@ export async function buildManifest({ id, host, scenario = 'happy', repoRoot = R
       workspace: await hashTree(path.join(fixtureDir, 'workspace')),
       acceptance: await hashTree(path.join(fixtureDir, 'acceptance')),
       reference: await hashTree(path.join(fixtureDir, 'reference')),
-      contractV2: await hashTree(path.join(fixtureDir, 'contract-v2')),
+      contractV2: await hashTreeIfExists(path.join(fixtureDir, 'contract-v2')),
     },
     acceptance: { expectedPass: await countAcceptanceTests(path.join(fixtureDir, 'acceptance')) },
     baseline: { commit: BASELINE.commit, path: BASELINE.path, bytes: baseline.bytes, sha256: baseline.sha256, file: path.relative(evidenceDir, baseline.path) },
@@ -696,7 +815,7 @@ export async function verifyManifest(manifestPath, { repoRoot = REPO_ROOT } = {}
   const mismatches = []
   const dirs = { workspace: 'workspace', acceptance: 'acceptance', reference: 'reference', contractV2: 'contract-v2' }
   for (const [key, folder] of Object.entries(dirs)) {
-    const actual = await hashTree(path.join(manifest.fixtureDir, folder))
+    const actual = await hashTreeIfExists(path.join(manifest.fixtureDir, folder))
     const expected = manifest.fixture[key]
     const keys = new Set([...Object.keys(expected), ...Object.keys(actual)])
     for (const file of [...keys].sort()) if (expected[file] !== actual[file]) mismatches.push(`fixture.${key}:${file}`)
@@ -720,7 +839,7 @@ export async function runVariant({ manifestPath, variant, outDir, transportFacto
   if (!VARIANTS.includes(variant)) throw new TypeError(`variante desconhecida: ${variant}`)
   if (existsSync(outDir)) throw new BenchmarkBlock('attempt_exists', `tentativa já existe em ${outDir}: nada é apagado nem repetido`)
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-  const base = { id: manifest.id, host: manifest.host, variant, scenario: manifest.scenario, simulated: Boolean(transportFactory), attemptId: randomUUID(), manifestSha256: sha256(JSON.stringify(manifest)), policy: variant === 'v1-normalized' ? manifest.policy.name : 'produto atual (createHost sem política)' }
+  const base = { id: manifest.id, host: manifest.host, variant, scenario: manifest.scenario, simulated: Boolean(transportFactory), attemptId: randomUUID(), manifestSha256: sha256(JSON.stringify(manifest)), policy: variant === 'v1-normalized' ? manifest.policy.name : variant === 'single-agent' ? singleAgentPolicy(manifest.host).name : 'produto atual (createHost sem política)' }
   await mkdir(outDir, { recursive: true })
   const runPath = path.join(outDir, 'run.json')
   const startedAt = new Date().toISOString()
@@ -742,7 +861,7 @@ export async function runVariant({ manifestPath, variant, outDir, transportFacto
   await mkdir(path.dirname(workspace), { recursive: true })
   await prepareWorkspace({ fixtureDir: manifest.fixtureDir, destDir: workspace })
   await initWorkspaceRepo(workspace)
-  const fake = variant === 'v1-normalized' && transportFactory ? transportFactory() : null
+  const fake = variant !== 'adaptive' && transportFactory ? transportFactory() : null
   const hostOptions = { host: manifest.host, cwd: workspace, runDir: path.join(outDir, 'host-runs'), runId: `${manifest.id}-${variant}` }
   // Sinal: registra BLOCK cancelled sem apagar nada e cancela os handles em voo. Segundo sinal: comportamento padrão.
   const control = {}
@@ -769,6 +888,9 @@ export async function runVariant({ manifestPath, variant, outDir, transportFacto
       assertPolicyKeys(policy)
       const hostApi = createHost({ ...hostOptions, experimentalPolicy: policy, ...(fake ? { transport: { spawn: fake.spawn }, killProcess: fake.killProcess } : {}) })
       engine = await runV1({ sourcePath: path.join(path.dirname(manifestPath), manifest.baseline.file), workspaceDir: workspace, hostApi, task: await readFile(path.join(manifest.fixtureDir, 'workspace', 'task.md'), 'utf8'), maxCalls: manifest.maxCalls, maxWallMs, simulated: base.simulated, control })
+    } else if (variant === 'single-agent') {
+      const hostApi = createHost({ ...hostOptions, experimentalPolicy: singleAgentPolicy(manifest.host), ...(fake ? { transport: { spawn: fake.spawn }, killProcess: fake.killProcess } : {}) })
+      engine = await runSingleAgent({ workspaceDir: workspace, hostApi, task: await readFile(path.join(workspace, 'task.md'), 'utf8'), maxWallMs, simulated: base.simulated, control })
     } else {
       engine = await runAdaptive({ workspaceDir: workspace, host: manifest.host, transportFactory, simulated: base.simulated, maxCalls: manifest.maxCalls, maxWallMs, control, runGraphImpl })
     }
@@ -813,6 +935,7 @@ export async function runVariant({ manifestPath, variant, outDir, transportFacto
     evaluatorMs: evaluation.durationMs ?? 0,
     exception,
     metricErrors: engine.metricErrors ?? [],
+    ...(engine.checks ? { checks: engine.checks } : {}),
   })
 }
 
@@ -824,6 +947,67 @@ export async function writeNewEvidence(file, text) {
     if (error.code === 'EEXIST') throw new BenchmarkBlock('evidence_exists', `evidência já existe: ${file}; nada é sobrescrito`, { file })
     throw error
   }
+}
+
+// archive: copia a evidência da run (ignorada pelo git em .graph-runs) para docs/benchmarks/runs/<id>/, versionada,
+// e regera docs/benchmarks/RESULTADOS.md com todas as runs arquivadas. Não copia workspace nem baseline v1.
+export const ARCHIVE_ROOT = path.join(REPO_ROOT, 'docs', 'benchmarks')
+const ARCHIVED_RUN_FILES = new Set(['manifest.json', 'report.json'])
+const ARCHIVED_VARIANT_FILE = /^(run\.json|calls\.jsonl|external-eval(-[\w-]+)?\.json)$/
+
+export async function archiveRun(manifestPath, { archiveRoot = ARCHIVE_ROOT } = {}) {
+  const dir = path.dirname(manifestPath)
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  const dest = path.join(archiveRoot, 'runs', manifest.id)
+  await mkdir(dest, { recursive: true })
+  const copied = []
+  for (const name of (await readdir(dir)).sort()) {
+    if (ARCHIVED_RUN_FILES.has(name)) { await copyFile(path.join(dir, name), path.join(dest, name)); copied.push(name) }
+  }
+  for (const variant of VARIANTS) {
+    const variantDir = path.join(dir, `variant-${variant}`)
+    if (!existsSync(variantDir)) continue
+    await mkdir(path.join(dest, `variant-${variant}`), { recursive: true })
+    for (const name of (await readdir(variantDir)).sort()) {
+      if (!ARCHIVED_VARIANT_FILE.test(name)) continue
+      await copyFile(path.join(variantDir, name), path.join(dest, `variant-${variant}`, name))
+      copied.push(`variant-${variant}/${name}`)
+    }
+  }
+  await writeFile(path.join(archiveRoot, 'RESULTADOS.md'), await renderArchivedResults(archiveRoot))
+  return { dest, copied }
+}
+
+const readJson = async file => JSON.parse(await readFile(file, 'utf8').catch(() => 'null'))
+
+// Uma linha por variante arquivada. Custo, tokens e maior contexto saem do calls.jsonl, então valem também para runs antigas.
+export async function renderArchivedResults(archiveRoot = ARCHIVE_ROOT) {
+  const runsDir = path.join(archiveRoot, 'runs')
+  const rows = []
+  for (const id of existsSync(runsDir) ? (await readdir(runsDir)).sort() : []) {
+    for (const variant of VARIANTS) {
+      const variantDir = path.join(runsDir, id, `variant-${variant}`)
+      const run = await readJson(path.join(variantDir, 'run.json'))
+      if (!run) continue
+      const evaluation = await readJson(path.join(variantDir, 'external-eval.json'))
+      const callsText = await readFile(path.join(variantDir, 'calls.jsonl'), 'utf8').catch(() => '')
+      const fields = summarizeCalls(callsText.split('\n').filter(Boolean).map(line => JSON.parse(line))).fields
+      const tap = evaluation?.tap ? `${evaluation.tap.pass ?? '?'}/${evaluation.expectedPass ?? '?'}` : '—'
+      const num = (value, digits = 0) => (typeof value === 'number' ? value.toFixed(digits) : '—')
+      const k = value => (typeof value === 'number' ? `${Math.round(value / 1000)}k` : '—')
+      rows.push(`| ${id} | ${run.scenario} | ${run.host} | ${variant} | ${run.status} | ${cell(run.reason)} | ${cell(run.reportedStatus)} | ${cell(run.externalStatus)} ${tap} | ${cell(run.falseDone)} | ${run.summary?.total ?? '—'} | ${typeof fields.costUSD.value === 'number' ? `US$ ${num(fields.costUSD.value, 2)}` : '—'} | ${num(typeof run.engineMs === 'number' ? run.engineMs / 1000 : null)} | ${k(fields.maxCallInputTokens.value)} | ${k(fields.inputTokens.value)} / ${k(fields.outputTokens.value)} |`)
+    }
+  }
+  return [
+    '# Resultados das runs reais',
+    '',
+    'Gerado por `node bin/graph-benchmark.mjs archive`. Não edite à mão. Leitura e contexto: `docs/validation/graph-eng-2-benchmark.md`.',
+    '',
+    '| run | cenário | host | variante | status | motivo | reportedStatus | externo | falso DONE | chamadas | custo | motor (s) | maior contexto | entrada / saída |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+    ...rows,
+    '',
+  ].join('\n')
 }
 
 // eval: reavalia cada variante com run.json e grava external-eval-<ts>.json (novo). A evidência da run não muda.
@@ -898,10 +1082,10 @@ export function renderReport(report, { includeTiming = true } = {}) {
   return lines.join('\n') + '\n'
 }
 
-// CLI: prepare|run|eval|report|verify. Só o caminho `run` sem transporte injetado chama CLI real.
+// CLI: prepare|run|eval|report|verify|archive. Só o caminho `run` sem transporte injetado chama CLI real.
 export function parseBenchmarkArgs(argv) {
   const [command, ...tail] = argv
-  if (!['prepare', 'run', 'eval', 'report', 'verify'].includes(command)) throw new Error(`comando desconhecido: ${command}; use prepare, run, eval, report ou verify`)
+  if (!['prepare', 'run', 'eval', 'report', 'verify', 'archive'].includes(command)) throw new Error(`comando desconhecido: ${command}; use prepare, run, eval, report, verify ou archive`)
   const options = {}
   for (let i = 0; i < tail.length; i += 2) {
     const flag = tail[i]
@@ -910,8 +1094,8 @@ export function parseBenchmarkArgs(argv) {
     options[flag.slice(2)] = value
   }
   if (options.host !== undefined && !HOSTS.includes(options.host)) throw new Error(`host desconhecido: ${options.host}; use codex ou claude`)
-  if (options.variant !== undefined && !VARIANTS.includes(options.variant)) throw new Error(`variant desconhecida: ${options.variant}; use v1-normalized ou adaptive`)
-  if (options.scenario !== undefined && !SCENARIOS.includes(options.scenario)) throw new Error(`scenario desconhecido: ${options.scenario}; use happy ou contract-change`)
+  if (options.variant !== undefined && !VARIANTS.includes(options.variant)) throw new Error(`variant desconhecida: ${options.variant}; use v1-normalized, adaptive ou single-agent`)
+  if (options.scenario !== undefined && !SCENARIOS.includes(options.scenario)) throw new Error(`scenario desconhecido: ${options.scenario}; use ${SCENARIOS.join(', ')}`)
   const out = path.resolve(REPO_ROOT, options.out ?? '.graph-runs/benchmarks')
   if (out !== EVIDENCE_ROOT && !out.startsWith(EVIDENCE_ROOT + path.sep)) throw new Error('--out precisa estar em .graph-runs/benchmarks')
   let manifest
@@ -958,6 +1142,10 @@ async function main(argv) {
     const run = await runVariant({ manifestPath, variant: args.variant, outDir: path.join(dir, `variant-${args.variant}`), ...(args.maxWallMs ? { maxWallMs: args.maxWallMs } : {}) })
     print({ status: run.status, reason: run.reason, attempted: run.attempted, externalStatus: run.externalStatus, workspace: run.workspace })
     return run.status === 'BLOCK' ? 2 : 0
+  }
+  if (args.command === 'archive') {
+    print(await archiveRun(manifestPath))
+    return 0
   }
   if (args.command === 'eval') {
     print(await runEval(manifestPath))

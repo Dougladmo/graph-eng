@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { childEnv } from './child-env.mjs'
 import { spawn } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { lstat, readFile, readlink, realpath, mkdir, open, rm } from 'node:fs/promises'
@@ -225,7 +226,7 @@ export function createEvidence({ cwd, runDir, emit = () => {}, heavyLock, integr
     try {
       const timeoutMs = Number.isFinite(check.timeoutMs) && check.timeoutMs > 0 ? check.timeoutMs : 120000
       await new Promise((resolve, reject) => {
-        const child = spawn(check.command, check.args, { cwd: cwdPath, shell: false, detached: process.platform !== 'win32', stdio: ['ignore', out.fd, err.fd] })
+        const child = spawn(check.command, check.args, { cwd: cwdPath, shell: false, detached: process.platform !== 'win32', stdio: ['ignore', out.fd, err.fd], env: childEnv() })
         let timedOut = false
         let killer
         const killGroup = signal => {

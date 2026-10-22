@@ -1,0 +1,11 @@
+import { formatarDecimal } from './dinheiro.mjs'
+
+const CAMPOS = ['subtotal', 'desconto', 'imposto', 'total']
+
+export function relatorioCSV(faturas) {
+  const ordenadas = faturas.sort((a, b) => a.vencimento.localeCompare(b.vencimento))
+  const linhas = ['id;emissao;vencimento;subtotal;desconto;imposto;total']
+  for (const fatura of ordenadas) linhas.push([fatura.id, fatura.emissao, fatura.vencimento, ...CAMPOS.map(campo => formatarDecimal(fatura[campo]))].join(';'))
+  linhas.push(['TOTAL', '', '', ...CAMPOS.map(campo => formatarDecimal(faturas.reduce((acc, fatura) => acc + fatura[campo], 0)))].join(';'))
+  return linhas.join('\n') + '\n'
+}

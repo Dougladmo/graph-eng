@@ -255,3 +255,16 @@ test('implemente sem tarefa passa ao runner sem task e descobre checks uma vez',
   assert.equal('task' in calls[0].args, false)
   assert.deepEqual(calls[0].args.pipeline, { from: 'auto', to: 'implement' })
 })
+
+test('--adaptive on|off chega ao runGraph; forma com = , repetida, valor inválido e init são recusados', async () => {
+  assert.deepEqual(parseGrapheng(['implemente', 'x', '--adaptive', 'off']), { command: 'implemente', task: 'x', adaptive: 'off' })
+  assert.deepEqual(parseGrapheng(['tasks', '--adaptive', 'on']), { command: 'tasks', adaptive: 'on' })
+  for (const argv of [['plan', 'x', '--adaptive=off'], ['plan', 'x', '--adaptive', 'off', '--adaptive', 'on'], ['plan', 'x', '--adaptive', 'talvez'], ['plan', 'x', '--adaptive'], ['init', '--adaptive', 'on']]) {
+    assert.throws(() => parseGrapheng(argv), JSON.stringify(argv))
+  }
+  let captured
+  await executeGrapheng({ invocation: ['plan', 'x', '--adaptive', 'off'], cwd: '/repo', host: 'claude', configImpl: async () => ({ effort: 'medium', effortSource: 'config' }), runGraphImpl: async call => { captured = call; return { status: 'done' } } })
+  assert.equal(captured.args.adaptive, 'off')
+  await executeGrapheng({ invocation: ['plan', 'x'], cwd: '/repo', host: 'claude', configImpl: async () => ({ effort: 'medium', effortSource: 'config' }), runGraphImpl: async call => { captured = call; return { status: 'done' } } })
+  assert.equal(Object.hasOwn(captured.args, 'adaptive'), false, 'sem flag, o runner decide (padrão on)')
+})

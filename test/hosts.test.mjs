@@ -76,10 +76,35 @@ test('papéis canônicos e aliases selecionam modelo; capabilities não alegam d
   assert.match(capabilities.readOnlyEnforcement, /Read, Glob e Grep/)
   assert.deepEqual(Object.keys(capabilities).sort(), ['agentShell', 'agentWeb', 'cancellation', 'cli', 'host', 'lifecycleEvents', 'modelAvailability', 'promptTransport', 'readOnlyEnforced', 'readOnlyEnforcement', 'roles', 'schemaTransport', 'structuredOutput'].sort())
   assert.equal(capabilities.agentShell, false, 'Claude não dá shell ao agente')
-  for (const [role, model] of [['planReviewer', 'opus'], ['plan-review', 'opus'], ['designReviewer', 'opus'], ['worker', 'haiku'], ['repair', 'haiku'], ['polish', 'haiku'], ['verifier', 'haiku'], ['verify', 'haiku']]) {
+  for (const [role, model] of [['planner', 'sonnet'], ['planReviewer', 'opus'], ['plan-review', 'opus'], ['designReviewer', 'opus'], ['critic', 'sonnet'], ['researcher', 'sonnet'], ['designer', 'sonnet'], ['notetaker', 'haiku'], ['synth', 'haiku'], ['worker', 'haiku'], ['repair', 'haiku'], ['polish', 'haiku'], ['verifier', 'haiku'], ['verify', 'haiku']]) {
     await host.wait(await host.spawn({ role, prompt: 'x', schema }))
     assert.equal(fake.calls.at(-1).args[fake.calls.at(-1).args.indexOf('--model') + 1], model)
   }
+})
+
+test('pesquisa e design escritos pelo Sonnet e só leem; o Opus revisa o design', async t => {
+  // Pedido do Douglas (21/10): Sonnet pesquisa, planeja e desenha; Opus só carimba plano e design; Haiku implementa.
+  const runDir = await tempRun(t)
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
+  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
+  for (const role of ['researcher', 'designer', 'notetaker']) {
+    await host.wait(await host.spawn({ role, prompt: 'x', schema }))
+    const args = fake.calls.at(-1).args
+    assert.equal(args[args.indexOf('--tools') + 1].includes('Edit'), false, `${role} não pode escrever`)
+  }
+})
+
+test('effort da chamada vira --effort do Claude Code; sem effort não há flag e valor fora da lista é recusado', async t => {
+  // Regressão (xadrez, 21/10): o workflow pedia effort por chamada, mas o adaptador nunca o repassava ao CLI.
+  const runDir = await tempRun(t)
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
+  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
+  await host.wait(await host.spawn({ role: 'planReviewer', prompt: 'x', schema, effort: 'medium' }))
+  const args = fake.calls.at(-1).args
+  assert.equal(args[args.indexOf('--effort') + 1], 'medium')
+  await host.wait(await host.spawn({ role: 'verifier', prompt: 'x', schema }))
+  assert.equal(fake.calls.at(-1).args.includes('--effort'), false)
+  await assert.rejects(host.spawn({ role: 'critic', prompt: 'x', schema, effort: 'turbo' }), error => error.code === 'INVALID_EFFORT')
 })
 
 test('agentShell: só o Codex dá shell ao agente; o valor chega como capability do transporte', async t => {
@@ -88,9 +113,20 @@ test('agentShell: só o Codex dá shell ao agente; o valor chega como capability
   assert.equal(codex.capabilities().agentShell, true)
   const claude = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fixtureSpawn({ run() {} }).spawn } })
   assert.equal(claude.capabilities().agentShell, false)
-  // Claude roda com --tools Read,Glob,Grep[,Edit,Write] e o Codex sem --search: nenhum dos dois tem web.
-  assert.equal(claude.capabilities().agentWeb, false)
+  // Claude: só o researcher ganha WebSearch/WebFetch (fluxo adaptativo, estágio de pesquisa). Codex roda sem --search.
+  assert.equal(claude.capabilities().agentWeb, true)
   assert.equal(codex.capabilities().agentWeb, false)
+})
+
+test('web só para o researcher no Claude; planner, designer e executor seguem sem web', async t => {
+  const runDir = await tempRun(t)
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
+  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
+  const toolsOf = async role => { await host.wait(await host.spawn({ role, prompt: 'x', schema })); const args = fake.calls.at(-1).args; return [args[args.indexOf('--tools') + 1], args[args.indexOf('--allowedTools') + 1]] }
+  assert.deepEqual(await toolsOf('researcher'), ['Read,Glob,Grep,WebSearch,WebFetch', 'Read,Glob,Grep,WebSearch,WebFetch'])
+  for (const role of ['planner', 'designer', 'notetaker', 'critic']) assert.deepEqual(await toolsOf(role), ['Read,Glob,Grep', 'Read,Glob,Grep'], role)
+  const [executorTools] = await toolsOf('executor')
+  assert.equal(executorTools.includes('Web'), false)
 })
 
 // B3: escrita do Claude sob diretório .claude é negada pelo Claude Code; o host recusa antes do spawn.

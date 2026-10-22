@@ -1,7 +1,7 @@
 ---
 name: grapheng
 description: Planeje, esclareça, decomponha ou implemente tarefas complexas com o graph-eng, ou use init para abrir o painel local.
-argument-hint: "plan <tarefa> | clarify | tasks | implemente [<tarefa>] | init, com --effort low|medium|max opcional"
+argument-hint: "plan <tarefa> | clarify | tasks | implemente [<tarefa>] | init, com --effort low|medium|max e --adaptive on|off opcionais"
 ---
 
 # grapheng
@@ -24,6 +24,24 @@ Ordem típica: `plan` → (`clarify`, se houver perguntas) → `tasks` → `impl
 
 Esforço aceito: `low`, `medium` (padrão) ou `max`, sempre na forma separada (`--effort max`). `--effort` válido substitui a configuração em `plan`, `clarify`, `tasks` e `implemente`. Não existe `--effort=max`. `init` não aceita esforço.
 
+## Fluxo adaptativo
+
+Com `--adaptive on` (padrão), o runner faz uma triagem determinística da tarefa antes de planejar e escolhe um tier:
+
+- `fast`: tarefa pequena, local, com check rodável. Pula pesquisa, revisão do plano e design.
+- `standard`: várias partes ou domínio sensível (dinheiro, auth, dados de produção). Mantém a revisão do plano pelo modelo forte e pula o design.
+- `full`: tarefa ampla ou ambígua. Roda tudo: pesquisa em paralelo com notetaker, plano, revisão do plano, design e revisão do design.
+
+Verify, checks e o critic final rodam em todo tier. O motor só sobe o tier (nó de design, risco alto, plano grande), nunca desce. A decisão e os motivos ficam no journal da run. `--adaptive off` força o fluxo completo. Trocar `--adaptive` ao retomar uma run bloqueia com `resume_adaptive_changed`.
+
+Classificador opcional: com uma chave do OpenRouter configurada, um classificador externo pequeno (Jev 1.13) ajuda a triagem; sem chave, ou em qualquer falha dele, vale só a heurística. Para ligar, o usuário roda no terminal dele (a chave entra pelo stdin, nunca como argumento):
+
+```bash
+node <raiz-do-plugin>/bin/graph-run.mjs triage-config
+```
+
+A chave fica em `~/.graph-eng/config.json` com permissão 0600 e nunca chega aos agentes. Não peça a chave ao usuário nem a grave por ele.
+
 ## Reuso de artefatos e slot único
 
 Há um slot de plano e um de tarefas por repositório: a **feature corrente**. Um `plan` aprovado novo substitui o slot de plano anterior. Antes de usar um artefato, o runner confere a identidade da tarefa, a origem verificada na run que o publicou e a identidade do workspace. Se algo não bate, ele não reutiliza o artefato silenciosamente: a decisão e o motivo ficam no journal da run.
@@ -38,6 +56,9 @@ Motivos de bloqueio ou de recusa de reuso que o host pode ver:
 - `workspace_changed`: o repositório mudou (arquivo editado, criado, removido ou commit novo) depois do plano; o artefato não é reutilizado e o planejamento roda de novo.
 - `task_changed`: a tarefa, o contexto, o host ou a política mudou; o artefato não serve.
 - `source_unverified` e `artifact_tampered`: o artefato não bate com a run de origem ou foi adulterado; não há reuso.
+- `reuse_tier_lower`: o artefato foi feito num tier mais leve que o desta run; o estágio roda de novo.
+- `resume_adaptive_changed`: a run foi retomada com `--adaptive` diferente do original; repita o valor original ou comece outra run.
+- `invalid_adaptive`: `--adaptive` só aceita `on` ou `off`.
 
 Quando um comando devolve `blocked`, mostre o motivo exato que veio. Não trate `blocked` como sucesso, não invente respostas de clarify, não invente tarefas e não invente checks.
 

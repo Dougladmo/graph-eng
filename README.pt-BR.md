@@ -37,7 +37,7 @@
 </p>
 
 <p align="center">
-  <strong>papel forte planeja e revisa · papel barato executa · checks reais por nó · DONE só com evidência · painel ao vivo</strong><br>
+  <strong>papel forte só revisa · papel médio planeja · papel barato executa · fluxo do tamanho da tarefa · checks reais por nó · DONE só com evidência · painel ao vivo</strong><br>
   <sub>O graph-eng planeja ou executa tarefas complexas como grafos pequenos, com papéis definidos pelo host, checks confiáveis e evidências por execução. O pacote mantém a identidade <code>graph-eng</code> e descobre <code>skills/</code> em local portátil.</sub>
 </p>
 
@@ -53,13 +53,13 @@
 
 ## Em 30 segundos
 
-> Você descreve a tarefa. Um modelo **forte** planeja e revisa, modelos **baratos** executam, e o supervisor roda **testes de verdade** em cada passo. A run só termina como **DONE** quando há evidência; senão, para com um **motivo legível**.
+> Você descreve a tarefa. Um modelo **médio** planeja, o modelo **forte** só dá a revisão final, modelos **baratos** executam, e o supervisor roda **testes de verdade** em cada passo. A run só termina como **DONE** quando há evidência; senão, para com um **motivo legível**.
 >
 > A ideia: tarefas complexas sem pagar o preço do modelo forte em cada linha de trabalho. O modelo caro só pensa; o barato faz o volume. Veja [por que dividir os modelos](#benchmark).
 
 | | |
 | --- | --- |
-| 🧠 **Planeja forte** | O modelo forte do host monta o plano como grafo e revisa cada etapa. |
+| 🧠 **Revisa forte** | Um modelo médio monta o plano como grafo; o forte só carimba o plano e o design. Tarefa pequena pula a revisão pesada. |
 | ⚙️ **Executa barato** | O modelo operacional do host, mais barato, faz o trabalho de cada nó. |
 | 🧪 **Confere com testes** | `node --test` nos arquivos de cada nó e a suíte inteira no fim. |
 | 🔁 **Corrige pelo caminho** | O feedback dos revisores volta pelo grafo: refaz um nó, replaneja ou para. |
@@ -140,17 +140,43 @@ flowchart TD
 
 ### Quem faz o quê
 
-Os modelos de cada papel são fixos por host (Claude Code ou Codex): forte para planejar e revisar, operacional para executar. Não há flag para trocar.
+O modelo de cada papel é fixo por host. Não há flag para trocar. O modelo forte só revisa: dá o carimbo final no plano e no design. O médio pensa, o barato faz o volume. Host com só dois modelos usa o forte nos papéis médios.
 
 | Papel | Tipo | O que faz |
 | --- | --- | --- |
-| Planner | 🧠 forte | Monta o plano como grafo, com critérios de pronto (`doneWhen`). |
-| Revisores (plano e design) | 🧠 forte | Aprovam ou devolvem com o motivo. |
-| Critic | 🧠 forte | Confere cada critério de pronto contra a evidência e decide. |
+| Pesquisadores | médio | Leem o código e, no Claude, a documentação atual na web. Rodam em paralelo. |
+| Notetaker | ⚙️ barato | Junta as notas dos pesquisadores num resumo e aponta conflitos. |
+| Planner | médio | Monta o plano como grafo, com critérios de pronto (`doneWhen`). |
+| Revisor do plano | 🧠 forte | Aprova ou devolve com o motivo. |
+| Designer | médio | Escreve o design dos nós que precisam de um. |
+| Revisor do design | 🧠 forte | Aprova o design ou devolve. |
+| Critic | médio | Confere cada critério de pronto contra a evidência e decide. |
 | Executor | ⚙️ barato | Faz o trabalho de um nó, só nos arquivos liberados para ele. |
 | Verificador | ⚙️ barato | Lê o que o executor fez e os recibos dos testes. |
 | Synth | ⚙️ barato | Escreve o resumo final. |
 | Supervisor | 🧪 código | Roda os testes, sela a evidência e nega DONE sem prova. Não é um modelo. |
+
+Todo papel roda com esforço `medium`.
+
+### Fluxo adaptativo
+
+Nem toda tarefa precisa do ciclo inteiro. Antes de planejar, o runner faz a triagem da tarefa e escolhe um tier:
+
+| Tier | Quando | O que roda |
+| --- | --- | --- |
+| ⚡ `fast` | mudança pequena e local, com check rodável | plano → implementação → verify → critic |
+| ⚖️ `standard` | vários arquivos, ou domínio sensível (dinheiro, auth, dados de produção) | soma a revisão do plano pelo modelo forte |
+| 🧭 `full` | tarefa ampla ou ambígua | soma pesquisa, design e a revisão do design pelo modelo forte |
+
+Verify, checks e o critic final rodam em todo tier. O motor só sobe o tier (nó de design, nó de risco alto, plano grande), nunca desce. A decisão e os motivos vão para o journal da run. `--adaptive off` força o fluxo completo.
+
+Classificador opcional: com uma chave do OpenRouter, um classificador externo pequeno (Jev 1.13, da TypeSafe) ajuda na triagem. Sem a chave, ou em qualquer falha, decide só a heurística. Para ligar, rode no seu terminal e cole a chave quando pedir:
+
+```bash
+node bin/graph-run.mjs triage-config
+```
+
+A chave fica em `~/.graph-eng/config.json` com permissão 0600 e nunca chega aos agentes.
 
 ### As quatro decisões
 
@@ -241,7 +267,7 @@ Rodar as chamadas de executor, verifier e synth no modelo forte custaria cerca d
 
 ## Detalhes de execução
 
-O esforço aceita `low`, `medium` (padrão) ou `max`, na forma separada (`--effort max`); `--effort` substitui a configuração em `plan`, `clarify`, `tasks` e `implemente`. Papéis e modelos são fixos pelo adapter confiável de Claude ou Codex. Não há flags públicas para modelos, papéis, largura ou limites internos.
+O esforço aceita `low`, `medium` (padrão) ou `max`, na forma separada (`--effort max`); `--effort` substitui a configuração em `plan`, `clarify`, `tasks` e `implemente`. Papéis e modelos são fixos pelo adapter confiável de Claude ou Codex. Não há flags públicas para modelos, papéis, largura ou limites internos. `--adaptive on|off` (padrão `on`) liga ou desliga os tiers; ver [Fluxo adaptativo](#fluxo-adaptativo).
 
 O adapter de execução implementado neste corte é somente Node native test runner em repositórios com `package.json` legível e `scripts.test` exatamente `node --test`. Vitest, Jest, scripts com flags extras e repositórios sem esse contrato produzem `BLOCK` para `implemente`; `plan` continua disponível. Cada nó recebe uma seleção local derivada de `inputs`, `outputs` e `files` aprovados pelo supervisor. Um mapping interno conhecido roda os testes afetados; sem mapping completo, a cobertura é marcada como limitada e só se executam `node --check` aplicáveis e a validação do contrato/grants. O gate final roda a suíte completa com concorrência 2 somente depois de todo polish. Os checks usam `process.execPath`, argv explícito e spawn sem shell. Cada run grava seleção e receipts em `.graph-runs/` no repositório.
 

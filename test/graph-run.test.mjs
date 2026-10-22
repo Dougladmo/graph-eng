@@ -299,9 +299,16 @@ test('Workflow implement real retoma node-fix-intent concluído com receipts atu
   assert.match(ready.checkEvidence.receipts[0].checkId, /^node-check-/)
   assert.equal(ready.checkEvidence.receipts[0].valid, true)
   const lastCheckpointEvent = events.filter(event => event.type === 'control.transition').at(-1)
-  assert.equal(lastCheckpointEvent.payload.checkpoint.control.counters.localRepairsUsed, 1)
+  assert.equal(lastCheckpointEvent.payload.checkpoint.control.counters.localRepairsUsed, 0) // reparo de nó de código não gasta o pool da run
   const originalUsed = structuredClone(lastCheckpointEvent.payload.checkpoint.ledger.usedByRole)
   const originalAllocation = structuredClone(lastCheckpointEvent.payload.checkpoint.budgetPolicy.allocation)
+  // O reparo do nó de código não gasta o pool da run: simula um journal cujo histórico já tinha 1 reparo local
+  // e um checkpoint que voltou para 0, que é o que a retomada precisa recusar.
+  const journalPath = path.join(cwd, args.runDir, 'journal.jsonl')
+  const journalEvents = (await readFile(journalPath, 'utf8')).trim().split('\n').map(JSON.parse)
+  const lastBudgetCall = journalEvents.filter(event => event.type === 'budget.call').at(-1)
+  lastBudgetCall.payload.ledger.localRepairsUsed = 1
+  await writeFile(journalPath, `${journalEvents.map(event => JSON.stringify(event)).join('\n')}\n`)
   await mutateLatestCheckpoint(cwd, args.runId, args.runDir, event => event.seq === lastCheckpointEvent.seq, checkpoint => {
     checkpoint.control.counters.localRepairsUsed = 0
     checkpoint.ledger.localRepairsUsed = 0
@@ -477,7 +484,8 @@ test('regressão max: approval de D1 após R1 persiste e permite entrar no chain
   assert.ok(results.some(event => event.label === 'polish:1'), JSON.stringify({ labels: results.map(event => event.label), logs }))
   const initialAllocation = journal.find(event => event.type === 'control.transition' && event.payload.stage === 'budget-policy-approved')?.payload.checkpoint.budgetPolicy.allocation
   assert.ok(initialAllocation)
-  assert.equal(initialAllocation.demand.verifier, 2 * plan.nodes.length + polishRevalidationBudget(plan.nodes) + 4)
+  // + 4: 2 reparos do pool da run; + 2 por nó de código: o reparo próprio de cada implement.
+  assert.equal(initialAllocation.demand.verifier, 2 * plan.nodes.length + polishRevalidationBudget(plan.nodes) + 4 + 2 * plan.nodes.filter(node => node.kind === 'implement').length)
   const replan = journal.find(event => event.type === 'control.transition' && event.payload.stage === 'plan-approved' && event.payload.allocation?.reason === 'approved-replan')
   assert.ok(replan, JSON.stringify({ transitions, labels: results.map(event => event.label), logs }))
   const beforeReplan = journal.slice(0, journal.indexOf(replan))
@@ -3197,6 +3205,10 @@ test('FIX5 3E: memoryContext é JSON delimitado com aviso de dados não confiáv
 
 test('FIX7 3E: o critic não recebe seleção de memória; só o worker recebe', () => {
   assert.equal(memoryRoleFor('executor'), 'worker')
+  // Regressão: nós de design e pesquisa rodam como designer/researcher (Sonnet) e continuam recebendo a memória do worker.
+  assert.equal(memoryRoleFor('designer'), 'worker')
+  assert.equal(memoryRoleFor('researcher'), 'worker')
+  assert.equal(memoryRoleFor('notetaker'), null)
   assert.equal(memoryRoleFor('critic'), null)
   assert.equal(memoryRoleFor('planner'), null)
 })

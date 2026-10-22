@@ -12,6 +12,7 @@ import { defaultConfigPath, readConfig, resolveConfig, validateConfig } from './
 const PLUGIN_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const REMOVED = new Set(['--ceiling', '--economy', '--width', '--model', '--planner-model', '--reviewer-model', '--executor-model', '--max-rounds', '--max-repairs', '--plan-gate', '--lean', '--high', '--manual', '--auto', '--max-agents'])
 const EFFORTS = new Set(['low', 'medium', 'max'])
+const ADAPTIVE = new Set(['on', 'off'])
 const COMMANDS = ['plan', 'clarify', 'tasks', 'implemente', 'init']
 const TASK_FREE_COMMANDS = new Set(['clarify', 'tasks'])
 // Tabela do brief (I1): cada comando vira exatamente um runGraph com este pipeline.
@@ -31,6 +32,7 @@ export function parseGrapheng(argv) {
   const [command, ...tail] = argv
   if (!COMMANDS.includes(command)) throw new Error(command === 'implement' ? 'comando desconhecido; use implemente' : `comando desconhecido; use ${COMMANDS.join(', ')}`)
   let effort
+  let adaptive
   const taskTokens = []
   let literal = false
   for (let i = 0; i < tail.length; i++) {
@@ -47,6 +49,17 @@ export function parseGrapheng(argv) {
       effort = value
       continue
     }
+    if (!literal && token.startsWith('--adaptive=')) {
+      const value = token.slice('--adaptive='.length)
+      throw new Error(`--adaptive=${value} não é aceito; use --adaptive ${value}`)
+    }
+    if (!literal && token === '--adaptive') {
+      if (adaptive !== undefined) throw new Error('--adaptive repetido')
+      const value = tail[++i]
+      if (!ADAPTIVE.has(value)) throw new Error('--adaptive aceita somente on ou off')
+      adaptive = value
+      continue
+    }
     if (!literal && token.startsWith('-')) {
       const flag = token.split('=')[0]
       if (REMOVED.has(flag)) throw new Error(`${flag}: opção removida`)
@@ -56,17 +69,17 @@ export function parseGrapheng(argv) {
     taskTokens.push(token)
   }
   if (command === 'init') {
-    if (taskTokens.length || effort !== undefined) throw new Error('init não recebe tarefa nem esforço')
+    if (taskTokens.length || effort !== undefined || adaptive !== undefined) throw new Error('init não recebe tarefa, esforço nem --adaptive')
     return { command }
   }
   if (TASK_FREE_COMMANDS.has(command)) {
     if (taskTokens.length) throw new Error('clarify/tasks usam o plano aprovado do workspace; não recebem tarefa')
-    return { command, ...(effort ? { effort } : {}) }
+    return { command, ...(effort ? { effort } : {}), ...(adaptive ? { adaptive } : {}) }
   }
   const task = taskTokens.join(' ')
   if (taskTokens.length && !task.trim()) throw new Error('tarefa vazia')
   if (command === 'plan' && !task) throw new Error('plan exige uma tarefa')
-  return { command, ...(task ? { task } : {}), ...(effort ? { effort } : {}) }
+  return { command, ...(task ? { task } : {}), ...(effort ? { effort } : {}), ...(adaptive ? { adaptive } : {}) }
 }
 
 // Valida a forma das respostas de clarify. Não compara questionSetId com o slot: isso só entra no passo R.
@@ -170,6 +183,7 @@ export async function executeGrapheng({ invocation, clarification, cwd = process
   }
   // Tarefa só entra em plan e implemente com tarefa; clarify/tasks/implemente sem tarefa usam o slot único "feature corrente" no runner.
   if (parsed.task) args.task = parsed.task
+  if (parsed.adaptive) args.adaptive = parsed.adaptive
   if (parsed.command === 'clarify' && clarification !== undefined) args.clarification = clarification
   if (parsed.command === 'implemente') {
     const discovery = await discoverChecksImpl(cwd)

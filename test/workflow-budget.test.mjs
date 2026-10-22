@@ -14,11 +14,11 @@ test('low reserva o plano mínimo completo e conclui todos os gates sem dropped 
   assert.ok(calls.includes('design-review:r1'))
   assert.ok(calls.includes('verify:I1'))
   assert.ok(calls.includes('critic:r1'))
-  assert.ok(calls.includes('polish:1'))
+  assert.equal(calls.includes('polish:1'), false) // polish só no effort max
   assert.ok(calls.includes('synth'))
   assert.deepEqual(result.stats.dropped, [])
-  assert.equal(result.budget.limitsByRole.executor, 6) // 3 nós + polish + 2 reparos
-  assert.equal(result.budget.limitsByRole.verifier, 6) // manifesto unknown não gera READY nem reserva uma revalidação local reutilizável
+  assert.equal(result.budget.limitsByRole.executor, 7) // 3 nós + polish + 2 reparos do pool da run + 1 reparo próprio do I1
+  assert.equal(result.budget.limitsByRole.verifier, 8) // inclui 2 votos do reparo próprio do I1; manifesto unknown não gera READY nem reserva uma revalidação local reutilizável
   assert.equal(result.budget.usedByRole.planner, 0)
   assert.equal(result.budget.usedByRole.planReviewer, 1)
   assert.equal(result.budget.usedByRole.designReviewer, 1)
@@ -76,7 +76,7 @@ test('low cobre dois reparos com votos adaptativos sem iniciar escrita sem orça
   assert.equal(result.status, 'done')
   assert.equal(calls.filter(label => label === 'repair:I1').length, 2)
   assert.equal(calls.filter(label => label === 'verify:I1' || label === 'escalate:I1').length, 6)
-  assert.equal(result.budget.localRepairsUsed, 2)
+  assert.equal(result.budget.localRepairsUsed, 0) // reparo de nó de código não gasta o pool da run
   assert.equal(result.budget.usedByRole.verifier, 6)
   assert.deepEqual(result.stats.dropped, [])
 })
@@ -87,4 +87,32 @@ test('falha de chamada consome a tentativa do papel e mantém as reservas dos ga
   assert.equal(result.feedback.reason, 'planner_failed')
   assert.equal(result.stats.usedByRole.planner, 1)
   assert.equal(result.stats.limitsByRole.planner, 5)
+})
+
+test('polish só roda no effort max; em medium a entrega vai direto ao gate final', async () => {
+  // Regressão (xadrez, 21/10): em medium, 4 polidores reabriram 13 verificações (~6 min) só para ajuste de estilo.
+  const nodes = [node('R1', 'research'), node('D1', 'design', ['R1']), node('I1', 'implement', ['D1'], 'src/a.js')]
+  const medium = await runWorkflow({ ...BASE, effort: 'medium', plan: plan('medium', nodes) }, defaultScript())
+  assert.equal(medium.result.status, 'done')
+  assert.equal(medium.calls.some(label => label.startsWith('polish:')), false, JSON.stringify(medium.calls))
+  assert.ok(medium.calls.includes('critic:r1'))
+  const max = await runWorkflow({ ...BASE, effort: 'max', plan: plan('max', nodes) }, defaultScript())
+  assert.equal(max.result.status, 'done')
+  assert.ok(max.calls.includes('polish:1'), JSON.stringify(max.calls))
+})
+
+test('esforço de raciocínio: medium em todo papel por padrão; effort max sobe só os papéis fortes para high', async () => {
+  // Regressão (xadrez, 21/10): revisores e critic pediam high fixo e o Opus respondia por 89% do custo.
+  const nodes = [node('R1', 'research'), node('D1', 'design', ['R1']), node('I1', 'implement', ['D1'], 'src/a.js')]
+  const effortsFor = async effort => {
+    const seen = {}
+    const base = defaultScript()
+    await runWorkflow({ ...BASE, effort, plan: plan(effort, nodes) }, async (label, prompt, opts) => { seen[label] = opts.effort; return base(label, prompt, opts) })
+    return seen
+  }
+  const medium = await effortsFor('medium')
+  for (const label of ['plan-review:r1', 'design-review:r1', 'critic:r1', 'work:I1', 'verify:I1', 'synth']) assert.equal(medium[label], 'medium', `${label}: ${JSON.stringify(medium)}`)
+  const max = await effortsFor('max')
+  for (const label of ['plan-review:r1', 'design-review:r1', 'critic:r1']) assert.equal(max[label], 'high', `${label}: ${JSON.stringify(max)}`)
+  assert.equal(max['work:I1'], 'medium')
 })

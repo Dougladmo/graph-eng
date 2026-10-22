@@ -176,3 +176,14 @@ test('C13 FIX1: stdout plantado logo depois do register não é adotado; vira ru
   const stdoutName = (await readdir(runDir)).find(name => /^check-.*\.stdout$/.test(name))
   await assert.rejects(guard.assertIntegrity(), error => error.code === 'run_integrity_violation' && error.paths.includes(stdoutName))
 })
+
+// Regressão (review do design adaptativo, item 1): o check confiável herdava o process.env e via a chave do OpenRouter.
+test('check confiável roda sem OPENROUTER_API_KEY nem GRAPH_ENG_* no ambiente', async t => {
+  const { cwd, runDir } = await fixture(t); const evidence = createEvidence({ cwd, runDir }); const snapshot = await evidence.snapshot()
+  const saved = process.env.OPENROUTER_API_KEY
+  process.env.OPENROUTER_API_KEY = 'sk-or-teste'
+  t.after(() => { if (saved === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = saved })
+  const probe = "process.exit(process.env.OPENROUTER_API_KEY || Object.keys(process.env).some(k => k.startsWith('GRAPH_ENG_')) ? 7 : 0)"
+  const receipts = await evidence.runChecks({ runId: 'env-check', snapshot, checks: [{ id: 'env', command: process.execPath, args: ['-e', probe], timeoutMs: 5000 }] })
+  assert.equal(receipts[0].exitCode, 0)
+})

@@ -181,6 +181,9 @@ test('feedback igual no mesmo estado bloqueia antes do segundo reparo com cota r
   } })
   assert.equal(result.status, 'blocked')
   assert.equal(result.critic.feedback.reason, 'no_progress_feedback_loop')
+  // Regressão (benchmark faturamento, 21/10): o bloqueio do critic final chegava ao journal como run.finished com feedback null.
+  assert.equal(result.feedback?.reason, 'no_progress_feedback_loop')
+  assert.equal(events.find(event => event.type === 'run.finished')?.payload.feedback?.reason, 'no_progress_feedback_loop')
   assert.equal(result.budget.localRepairsUsed, 1)
   assert.equal(calls.filter(label => label.startsWith('critic:r')).length, 2)
   assert.equal(calls.filter(label => label === 'repair:I1').length, 1)
@@ -250,6 +253,20 @@ test('FIX_LOCAL de design persiste contador e repete a revisão antes da impleme
   assert.equal(result.status, 'done', JSON.stringify({ feedback: result.feedback, critic: result.critic }))
   assert.equal(result.budget.localRepairsUsed, 1)
   assert.ok(calls.includes('design-repair:D1'))
+  assert.ok(calls.includes('design-review:r2'))
+})
+
+// Regressão (benchmark faturamento, 21/10): o revisor do design pediu FIX_LOCAL com dois itens de bloqueio no mesmo nó e a
+// run caía em fail-closed (feedback_scope_invalid) sem tentar o reparo, porque o gate exigia um item por nó.
+test('FIX_LOCAL de design com vários bloqueios no mesmo nó repara o nó uma vez e repete a revisão', async t => {
+  const defaults = defaultScript()
+  const { result, calls } = await runGraphScripted(t, { args: { plan: B5_PLAN }, script: async (label, prompt, opts, ctx) => {
+    if (label === 'design-review:r1') return { feedback: { kind: 'FIX_LOCAL', reason: 'faltam dois pontos', severity: 'medium', affectedNodes: ['D1'], evidenceIds: [] }, pass: false, confidence: 'high', blocking: [{ node: 'D1', issue: 'faltam as tabelas', where: 'D1', fix: 'listar tabelas' }, { node: 'D1', issue: 'falta o histórico', where: 'D1', fix: 'listar conflitos' }], checked: { assumptions: true, acceptance: true, stories: false, bestPractices: true } }
+    return defaults(label, prompt, opts, ctx)
+  } })
+  assert.equal(result.status, 'done', JSON.stringify({ feedback: result.feedback, designReview: result.designReview, calls }))
+  assert.equal(result.budget.localRepairsUsed, 1)
+  assert.equal(calls.filter(label => label === 'design-repair:D1').length, 1)
   assert.ok(calls.includes('design-review:r2'))
 })
 
@@ -952,6 +969,55 @@ test('T9b: janela de outro nó com janela pendente de I1 bloqueia com provenance
   assert.ok(!calls.includes('work:I2'), 'I2 não pode trabalhar com janela de I1 pendente')
 })
 
+test('T9c: janela pendente de nó reprovado traz na causa o problema do verify, não "sem nota registrada"', async t => {
+  const { result, calls } = await runGraphScripted(t, { args: { plan: B6_PLAN }, script: async (label, prompt, opts, ctx) => {
+    if (label === 'work:I1') await writeFile(path.join(ctx.cwd, 'src/a.js'), 'export const a = 1\n// trabalho\n')
+    if (label === 'verify:I1') return { pass: false, confidence: 'high', blocking: [{ node: 'I1', issue: 'falta cobertura', where: 'src/a.js', fix: 'ajustar' }] }
+    return defaultScript()(label, prompt, opts, ctx)
+  } })
+  assert.equal(result.status, 'blocked')
+  assert.doesNotMatch(result.feedback.reason, /sem nota registrada/, JSON.stringify({ feedback: result.feedback, calls }))
+  assert.match(result.feedback.reason, /falta cobertura/)
+  assert.match(result.feedback.reason, /reparo sem progresso/)
+})
+
+test('T9d: nó de código reprovado depois do limite de reparos por nó diz isso na causa', async t => {
+  let verifies = 0
+  const { result, calls } = await runGraphScripted(t, { args: { plan: B6_PLAN }, script: async (label, prompt, opts, ctx) => {
+    if (label === 'work:I1' || label.startsWith('repair:I1')) await writeFile(path.join(ctx.cwd, 'src/a.js'), `export const a = 1\n// trabalho ${verifies}\n`)
+    if (label.startsWith('verify:I1')) {
+      // Cada reparo resolve um problema, então o loop só para no limite de reparos do nó.
+      const left = 3 - verifies++
+      return { pass: false, confidence: 'high', blocking: Array.from({ length: left }, (_, i) => ({ node: 'I1', issue: `problema ${i + 1}`, where: 'src/a.js', fix: 'ajustar' })) }
+    }
+    return defaultScript()(label, prompt, opts, ctx)
+  } })
+  assert.equal(result.status, 'blocked')
+  assert.match(result.feedback.reason, /limite de 2 reparo\(s\) por nó/, JSON.stringify({ feedback: result.feedback, calls }))
+  assert.match(result.feedback.reason, /problema 1/)
+})
+
+test('T9e: reparos do design esgotam o pool da run e o nó de código reprovado ainda ganha o próprio reparo', async t => {
+  // Benchmark Minecraft (runs 2 e 3): plano e design gastavam os 2 reparos locais e o nó de código reprovado parava sem reparo.
+  const plan = { ...B5_PLAN, nodes: [
+    B5_PLAN.nodes[0],
+    B5_PLAN.nodes[1],
+    { ...B5_PLAN.nodes[1], id: 'D2', title: 'design 2' },
+    { ...B5_PLAN.nodes[2], deps: ['D1', 'D2'] },
+  ] }
+  const checked = { assumptions: true, acceptance: true, stories: false, bestPractices: true }
+  let verifies = 0
+  const { result, calls } = await runGraphScripted(t, { args: { plan }, script: async (label, prompt, opts, ctx) => {
+    if (label === 'design-review:r1') return { feedback: { kind: 'FIX_LOCAL', reason: 'os dois designs incompletos', severity: 'high', affectedNodes: ['D1', 'D2'], evidenceIds: [] }, pass: false, confidence: 'high', blocking: [{ node: 'D1', issue: 'falta contrato', where: 'D1', fix: 'completar' }, { node: 'D2', issue: 'falta contrato', where: 'D2', fix: 'completar' }], checked }
+    if (label === 'work:I1' || label.startsWith('repair:I1')) await writeFile(path.join(ctx.cwd, 'src/a.js'), `export const a = 1\n// trabalho ${verifies}\n`)
+    if (label.startsWith('verify:I1') && verifies++ === 0) return { pass: false, confidence: 'high', blocking: [{ node: 'I1', issue: 'onGround falso no chão', where: 'src/a.js', fix: 'recalcular' }] }
+    return defaultScript()(label, prompt, opts, ctx)
+  } })
+  assert.equal(result.budget.localRepairsUsed, 2, JSON.stringify({ calls, budget: result.budget }).slice(0, 2000))
+  assert.ok(calls.includes('repair:I1'), JSON.stringify({ calls, feedback: result.feedback }))
+  assert.equal(result.status, 'done', JSON.stringify({ calls, feedback: result.feedback, critic: result.critic, gaps: result.openGaps, polish: result.polish, rails: result.rails }).slice(0, 2500))
+})
+
 // T7 é a variante "emit falha": o crash acontece antes do emit do node-record-ready, então o journal não tem o I1 e o resume bloqueia.
 test('T7: crash depois de checks.window.completed e antes do node-record-ready bloqueia o resume sem spawn', async t => {
   const workflowCompiler = async () => {
@@ -1406,7 +1472,7 @@ test('input externo que só falha depois do work vira external_inputs_unfingerpr
 })
 
 test('planner e plan reviewer recebem a regra de manifesto e o schema diz repo-relative file paths only', async () => {
-  const MANIFEST_RULE = "`files`, `inputs` and `outputs` are machine manifests: each entry is ONE repo-relative file path (e.g. `src/a.mjs`), no line ranges, no prose, no symbols. Inputs must already exist or be produced by a node in `deps`; outputs must be files this node writes (subset of `files`). Put findings, line ranges and exported symbols in `brief`/`acceptance`; express 'uses I1' via `deps`."
+  const MANIFEST_RULE = "`files`, `inputs` and `outputs` are machine manifests: each entry is ONE repo-relative file path (e.g. `src/a.mjs`), no directories, no line ranges, no prose, no symbols. Inputs must already exist or be produced by a node in `deps`; outputs must be files this node writes (subset of `files`). Put findings, line ranges and exported symbols in `brief`/`acceptance`; express 'uses I1' via `deps`."
   const defaults = defaultScript({ plan: PLAN })
   const seen = {}
   const script = async (label, prompt, opts) => {

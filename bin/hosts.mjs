@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process'
+import { childEnv } from './child-env.mjs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -8,11 +9,13 @@ import path from 'node:path'
 
 const MODEL_BY_ROLE = {
   claude: {
-    planner: 'opus', planReviewer: 'opus', designReviewer: 'opus', critic: 'opus',
+    planner: 'sonnet', planReviewer: 'opus', designReviewer: 'opus', critic: 'sonnet',
+    researcher: 'sonnet', designer: 'sonnet', notetaker: 'haiku',
     executor: 'haiku', verifier: 'haiku', synth: 'haiku',
   },
   codex: {
     planner: 'gpt-6.1-sol', planReviewer: 'gpt-6.1-sol', designReviewer: 'gpt-6.1-sol', critic: 'gpt-6.1-sol',
+    researcher: 'gpt-6.1-sol', designer: 'gpt-6.1-sol', notetaker: 'gpt-6-luna',
     executor: 'gpt-6-luna', verifier: 'gpt-6-luna', synth: 'gpt-6-luna',
   },
 }
@@ -20,7 +23,10 @@ const ROLE_ALIASES = {
   'plan-review': 'planReviewer', 'design-review': 'designReviewer',
   worker: 'executor', verify: 'verifier', repair: 'executor', polish: 'executor',
 }
-const READ_ONLY = new Set(['planner', 'planReviewer', 'designReviewer', 'verifier', 'critic', 'synth'])
+// Esforço de raciocínio por chamada (--effort do Claude Code). Fora desta lista a chamada é recusada; ausente = padrão do modelo.
+const REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+const WEB_TOOLS = 'WebSearch,WebFetch'
+const READ_ONLY = new Set(['planner', 'planReviewer', 'designReviewer', 'verifier', 'critic', 'synth', 'researcher', 'designer', 'notetaker'])
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 const MAX_TIMEOUT_MS = 60 * 60 * 1000
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024
@@ -247,6 +253,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     if (typeof request.prompt !== 'string' || !request.prompt.trim()) throw new HostError('INVALID_PROMPT', 'prompt deve ser texto não vazio')
     if (!request.schema || typeof request.schema !== 'object' || Array.isArray(request.schema)) throw new HostError('INVALID_SCHEMA', 'Cada solicitação exige JSON Schema')
     if (request.writeScope !== undefined) throw new HostError('UNSUPPORTED_WRITE_SCOPE', 'writeScope ainda não é aplicado pelo adaptador')
+    if (request.effort !== undefined && !REASONING_EFFORTS.has(request.effort)) throw new HostError('INVALID_EFFORT', `effort deve ser um de ${[...REASONING_EFFORTS].join(', ')}`)
     assertSchema(request.schema)
     const effectiveTimeout = request.timeoutMs ?? timeoutMs
     if (!Number.isFinite(effectiveTimeout) || effectiveTimeout <= 0 || effectiveTimeout > MAX_TIMEOUT_MS) throw new HostError('INVALID_TIMEOUT', `timeoutMs deve estar entre 1 e ${MAX_TIMEOUT_MS}`)
@@ -258,9 +265,11 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     // Isolado do ambiente do usuário (MCPs, skills, settings globais): sem isso cada turno carregava ~75k tokens.
     // dontAsk nega toda ferramenta sem regra de permissão: a escrita do executor precisa de --allowedTools,
     // e Edit(./**) (vale também para Write) a prende ao cwd do spawn.
+    // Só o researcher (Sonnet, só leitura) lê a web: docs atuais da biblioteca na versão instalada. Nenhum papel de escrita tem web.
+    const readTools = role === 'researcher' && readonly ? `Read,Glob,Grep,${WEB_TOOLS}` : 'Read,Glob,Grep'
     if (host === 'claude') return {
       role, model, readonly, schema: request.schema, wireSchema: strict,
-      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit(./**)', '--tools', readonly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write'],
+      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : 'Read,Glob,Grep,Edit(./**)', '--tools', readonly ? readTools : 'Read,Glob,Grep,Edit,Write', ...(request.effort ? ['--effort', request.effort] : [])],
     }
     const schemaFile = path.join(runDir, `.host-${id}.schema.json`)
     const outputFile = path.join(runDir, `.host-${id}.output.json`)
@@ -272,7 +281,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const readOnlyEnforcement = host === 'claude'
       ? 'Claude Code usa permission-mode dontAsk e limita as ferramentas a Read, Glob e Grep; não oferece ferramenta de escrita nem shell. Papéis de escrita só gravam dentro do cwd (Edit(./**)).'
       : readOnlyEnforced ? 'Codex CLI usa -s read-only para restringir gravações no sandbox do sistema de arquivos.' : null
-    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(MODEL_BY_ROLE[host]), structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex', agentWeb: false }
+    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(MODEL_BY_ROLE[host]), structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex', agentWeb: host === 'claude' && !experimentalPolicy }
   }
 
   async function spawnRequest(request) {
@@ -296,10 +305,11 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const injectedTransport = transport ?? null
     try {
       child = injectedTransport
-        ? injectedTransport.spawn(built.command, built.args, { cwd, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
+        ? injectedTransport.spawn(built.command, built.args, { cwd, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv() })
         : process.platform === 'win32'
-          ? nodeSpawn(built.command, built.args, { cwd, shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'] })
-          : nodeSpawn(process.execPath, [SUPERVISOR_PATH, String(effectiveTimeout)], { cwd, shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] })
+          ? nodeSpawn(built.command, built.args, { cwd, shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'], env: childEnv() })
+          // O supervisor herda este env filtrado e o repassa ao CLI do agente.
+          : nodeSpawn(process.execPath, [SUPERVISOR_PATH, String(effectiveTimeout)], { cwd, shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'], env: childEnv() })
     } catch (error) {
       await Promise.all([built.schemaFile, built.outputFile].filter(Boolean).map(file => rm(file, { force: true }).catch(() => {})))
       if (built.schemaFile && onTransportPaths) await onTransportPaths({ id, files: transportNames, phase: 'removed' }).catch(() => {})

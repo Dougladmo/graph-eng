@@ -1,11 +1,11 @@
 ---
 description: Decompõe o plano aprovado do graph-eng em tarefas (DAG), sem executar implementação nem checks.
-argument-hint: "[--effort low|medium|max]"
+argument-hint: "[--effort low|medium|max] [--adaptive on|off]"
 ---
 
 Esta invocação não recebe tarefa: ela usa o plano aprovado do workspace.
 
-Crie um arquivo JSON temporário por ferramenta de arquivo com `{"host":"claude","argv":["tasks"]}`. Se `$ARGUMENTS` contiver `--effort <valor>`, inclua `"--effort"` e `"<valor>"` em `argv` depois de `"tasks"`.
+Crie um arquivo JSON temporário por ferramenta de arquivo com `{"host":"claude","argv":["tasks"]}`. Se `$ARGUMENTS` contiver `--effort <valor>` ou `--adaptive <valor>`, inclua cada par (ex.: `"--effort"` e `"<valor>"`) em `argv` depois de `"tasks"`.
 
 Depois rode `node "${CLAUDE_PLUGIN_ROOT}/bin/grapheng.mjs" --invocation <caminho-do-json>`. Passe o caminho como argumento separado e nunca concatene conteúdo variável no comando.
 

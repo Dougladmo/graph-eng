@@ -55,11 +55,11 @@ test('stage fora da lista de estágios é recusado antes de qualquer nó rodar',
   assert.deepEqual(calls.filter(label => !label.startsWith('#')), [], JSON.stringify(calls))
 })
 
-test('one-shot: carry do estágio anterior semeia planVersion, contadores e usedByRole sem diminuir', async () => {
+test('one-shot: carry do estágio anterior semeia planVersion, replan estrutural e usedByRole sem diminuir; o pool local recomeça', async () => {
   const events = []
   const zeros = { planner: 0, planReviewer: 0, designReviewer: 0, critic: 0, synth: 0, executor: 0, verifier: 0 }
   const stageCarry = {
-    planVersion: 3, counters: { localRepairsUsed: 1, structuralReplansUsed: 0 }, usedByRole: { ...zeros, planner: 2 },
+    planVersion: 3, counters: { localRepairsUsed: 1, structuralReplansUsed: 1 }, usedByRole: { ...zeros, planner: 2 },
     limitsByRole: { planner: 5, planReviewer: 5, designReviewer: 5, critic: 5, synth: 3, executor: 0, verifier: 0 },
     tokenUsageByRole: Object.fromEntries(Object.keys(zeros).map(role => [role, null])), history: [], seenPairs: [],
   }
@@ -70,7 +70,8 @@ test('one-shot: carry do estágio anterior semeia planVersion, contadores e used
   for (const cp of checkpoints) {
     assert.ok(cp.planVersion >= 4)
     assert.ok(cp.ledger.usedByRole.planner >= 2, JSON.stringify(cp.ledger.usedByRole))
-    assert.ok(cp.control.counters.localRepairsUsed >= 1)
+    assert.equal(cp.control.counters.localRepairsUsed, 0, 'pool de reparos locais é do estágio')
+    assert.ok(cp.control.counters.structuralReplansUsed >= 1)
   }
 })
 
@@ -313,6 +314,22 @@ test('M6 plan aprovado publica o artefato e grava plan-artifact-approved com o c
   assert.equal(approved[0].payload.contentHash, 'hash-plan-1')
 })
 
+test('plan seguido de tasks (planReviewDeferred) não gasta revisão própria e ainda publica o plano', async () => {
+  // Regressão (xadrez, 21/10): o implemente revisava o plano no estágio plan e de novo no tasks, com o modelo forte.
+  const { result, calls, events, prepared } = await stageRun({ planReviewDeferred: true })
+  assert.equal(result.status, 'plan_approved', JSON.stringify(result))
+  assert.equal(calls.some(label => label.startsWith('plan-review')), false, JSON.stringify(calls))
+  const approved = events.filter(event => event.type === 'control.transition' && event.payload.stage === 'plan-approved')
+  assert.equal(approved.length, 1, JSON.stringify(transitions(events)))
+  assert.equal(approved[0].payload.feedback.reason, 'plan_review_deferred_to_tasks_stage')
+  assert.equal(prepared.length, 1)
+})
+
+test('plan sozinho (sem planReviewDeferred) mantém a revisão do plano', async () => {
+  const { calls } = await stageRun({})
+  assert.ok(calls.includes('plan-review:r1'), JSON.stringify(calls))
+})
+
 test('M6 plano com perguntas devolve needs_clarification com até 5 perguntas', async () => {
   const questions = [{ id: 'Q1', text: 'Qual banco?' }, { id: 'Q2', text: 'Qual prazo?' }]
   const { script } = criticScript([], { ...PLAN_R, questions })
@@ -511,6 +528,19 @@ test('M9 critic REPLAN com replan estrutural herdado do carry já no limite 2 bl
   assert.equal(calls.filter(label => label === 'plan').length, 0, JSON.stringify(calls))
 })
 
+test('estágio novo tem o próprio pool de 2 reparos locais mesmo com o estágio anterior esgotado (benchmark Minecraft run 4)', async () => {
+  // Run 4: crítica e revisões do plano gastaram os 2 reparos e o estágio seguinte herdava o pool vazio.
+  const stageCarry = { planVersion: 1, counters: { localRepairsUsed: 2, structuralReplansUsed: 1 }, usedByRole: { planner: 0, planReviewer: 1, designReviewer: 0, critic: 0, synth: 0, executor: 0, verifier: 0 }, limitsByRole: { planner: 5, planReviewer: 5, designReviewer: 5, critic: 5, synth: 3, executor: 0, verifier: 0 }, tokenUsageByRole: {}, history: [], seenPairs: [] }
+  const fix = { feedback: { kind: 'FIX_LOCAL', reason: 'refazer R1 com evidência', severity: 'high', affectedNodes: ['R1'], evidenceIds: [] }, done: false, assessment: 'x', gaps: [] }
+  const { script } = criticScript([fix])
+  const events = []
+  const { result, calls } = await stageRun({}, { script, events, runtime: { ...runtimeWithEvents(events), stageCarry } })
+  assert.notEqual(result.feedback?.reason, 'local_repair_budget_exhausted', JSON.stringify({ result, calls }).slice(0, 1500))
+  assert.ok(transitions(events).includes('critic-fix-complete'), JSON.stringify({ transitions: transitions(events), calls }))
+  const last = events.filter(event => event.type === 'control.transition' && event.payload?.checkpoint).at(-1).payload.checkpoint
+  assert.deepEqual(last.control.counters, { localRepairsUsed: 1, structuralReplansUsed: 1 }, 'pool local é do estágio; replan estrutural continua herdado')
+})
+
 test('M9 checkpoint da run de reuso começa com planner e contadores zerados', async () => {
   const events = []
   await stageRun({ stage: 'implement', mode: 'implement', checks: [{ id: 'node-check', command: 'node', args: ['-e', '0'] }], plan: { ...PLAN_R, mode: 'implement', nodes: [DESIGN, IMPL] } }, { script: defaultScript({ plan: TASKS_PLAN }), events })
@@ -569,4 +599,15 @@ test('M8 tasks: o decompositor recebe o plano importado como dado e o doneWhen t
   assert.match(prompts[0], /Approved plan \(data\)/)
   assert.match(prompts[0], /doneWhen is fixed by the approved plan; return it verbatim: \["ok"\]/)
   assert.match(prompts[0], /estágio de tasks/)
+})
+
+// Regressão (benchmark faturamento, 21/10): o decompositor pôs o diretório "data/" em inputs e a run bloqueou com invalid_dag.
+// O planner completo tinha a regra de manifesto; o prompt do decompositor não.
+test('M8 tasks: o decompositor recebe a regra de manifesto (um arquivo por entrada, sem diretório)', async () => {
+  const prompts = []
+  const base = defaultScript()
+  const script = async (label, prompt, opts) => { if (label === 'plan') prompts.push(prompt); return label === 'plan' ? TASKS_PLAN : base(label, prompt, opts) }
+  await stageTasksRun({}, { script })
+  assert.match(prompts[0], /`files`, `inputs` and `outputs` are machine manifests: each entry is ONE repo-relative file path/)
+  assert.match(prompts[0], /never a directory/)
 })

@@ -14,7 +14,7 @@ import { ENGINE_PATH } from '../bin/workflow-source.mjs'
 process.env.GRAPH_ENG_STATE_DIR ??= path.join(os.tmpdir(), `graph-eng-test-datadir-${process.pid}`)
 
 // Espelha MODELS.claude de bin/graph-run.mjs: a chave de planejamento depende desta política.
-const MODELS_CLAUDE = { planner: 'opus', planReviewer: 'opus', designReviewer: 'opus', executor: 'haiku', verifier: 'haiku', critic: 'opus', synth: 'haiku' }
+const MODELS_CLAUDE = { planner: 'sonnet', planReviewer: 'opus', designReviewer: 'opus', executor: 'haiku', verifier: 'haiku', critic: 'sonnet', synth: 'haiku', researcher: 'sonnet', designer: 'sonnet', notetaker: 'haiku' }
 const RUN_ID = 'grapheng-test-run'
 const SRC_RUN = 'grapheng-src'
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
@@ -410,6 +410,35 @@ test('R7 label clarify pede o modelo do planner', async t => {
   const started = (await readJournalFile(path.join(fx.cwd, '.graph-runs', 'clarify-label'))).events.find(event => event.type === 'started' && event.label === 'clarify')
   assert.equal(started.phase, 'Plan')
   assert.equal(started.payload.requestedModel, MODELS_CLAUDE.planner)
+})
+
+test('effort pedido pelo workflow chega ao host; sem effort o pedido sai sem o campo', async t => {
+  // Regressão (xadrez, 21/10): runAgent descartava options.effort e todo papel rodava no esforço padrão do CLI.
+  const fx = await fixture(t)
+  const requests = []
+  const host = { capabilities: () => ({ host: 'claude', readOnlyEnforced: true }), spawn: async request => { requests.push(request); return { request } }, wait: async handle => ({ output: { ok: true }, requestedModel: handle.request.model, effectiveModel: handle.request.model }) }
+  const workflowCompiler = async () => async (stageArgs, agent) => {
+    await agent('revise', { label: 'clarify', effort: 'medium' })
+    await agent('de novo', { label: 'clarify' })
+    return { status: 'needs_clarification' }
+  }
+  await runGraph({ hostName: 'claude', cwd: fx.cwd, stateDir: fx.stateDir, args: { runId: 'effort-pass', runDir: '.graph-runs/effort-pass', task: 'tarefa', planOnly: true, checks: [] }, hostFactory: () => host, evidenceFactory: fx.evidenceFactory, workflowCompiler })
+  const clarify = requests.filter(request => request.label === 'clarify')
+  assert.equal(clarify.length, 2, JSON.stringify(requests.map(request => request.label)))
+  assert.equal(clarify[0].effort, 'medium')
+  assert.equal('effort' in clarify[1], false)
+})
+
+test('implemente sem plano: só o estágio plan seguido de tasks recebe planReviewDeferred', async t => {
+  const fx = await fixture(t)
+  const { calls } = await run(fx, { args: { pipeline: { from: 'auto', to: 'implement' } }, script: async (stageArgs, runtime) => {
+    if (stageArgs.stage === 'plan') { await checkpointPlan(runtime); await approvePlan(runtime); return { status: 'plan_approved' } }
+    await approveTasks(runtime, (await readSlot({ repo: fx.cwd, kind: 'plan' })).hash)
+    return { status: 'done' }
+  } })
+  const byStage = Object.fromEntries(calls.map(call => [call.args.stage, call.args]))
+  assert.equal(byStage.plan.planReviewDeferred, true)
+  assert.equal('planReviewDeferred' in byStage.tasks, false)
 })
 
 // ---------- A: correções do critic R0–R9a ----------
@@ -867,6 +896,27 @@ test('R10d caso B no meio do tasks: queda depois do checkpoint reinvoca tasks co
   assert.deepEqual(stageStartedOf(await journalOf(fx)).map(event => event.payload.stage), ['plan', 'tasks'])
 })
 
+test('retomada no tasks aceita o pool de reparos locais recomeçando do zero depois de o plan gastar os 2', async t => {
+  // Cada estágio tem o próprio pool: o journal mostra 2 no plan e 0 no tasks, e isso não é contador diminuindo.
+  const fx = await fixture(t)
+  await run(fx, { args: { pipeline: { from: 'auto', to: 'implement' } }, script: async (stageArgs, runtime) => {
+    if (stageArgs.stage === 'plan') {
+      await runtime.emit({ type: 'control.transition', phase: 'Plan', planVersion: 1, payload: { stage: 'plan-approved', checkpoint: checkpointR10d(await originalGuardsOf(fx), { localRepairsUsed: 2 }) } })
+      await approvePlan(runtime)
+      return { status: 'plan_approved' }
+    }
+    await runtime.emit({ type: 'control.transition', phase: 'Plan', planVersion: 1, payload: { stage: 'plan-approved', checkpoint: checkpointR10d(await originalGuardsOf(fx), { pipelineStage: 'tasks', reservedPlanner: 1 }) } })
+    await runtime.emit({ type: 'budget.call', phase: 'Plan', payload: { role: 'planner', label: 'plan', ledger: ledgerR10d({ usedPlanner: 1, reservedPlanner: 0, localRepairsUsed: 1 }) } })
+    throw new Error('queda simulada no tasks')
+  } })
+  const boundary = stageStartedOf(await journalOf(fx)).find(event => event.payload.stage === 'tasks')
+  assert.equal(boundary.payload.carry.counters.localRepairsUsed, 2, 'o carry registra o que o plan gastou')
+  const { result, calls } = await run(fx, { args: { resume: { requestedRerunIds: [] } }, script: async () => ({ status: 'done' }) })
+  assert.doesNotMatch(String(result.error || result.feedback?.reason || ''), /resume_/, JSON.stringify(result).slice(0, 600))
+  assert.deepEqual(calls.map(call => call.args.stage), ['tasks'])
+  assert.equal(calls[0].runtime.resumeCheckpoint.control.counters.localRepairsUsed, 1)
+})
+
 test('R10d caso C: queda antes de qualquer gasto reinvoca plan sem carry (estágio 1) e publica o plano', async t => {
   const fx = await fixture(t)
   await run(fx, { args: { pipeline: { from: 'plan', to: 'plan' } }, script: async () => { throw new Error('queda simulada antes de qualquer gasto') } })
@@ -1199,4 +1249,67 @@ test('C3 retomada repega o workspace antes de ler journal e lease', async t => {
   } finally {
     await holder.release(token)
   }
+})
+
+// Fluxo adaptativo: a triagem do runner vai para o journal (reuse.resolved), o tier de cada estágio para a fronteira
+// (stage.started) e para os args internos do estágio. O plan-review sintético só vale com fronteira fast.
+test('triagem: reuse.resolved grava triage, stage.started e os args do estágio levam o tier', async t => {
+  const fx = await fixture(t)
+  const { calls } = await run(fx, { args: { task: 'Some 1 em `src/a.mjs`. Critério de pronto: npm test passa.', pipeline: { from: 'auto', to: 'implement' } } })
+  const events = await journalOf(fx)
+  const triage = events.find(event => event.type === 'phase.reuse.resolved').payload.triage
+  assert.equal(triage.adaptive, 'on')
+  assert.equal(triage.source, 'heuristic')
+  assert.equal(triage.tier, 'fast')
+  assert.equal(events.find(event => event.type === 'phase.stage.started').payload.tier, 'fast')
+  assert.equal(calls[0].args.tier, 'fast')
+})
+
+test('triagem: tarefa ambígua vai para full e adaptive off sempre roda full', async t => {
+  const fx = await fixture(t)
+  const { calls } = await run(fx, { args: { pipeline: { from: 'auto', to: 'implement' } } })
+  assert.equal(calls[0].args.tier, 'full')
+  assert.deepEqual((await journalOf(fx)).find(event => event.type === 'phase.reuse.resolved').payload.triage.reasons, ['ambiguous_spec'])
+  const off = await fixture(t)
+  const { calls: offCalls } = await run(off, { args: { task: 'Some 1 em `src/a.mjs`. Critério de pronto: npm test passa.', adaptive: 'off', pipeline: { from: 'auto', to: 'implement' } } })
+  assert.equal(offCalls[0].args.tier, 'full')
+  const offTriage = (await journalOf(off)).find(event => event.type === 'phase.reuse.resolved').payload.triage
+  assert.equal(offTriage.source, 'adaptive_off')
+})
+
+test('tasksReviewApproved aceita plan-review sintético só com fronteira fast e checkpoint fast', async () => {
+  const { tasksReviewApproved } = await import('../bin/phase-pipeline.mjs')
+  const boundary = tier => ({ seq: 1, type: 'phase.stage.started', payload: { stage: 'tasks', index: 2, tier } })
+  const approved = (planTier = 'fast', policyTier = 'fast', synthetic = true) => ({ seq: 2, type: 'control.transition', payload: { stage: 'plan-approved', checkpoint: { approvals: { planReview: { kind: 'APPROVE', synthetic, tier: planTier } }, budgetPolicy: { tier: policyTier } } } })
+  const transition = { seq: 3, type: 'control.transition', payload: { stage: 'tasks-approved', contentHash: 'x' } }
+  assert.equal(tasksReviewApproved([boundary('fast'), approved(), transition], 3), true)
+  assert.equal(tasksReviewApproved([boundary('standard'), approved(), transition], 3), false)
+  assert.equal(tasksReviewApproved([boundary(undefined), approved(), transition], 3), false)
+  assert.equal(tasksReviewApproved([boundary('fast'), approved('fast', 'full'), transition], 3), false)
+  assert.equal(tasksReviewApproved([boundary('fast'), approved('fast', 'fast', false), transition], 3), false)
+  assert.equal(tasksReviewApproved([boundary('fast'), transition], 3), false)
+})
+
+test('triagem com classificador: journal grava fonte e resultado do Jev, nunca a chave; falha do Jev vale a heurística', async t => {
+  const KEY = 'sk-or-v1-nao-pode-vazar'
+  const runWith = async (fx, classify) => {
+    const calls = []
+    const workflowCompiler = async () => async stageArgs => { calls.push(stageArgs); return { status: 'blocked', feedback: { kind: 'BLOCK', reason: 'stub', severity: 'critical', affectedNodes: [], evidenceIds: [] } } }
+    await runGraph({ hostName: 'claude', cwd: fx.cwd, stateDir: fx.stateDir, args: { runId: RUN_ID, runDir: `.graph-runs/${RUN_ID}`, task: 'Some 1 em `src/a.mjs`. Critério de pronto: npm test passa.', pipeline: { from: 'auto', to: 'implement' } }, hostFactory: hostStub, evidenceFactory: fx.evidenceFactory, workflowCompiler, env: { OPENROUTER_API_KEY: KEY }, triageClassifierFactory: async ({ env }) => { assert.equal(env.OPENROUTER_API_KEY, KEY); return classify } })
+    return calls
+  }
+  const up = await fixture(t)
+  const calls = await runWith(up, async () => ({ ok: true, tier: 'standard', confidence: 0.7 }))
+  assert.equal(calls[0].tier, 'standard')
+  const triage = (await journalOf(up)).find(event => event.type === 'phase.reuse.resolved').payload.triage
+  assert.equal(triage.source, 'classifier')
+  assert.deepEqual(triage.classifier, { model: 'typesafe/jev-1.13', tier: 'standard', confidence: 0.7 })
+  const journalText = await readFile(path.join(up.cwd, '.graph-runs', RUN_ID, 'journal.jsonl'), 'utf8')
+  assert.equal(journalText.includes(KEY), false)
+  const down = await fixture(t)
+  const failedCalls = await runWith(down, async () => { throw new Error(`erro com ${KEY}`) })
+  assert.equal(failedCalls[0].tier, 'fast')
+  const failed = (await journalOf(down)).find(event => event.type === 'phase.reuse.resolved').payload.triage
+  assert.deepEqual(failed.classifier, { model: 'typesafe/jev-1.13', error: 'classifier_failed' })
+  assert.equal(JSON.stringify(await journalOf(down)).includes(KEY), false)
 })

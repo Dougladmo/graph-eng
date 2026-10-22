@@ -40,7 +40,7 @@ test('pipeline com plan ou planOnly do chamador bloqueia antes de iniciar host',
 
 test('chave interna de estágio vinda do chamador bloqueia antes de iniciar host', async t => {
   const cwd = await tempRepo(t)
-  for (const key of ['stage', 'pipelineTo', 'importedPlan', 'importedTasks', 'clarificationContext', 'stageCarry']) {
+  for (const key of ['stage', 'pipelineTo', 'importedPlan', 'importedTasks', 'clarificationContext', 'stageCarry', 'planReviewDeferred']) {
     const result = await runGraph({ hostName: 'claude', cwd, stateDir: path.join(cwd, 'state'), args: { ...base, pipeline: { from: 'auto', to: 'implement' }, [key]: {} }, hostFactory: fakeHostFactory() })
     assert.equal(result.feedback.reason, 'internal_arg_forbidden', key)
   }
@@ -83,4 +83,36 @@ test('R9a validateResumeJournal é exportado e devolve orçamento inicial zerado
   assert.equal(result.historicLedger.reservedByRole.planner, 1)
   assert.equal(result.historicLedger.limitsByRole.planner, 5)
   assert.equal(result.activeAllocation, null)
+})
+
+// Fluxo adaptativo: o tier é decidido pela triagem do runner; o chamador só liga ou desliga o adaptive.
+test('tier vindo do chamador bloqueia com internal_arg_forbidden, com ou sem pipeline', async t => {
+  const cwd = await tempRepo(t)
+  for (const args of [{ ...base, pipeline: { from: 'auto', to: 'implement' }, tier: 'fast' }, { ...base, tier: 'fast' }]) {
+    const result = await runGraph({ hostName: 'claude', cwd, stateDir: path.join(cwd, 'state'), args, hostFactory: fakeHostFactory() })
+    assert.equal(result.feedback.reason, 'internal_arg_forbidden')
+  }
+})
+
+test('adaptive fora de on/off bloqueia com invalid_adaptive', async t => {
+  const cwd = await tempRepo(t)
+  const result = await runGraph({ hostName: 'claude', cwd, stateDir: path.join(cwd, 'state'), args: { ...base, pipeline: { from: 'auto', to: 'implement' }, adaptive: 'sim' }, hostFactory: fakeHostFactory() })
+  assert.equal(result.feedback.reason, 'invalid_adaptive')
+})
+
+test('resume que liga ou desliga o adaptive (arg ou ambiente) bloqueia com resume_adaptive_changed, nos dois sentidos', async t => {
+  const cwd = await tempRepo(t)
+  const runDir = path.join(cwd, '.graph-runs', 'pipe-run')
+  await mkdir(runDir, { recursive: true })
+  const pipeline = { from: 'auto', to: 'implement' }
+  const writeMeta = adaptive => writeFile(path.join(runDir, 'run.meta.json'), JSON.stringify({ schemaVersion: 2, runId: 'pipe-run', host: 'claude', originalArgs: { task: 'tarefa', mode: 'implement', planOnly: false, effort: 'medium', planProvided: false, pipeline, ...(adaptive ? { adaptive } : {}) }, originalGuards: { schemaVersion: 2, runId: 'pipe-run' } }))
+  const resume = (extra = {}, env = {}) => runGraph({ hostName: 'claude', cwd, stateDir: path.join(cwd, 'state'), env, args: { runId: 'pipe-run', runDir: '.graph-runs/pipe-run', resume: { requestedRerunIds: [] }, ...extra }, hostFactory: fakeHostFactory() })
+  await writeMeta('on')
+  assert.equal((await resume({ adaptive: 'off' })).feedback.reason, 'resume_adaptive_changed')
+  assert.equal((await resume({}, { GRAPH_ENG_ADAPTIVE: 'off' })).feedback.reason, 'resume_adaptive_changed')
+  await writeMeta('off')
+  assert.equal((await resume({ adaptive: 'on' })).feedback.reason, 'resume_adaptive_changed')
+  // Run anterior ao adaptativo (sem a chave) conta como off.
+  await writeMeta(undefined)
+  assert.equal((await resume({}, { GRAPH_ENG_ADAPTIVE: 'on' })).feedback.reason, 'resume_adaptive_changed')
 })

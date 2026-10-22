@@ -1,0 +1,33 @@
+const ISO = /^(\d{4})-(\d{2})-(\d{2})$/
+const DIA = 24 * 60 * 60 * 1000
+
+export function ehDataValida(iso) {
+  if (typeof iso !== 'string') return false
+  const match = ISO.exec(iso)
+  if (!match) return false
+  const data = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+  return data.toISOString().slice(0, 10) === iso
+}
+
+export function ehDiaUtil(iso, feriados = []) {
+  const dia = new Date(`${iso}T00:00:00Z`).getUTCDay()
+  return dia !== 0 && dia !== 6 && !feriados.includes(iso)
+}
+
+function proximoDia(iso) {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + DIA).toISOString().slice(0, 10)
+}
+
+export function somarDiasUteis(iso, n, feriados = []) {
+  let atual = iso
+  if (n === 0) {
+    while (!ehDiaUtil(atual, feriados)) atual = proximoDia(atual)
+    return atual
+  }
+  let contados = 0
+  while (contados < n) {
+    atual = proximoDia(atual)
+    if (ehDiaUtil(atual, feriados)) contados++
+  }
+  return atual
+}
