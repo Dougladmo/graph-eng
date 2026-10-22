@@ -1,0 +1,406 @@
+TAP version 13
+# Subtest: blocks: todas as linhas da tabela
+ok 1 - blocks: todas as linhas da tabela
+  ---
+  duration_ms: 2.340333
+  type: 'test'
+  ...
+# Subtest: blocks: getItem com maxStack e placeable
+ok 2 - blocks: getItem com maxStack e placeable
+  ---
+  duration_ms: 0.41175
+  type: 'test'
+  ...
+# Subtest: noise: hashSeed uint32 e sensível
+ok 3 - noise: hashSeed uint32 e sensível
+  ---
+  duration_ms: 0.182792
+  type: 'test'
+  ...
+# Subtest: noise: rng em [0,1) e seeds diferentes divergem
+ok 4 - noise: rng em [0,1) e seeds diferentes divergem
+  ---
+  duration_ms: 0.411625
+  type: 'test'
+  ...
+# Subtest: noise: contínuo, limitado e dependente da seed
+ok 5 - noise: contínuo, limitado e dependente da seed
+  ---
+  duration_ms: 1.623
+  type: 'test'
+  ...
+# Subtest: world: constantes e chunkIndex
+ok 6 - world: constantes e chunkIndex
+  ---
+  duration_ms: 0.095875
+  type: 'test'
+  ...
+# Subtest: world: estrutura das colunas em vários chunks
+ok 7 - world: estrutura das colunas em vários chunks
+  ---
+  duration_ms: 11.748583
+  type: 'test'
+  ...
+# Subtest: world: altura sem emenda entre chunks vizinhos
+ok 8 - world: altura sem emenda entre chunks vizinhos
+  ---
+  duration_ms: 16.026125
+  type: 'test'
+  ...
+# Subtest: world: carvão em todo chunk e determinismo
+ok 9 - world: carvão em todo chunk e determinismo
+  ---
+  duration_ms: 4.156417
+  type: 'test'
+  ...
+# Subtest: world: árvores dentro do chunk, sobre grama, com tronco de 4 a 6
+ok 10 - world: árvores dentro do chunk, sobre grama, com tronco de 4 a 6
+  ---
+  duration_ms: 11.346333
+  type: 'test'
+  ...
+# Subtest: world: coordenadas negativas e limites de y
+ok 11 - world: coordenadas negativas e limites de y
+  ---
+  duration_ms: 0.416583
+  type: 'test'
+  ...
+# Subtest: world: chunk carregado bate com generateChunk
+ok 12 - world: chunk carregado bate com generateChunk
+  ---
+  duration_ms: 0.448917
+  type: 'test'
+  ...
+# Subtest: world: superfície
+ok 13 - world: superfície
+  ---
+  duration_ms: 0.499875
+  type: 'test'
+  ...
+# Subtest: world: serialização canônica e ida e volta
+ok 14 - world: serialização canônica e ida e volta
+  ---
+  duration_ms: 1.891166
+  type: 'test'
+  ...
+# Subtest: world: voltar ao bloco gerado apaga a edição
+ok 15 - world: voltar ao bloco gerado apaga a edição
+  ---
+  duration_ms: 0.79875
+  type: 'test'
+  ...
+# Subtest: world: modo plano
+ok 16 - world: modo plano
+  ---
+  duration_ms: 0.123875
+  type: 'test'
+  ...
+# Subtest: mesher: formato e tipos
+ok 17 - mesher: formato e tipos
+  ---
+  duration_ms: 2.267875
+  type: 'test'
+  ...
+# Subtest: mesher: bloco solto no ar gera 6 faces, com bedrock embaixo nada muda
+ok 18 - mesher: bloco solto no ar gera 6 faces, com bedrock embaixo nada muda
+  ---
+  duration_ms: 5.699792
+  type: 'test'
+  ...
+# Subtest: mesher: bedrock plana só mostra o topo dentro do chunk e a base nunca aparece
+ok 19 - mesher: bedrock plana só mostra o topo dentro do chunk e a base nunca aparece
+  ---
+  duration_ms: 1.195042
+  type: 'test'
+  ...
+# Subtest: mesher: normais para fora e triângulos anti-horários
+ok 20 - mesher: normais para fora e triângulos anti-horários
+  ---
+  duration_ms: 1.973167
+  type: 'test'
+  ...
+# Subtest: mesher: culling entre blocos iguais e vizinho transparente
+ok 21 - mesher: culling entre blocos iguais e vizinho transparente
+  ---
+  duration_ms: 6.025292
+  type: 'test'
+  ...
+# Subtest: mesher: água, folhas e vidro vão para transparent
+ok 22 - mesher: água, folhas e vidro vão para transparent
+  ---
+  duration_ms: 2.5615
+  type: 'test'
+  ...
+# Subtest: mesher: vizinho em outro chunk esconde a face da borda
+ok 23 - mesher: vizinho em outro chunk esconde a face da borda
+  ---
+  duration_ms: 6.732125
+  type: 'test'
+  ...
+# Subtest: mesher: posições em coordenadas de mundo em chunk negativo
+ok 24 - mesher: posições em coordenadas de mundo em chunk negativo
+  ---
+  duration_ms: 1.676375
+  type: 'test'
+  ...
+# Subtest: raycast: face e distância em cada eixo
+ok 25 - raycast: face e distância em cada eixo
+  ---
+  duration_ms: 0.322917
+  type: 'test'
+  ...
+# Subtest: raycast: diagonal, alcance e água
+ok 26 - raycast: diagonal, alcance e água
+  ---
+  duration_ms: 0.404125
+  type: 'test'
+  ...
+# Subtest: raycast: origem dentro de bloco sólido
+ok 27 - raycast: origem dentro de bloco sólido
+  ---
+  duration_ms: 0.076125
+  type: 'test'
+  ...
+# Subtest: raycast: coordenadas negativas
+ok 28 - raycast: coordenadas negativas
+  ---
+  duration_ms: 0.068875
+  type: 'test'
+  ...
+# Subtest: physics: constantes e createPlayer
+ok 29 - physics: constantes e createPlayer
+  ---
+  duration_ms: 0.107125
+  type: 'test'
+  ...
+# Subtest: physics: stepPlayer é pura
+ok 30 - physics: stepPlayer é pura
+  ---
+  duration_ms: 0.365542
+  type: 'test'
+  ...
+# Subtest: physics: gravidade e pouso exato
+ok 31 - physics: gravidade e pouso exato
+  ---
+  duration_ms: 0.828833
+  type: 'test'
+  ...
+# Subtest: physics: velocidade terminal e dt grande não atravessa
+ok 32 - physics: velocidade terminal e dt grande não atravessa
+  ---
+  duration_ms: 0.309625
+  type: 'test'
+  ...
+# Subtest: physics: direção pelo yaw e velocidades
+ok 33 - physics: direção pelo yaw e velocidades
+  ---
+  duration_ms: 0.557334
+  type: 'test'
+  ...
+# Subtest: physics: parede para o movimento sem atravessar
+ok 34 - physics: parede para o movimento sem atravessar
+  ---
+  duration_ms: 0.295834
+  type: 'test'
+  ...
+# Subtest: physics: pulo sobe 1 bloco e não sobe 2
+ok 35 - physics: pulo sobe 1 bloco e não sobe 2
+  ---
+  duration_ms: 0.908916
+  type: 'test'
+  ...
+# Subtest: physics: pulo só no chão e teto zera a subida
+ok 36 - physics: pulo só no chão e teto zera a subida
+  ---
+  duration_ms: 0.090708
+  type: 'test'
+  ...
+# Subtest: physics: sneak não cai da borda
+ok 37 - physics: sneak não cai da borda
+  ---
+  duration_ms: 0.874833
+  type: 'test'
+  ...
+# Subtest: physics: água reduz gravidade e limita a queda
+ok 38 - physics: água reduz gravidade e limita a queda
+  ---
+  duration_ms: 0.194
+  type: 'test'
+  ...
+# Subtest: physics: voo sem gravidade, sobe e desce
+ok 39 - physics: voo sem gravidade, sobe e desce
+  ---
+  duration_ms: 0.220291
+  type: 'test'
+  ...
+# Subtest: physics: collidesAt e canPlaceBlock
+ok 40 - physics: collidesAt e canPlaceBlock
+  ---
+  duration_ms: 0.103417
+  type: 'test'
+  ...
+# Subtest: inventory: createInventory
+ok 41 - inventory: createInventory
+  ---
+  duration_ms: 0.07925
+  type: 'test'
+  ...
+# Subtest: inventory: addItem completa pilhas antes de abrir slot
+ok 42 - inventory: addItem completa pilhas antes de abrir slot
+  ---
+  duration_ms: 0.167917
+  type: 'test'
+  ...
+# Subtest: inventory: picaretas uma por slot e sobra
+ok 43 - inventory: picaretas uma por slot e sobra
+  ---
+  duration_ms: 0.158834
+  type: 'test'
+  ...
+# Subtest: inventory: remover, selecionar e rolar
+ok 44 - inventory: remover, selecionar e rolar
+  ---
+  duration_ms: 0.28575
+  type: 'test'
+  ...
+# Subtest: inventory: moveStack move, junta e troca
+ok 45 - inventory: moveStack move, junta e troca
+  ---
+  duration_ms: 0.1475
+  type: 'test'
+  ...
+# Subtest: inventory: selectedItem
+ok 46 - inventory: selectedItem
+  ---
+  duration_ms: 0.074208
+  type: 'test'
+  ...
+# Subtest: crafting: tábuas, gravetos e bancada em 2x2 e 3x3
+ok 47 - crafting: tábuas, gravetos e bancada em 2x2 e 3x3
+  ---
+  duration_ms: 0.386667
+  type: 'test'
+  ...
+# Subtest: crafting: picaretas só em 3x3
+ok 48 - crafting: picaretas só em 3x3
+  ---
+  duration_ms: 0.089917
+  type: 'test'
+  ...
+# Subtest: crafting: vidro, formas inválidas e item extra
+ok 49 - crafting: vidro, formas inválidas e item extra
+  ---
+  duration_ms: 0.103709
+  type: 'test'
+  ...
+# Subtest: crafting: consumeIngredients é pura
+ok 50 - crafting: consumeIngredients é pura
+  ---
+  duration_ms: 0.08575
+  type: 'test'
+  ...
+# Subtest: mining: canHarvest
+ok 51 - mining: canHarvest
+  ---
+  duration_ms: 0.071625
+  type: 'test'
+  ...
+# Subtest: mining: breakTime
+ok 52 - mining: breakTime
+  ---
+  duration_ms: 0.189166
+  type: 'test'
+  ...
+# Subtest: mining: dropsFor
+ok 53 - mining: dropsFor
+  ---
+  duration_ms: 0.12475
+  type: 'test'
+  ...
+# Subtest: daynight: marcos do dia
+ok 54 - daynight: marcos do dia
+  ---
+  duration_ms: 0.290416
+  type: 'test'
+  ...
+# Subtest: daynight: t com volta e negativos
+ok 55 - daynight: t com volta e negativos
+  ---
+  duration_ms: 0.373125
+  type: 'test'
+  ...
+# Subtest: blocos: tabela básica
+ok 56 - blocos: tabela básica
+  ---
+  duration_ms: 1.409833
+  type: 'test'
+  ...
+# Subtest: ruído: determinístico e no intervalo
+ok 57 - ruído: determinístico e no intervalo
+  ---
+  duration_ms: 0.746083
+  type: 'test'
+  ...
+# Subtest: mundo: chunk gerado tem bedrock e é determinístico
+ok 58 - mundo: chunk gerado tem bedrock e é determinístico
+  ---
+  duration_ms: 2.9555
+  type: 'test'
+  ...
+# Subtest: mundo: editar e salvar
+ok 59 - mundo: editar e salvar
+  ---
+  duration_ms: 0.450292
+  type: 'test'
+  ...
+# Subtest: malha: um bloco sozinho tem 6 faces
+ok 60 - malha: um bloco sozinho tem 6 faces
+  ---
+  duration_ms: 3.075458
+  type: 'test'
+  ...
+# Subtest: raycast: acerta o bloco à frente
+ok 61 - raycast: acerta o bloco à frente
+  ---
+  duration_ms: 0.489417
+  type: 'test'
+  ...
+# Subtest: física: cai e para no chão
+ok 62 - física: cai e para no chão
+  ---
+  duration_ms: 1.264583
+  type: 'test'
+  ...
+# Subtest: inventário: empilha até 64
+ok 63 - inventário: empilha até 64
+  ---
+  duration_ms: 0.296042
+  type: 'test'
+  ...
+# Subtest: crafting: tronco vira 4 tábuas
+ok 64 - crafting: tronco vira 4 tábuas
+  ---
+  duration_ms: 0.489667
+  type: 'test'
+  ...
+# Subtest: mineração: pedra na mão não dá drop
+ok 65 - mineração: pedra na mão não dá drop
+  ---
+  duration_ms: 0.491084
+  type: 'test'
+  ...
+# Subtest: dia e noite: meio-dia é claro
+ok 66 - dia e noite: meio-dia é claro
+  ---
+  duration_ms: 0.187875
+  type: 'test'
+  ...
+1..66
+# tests 66
+# suites 0
+# pass 66
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 173.384

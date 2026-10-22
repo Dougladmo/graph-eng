@@ -1,0 +1,82 @@
+{
+  "id": "bench-claude-happy-20261021141749-2efe",
+  "host": "claude",
+  "variant": "single-agent",
+  "scenario": "happy",
+  "simulated": false,
+  "attemptId": "f21e8ff4-1bac-41d9-b3c1-88efaec2d99e",
+  "manifestSha256": "6caee5bfd290fd9da539a0d80c6ec2803bc82e23b50d1cb19961cf6264975451",
+  "policy": "agente único no modelo forte (opus)",
+  "startedAt": "2026-10-21T14:17:52.585Z",
+  "endedAt": "2026-10-21T14:18:23.204Z",
+  "status": "PASS",
+  "attempted": true,
+  "block": null,
+  "reason": null,
+  "reportedStatus": "DONE",
+  "externalStatus": "PASS",
+  "falseDone": false,
+  "complete": true,
+  "summary": {
+    "total": 1,
+    "byRole": {
+      "singleAgent": 1
+    },
+    "completed": 1,
+    "failed": 0,
+    "inflight": 0,
+    "complete": true,
+    "fields": {
+      "requestedModel": {
+        "value": [
+          "opus"
+        ],
+        "coverage": "1/1"
+      },
+      "effectiveModel": {
+        "value": [
+          "claude-opus-5-5"
+        ],
+        "coverage": "1/1"
+      },
+      "usage": {
+        "coverage": "1/1"
+      },
+      "inputTokens": {
+        "value": 36271,
+        "coverage": "1/1"
+      },
+      "outputTokens": {
+        "value": 2700,
+        "coverage": "1/1"
+      },
+      "maxCallInputTokens": {
+        "value": 36271,
+        "coverage": "1/1"
+      },
+      "costUSD": {
+        "value": 0.1533246,
+        "coverage": "1/1"
+      }
+    }
+  },
+  "workspace": "/var/folders/07/d6zcjgg913j4y41bqgrd_6bh0000gn/T/graph-eng-benchmarks/bench-claude-happy-20261021141749-2efe/single-agent-f21e8ff4/workspace",
+  "durationMs": {
+    "engine": 30405,
+    "evaluator": 130
+  },
+  "engineMs": 30405,
+  "evaluatorMs": 130,
+  "exception": null,
+  "metricErrors": [],
+  "checks": [
+    {
+      "round": 1,
+      "exitCode": 0,
+      "tap": {
+        "pass": 3,
+        "fail": 0
+      }
+    }
+  ]
+}

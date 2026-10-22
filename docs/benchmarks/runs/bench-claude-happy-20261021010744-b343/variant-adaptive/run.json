@@ -1,0 +1,73 @@
+{
+  "id": "bench-claude-happy-20261021010744-b343",
+  "host": "claude",
+  "variant": "adaptive",
+  "scenario": "happy",
+  "simulated": false,
+  "attemptId": "d459cdac-9a00-4ea1-a857-58854092f62b",
+  "manifestSha256": "5a186ccf377a71486682d9830e2b91680268b3dc2508460d1792a7bd4e3020f4",
+  "policy": "produto atual (createHost sem política)",
+  "startedAt": "2026-10-21T01:11:28.753Z",
+  "endedAt": "2026-10-21T01:15:17.695Z",
+  "status": "BLOCK",
+  "attempted": true,
+  "block": {
+    "code": "provenance_frontier_changed_before_window"
+  },
+  "reason": "provenance_frontier_changed_before_window",
+  "reportedStatus": "BLOCKED",
+  "externalStatus": "PASS",
+  "falseDone": false,
+  "complete": false,
+  "summary": {
+    "total": 16,
+    "byRole": {
+      "planner": 2,
+      "planReviewer": 2,
+      "executor": 7,
+      "critic": 1,
+      "designReviewer": 1,
+      "verifier": 3
+    },
+    "completed": 16,
+    "failed": 0,
+    "inflight": 0,
+    "complete": true,
+    "fields": {
+      "requestedModel": {
+        "value": [
+          "haiku",
+          "opus"
+        ],
+        "coverage": "16/16"
+      },
+      "effectiveModel": {
+        "value": [
+          "claude-haiku-5-5",
+          "claude-opus-5-5"
+        ],
+        "coverage": "16/16"
+      },
+      "usage": {
+        "coverage": "16/16"
+      },
+      "inputTokens": {
+        "value": 508384,
+        "coverage": "16/16"
+      },
+      "outputTokens": {
+        "value": 29021,
+        "coverage": "16/16"
+      }
+    }
+  },
+  "workspace": "/var/folders/07/d6zcjgg913j4y41bqgrd_6bh0000gn/T/graph-eng-benchmarks/bench-claude-happy-20261021010744-b343/adaptive-d459cdac/workspace",
+  "durationMs": {
+    "engine": 228761,
+    "evaluator": 108
+  },
+  "engineMs": 228761,
+  "evaluatorMs": 108,
+  "exception": null,
+  "metricErrors": []
+}

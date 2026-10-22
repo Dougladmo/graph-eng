@@ -1,0 +1,12 @@
+{
+  "reportedStatus": "BLOCKED",
+  "externalStatus": "FAIL",
+  "exitCode": 1,
+  "expectedPass": 10,
+  "tap": {
+    "pass": 1,
+    "fail": 9
+  },
+  "durationMs": 89,
+  "falseDone": false
+}

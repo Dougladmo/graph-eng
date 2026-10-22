@@ -1,0 +1,36 @@
+// Contrato em task.md. Motor puro: sem three, react nem DOM.
+export const CHUNK_SIZE = 16
+export const WORLD_HEIGHT = 64
+export const SEA_LEVEL = 20
+
+export function chunkIndex() {
+  throw new Error('não implementado: chunkIndex')
+}
+
+export function generateChunk() {
+  throw new Error('não implementado: generateChunk')
+}
+
+export function createWorld() {
+  throw new Error('não implementado: createWorld')
+}
+
+export function getBlockAt() {
+  throw new Error('não implementado: getBlockAt')
+}
+
+export function setBlockAt() {
+  throw new Error('não implementado: setBlockAt')
+}
+
+export function getSurfaceHeight() {
+  throw new Error('não implementado: getSurfaceHeight')
+}
+
+export function serializeWorld() {
+  throw new Error('não implementado: serializeWorld')
+}
+
+export function deserializeWorld() {
+  throw new Error('não implementado: deserializeWorld')
+}

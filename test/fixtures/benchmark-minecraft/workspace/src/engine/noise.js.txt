@@ -1,0 +1,13 @@
+// Contrato em task.md. Motor puro: sem three, react nem DOM.
+
+export function hashSeed() {
+  throw new Error('não implementado: hashSeed')
+}
+
+export function createRng() {
+  throw new Error('não implementado: createRng')
+}
+
+export function createNoise2D() {
+  throw new Error('não implementado: createNoise2D')
+}

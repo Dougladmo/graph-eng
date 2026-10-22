@@ -1,0 +1,6 @@
+// Contrato em task.md. Motor puro: sem three, react nem DOM.
+export const DAY_LENGTH = 1200
+
+export function skyState() {
+  throw new Error('não implementado: skyState')
+}

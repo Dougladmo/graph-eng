@@ -1,0 +1,90 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import * as B from '../src/engine/blocks.js'
+import { hashSeed, createRng, createNoise2D } from '../src/engine/noise.js'
+import { createWorld, getBlockAt, setBlockAt, generateChunk, chunkIndex, serializeWorld, deserializeWorld } from '../src/engine/world.js'
+import { buildChunkMesh } from '../src/engine/mesher.js'
+import { raycast } from '../src/engine/raycast.js'
+import { createPlayer, stepPlayer } from '../src/engine/physics.js'
+import { createInventory, addItem } from '../src/engine/inventory.js'
+import { craft } from '../src/engine/crafting.js'
+import { breakTime, dropsFor } from '../src/engine/mining.js'
+import { skyState } from '../src/engine/daynight.js'
+
+const idle = { forward: false, backward: false, left: false, right: false, jump: false, sprint: false, sneak: false }
+
+test('blocos: tabela básica', () => {
+  assert.equal(B.getBlock(B.STONE).name, 'stone')
+  assert.equal(B.getBlock(B.STONE).drop, B.COBBLESTONE)
+  assert.equal(B.isTransparent(B.GLASS), true)
+  assert.throws(() => B.getBlock(99), RangeError)
+})
+
+test('ruído: determinístico e no intervalo', () => {
+  assert.equal(hashSeed('abc'), hashSeed('abc'))
+  const a = createRng(7), b = createRng(7)
+  for (let i = 0; i < 5; i++) assert.equal(a(), b())
+  const n = createNoise2D(1)
+  const v = n(3.3, -8.1)
+  assert.ok(v >= -1 && v <= 1)
+})
+
+test('mundo: chunk gerado tem bedrock e é determinístico', () => {
+  const c = generateChunk(42, 0, 0)
+  assert.equal(c.length, 16 * 64 * 16)
+  assert.equal(c[chunkIndex(5, 0, 5)], B.BEDROCK)
+  assert.deepEqual(generateChunk(42, 0, 0), c)
+})
+
+test('mundo: editar e salvar', () => {
+  const w = createWorld(1, { flat: true })
+  setBlockAt(w, -3, 2, 7, B.STONE)
+  assert.equal(getBlockAt(w, -3, 2, 7), B.STONE)
+  const s = serializeWorld(w)
+  assert.equal(getBlockAt(deserializeWorld(s), -3, 2, 7), B.STONE)
+})
+
+test('malha: um bloco sozinho tem 6 faces', () => {
+  const w = createWorld(1, { flat: true })
+  setBlockAt(w, 4, 10, 4, B.STONE)
+  const { opaque } = buildChunkMesh(w, 0, 0)
+  const before = buildChunkMesh(createWorld(1, { flat: true }), 0, 0).opaque.indices.length
+  assert.equal(opaque.indices.length - before, 36)
+})
+
+test('raycast: acerta o bloco à frente', () => {
+  const w = createWorld(1, { flat: true })
+  setBlockAt(w, 0, 5, -3, B.DIRT)
+  const hit = raycast(w, [0.5, 5.5, 0.5], [0, 0, -1], 5)
+  assert.deepEqual([hit.x, hit.y, hit.z, hit.face], [0, 5, -3, [0, 0, 1]])
+})
+
+test('física: cai e para no chão', () => {
+  const w = createWorld(1, { flat: true })
+  let p = createPlayer([0.5, 5, 0.5])
+  for (let i = 0; i < 60; i++) p = stepPlayer(p, idle, 1 / 30, w)
+  assert.equal(p.position[1], 1)
+  assert.equal(p.onGround, true)
+})
+
+test('inventário: empilha até 64', () => {
+  const { inventory, leftover } = addItem(createInventory(), B.DIRT, 70)
+  assert.deepEqual(inventory.slots.slice(0, 2), [{ id: B.DIRT, count: 64 }, { id: B.DIRT, count: 6 }])
+  assert.equal(leftover, 0)
+})
+
+test('crafting: tronco vira 4 tábuas', () => {
+  assert.deepEqual(craft([[{ id: B.LOG, count: 1 }, null], [null, null]]), { id: B.PLANKS, count: 4 })
+})
+
+test('mineração: pedra na mão não dá drop', () => {
+  assert.deepEqual(dropsFor(B.STONE, null), [])
+  assert.equal(breakTime(B.DIRT, null), 0.75)
+})
+
+test('dia e noite: meio-dia é claro', () => {
+  const s = skyState(300)
+  assert.equal(s.t, 0.25)
+  assert.equal(s.daylight, 1)
+  assert.equal(s.isNight, false)
+})

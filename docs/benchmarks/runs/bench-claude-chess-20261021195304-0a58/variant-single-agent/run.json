@@ -1,0 +1,100 @@
+{
+  "id": "bench-claude-chess-20261021195304-0a58",
+  "host": "claude",
+  "variant": "single-agent",
+  "scenario": "chess",
+  "simulated": false,
+  "attemptId": "6f0aa3aa-97e4-4daa-95f9-f98b04c8c4c4",
+  "manifestSha256": "74c5fd81ad6b85df62330d152c74465b390bb6b15aecab9a339517d0aca016e7",
+  "policy": "agente único no modelo forte (opus)",
+  "startedAt": "2026-10-21T19:58:40.929Z",
+  "endedAt": "2026-10-21T20:02:20.323Z",
+  "status": "BLOCK",
+  "attempted": true,
+  "block": {
+    "code": "single_agent_checks_failed"
+  },
+  "reason": "single_agent_checks_failed",
+  "reportedStatus": "BLOCKED",
+  "externalStatus": "PASS",
+  "falseDone": false,
+  "complete": false,
+  "summary": {
+    "total": 3,
+    "byRole": {
+      "singleAgent": 3
+    },
+    "completed": 3,
+    "failed": 0,
+    "inflight": 0,
+    "complete": true,
+    "fields": {
+      "requestedModel": {
+        "value": [
+          "opus"
+        ],
+        "coverage": "3/3"
+      },
+      "effectiveModel": {
+        "value": [
+          "claude-opus-5-5"
+        ],
+        "coverage": "3/3"
+      },
+      "usage": {
+        "coverage": "3/3"
+      },
+      "inputTokens": {
+        "value": 270912,
+        "coverage": "3/3"
+      },
+      "outputTokens": {
+        "value": 20862,
+        "coverage": "3/3"
+      },
+      "maxCallInputTokens": {
+        "value": 106171,
+        "coverage": "3/3"
+      },
+      "costUSD": {
+        "value": 0.8582677999999999,
+        "coverage": "3/3"
+      }
+    }
+  },
+  "workspace": "/var/folders/07/d6zcjgg913j4y41bqgrd_6bh0000gn/T/graph-eng-benchmarks/bench-claude-chess-20261021195304-0a58/single-agent-6f0aa3aa/workspace",
+  "durationMs": {
+    "engine": 218223,
+    "evaluator": 875
+  },
+  "engineMs": 218223,
+  "evaluatorMs": 875,
+  "exception": null,
+  "metricErrors": [],
+  "checks": [
+    {
+      "round": 1,
+      "exitCode": 1,
+      "tap": {
+        "pass": 5,
+        "fail": 1
+      }
+    },
+    {
+      "round": 2,
+      "exitCode": 1,
+      "tap": {
+        "pass": 5,
+        "fail": 1
+      }
+    },
+    {
+      "round": 3,
+      "exitCode": 1,
+      "tap": {
+        "pass": 5,
+        "fail": 1
+      }
+    }
+  ]
+}

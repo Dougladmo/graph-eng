@@ -1,0 +1,118 @@
+{
+  "rows": [
+    {
+      "host": "claude",
+      "variant": "v1-normalized",
+      "scenario": "faturamento",
+      "status": "NOT_RUN",
+      "attempted": false,
+      "real": false,
+      "reason": "sem execução nesta sessão",
+      "reportedStatus": null,
+      "externalStatus": null,
+      "falseDone": null,
+      "calls": null,
+      "coverage": null,
+      "complete": null,
+      "durationMs": null,
+      "simulated": false
+    },
+    {
+      "host": "claude",
+      "variant": "adaptive",
+      "scenario": "faturamento",
+      "status": "PASS",
+      "attempted": true,
+      "real": true,
+      "reason": null,
+      "reportedStatus": "DONE",
+      "externalStatus": "PASS",
+      "falseDone": false,
+      "calls": {
+        "planner": 3,
+        "researcher": 1,
+        "critic": 2,
+        "planReviewer": 2,
+        "designer": 1,
+        "designReviewer": 1,
+        "executor": 5,
+        "verifier": 5,
+        "synth": 1
+      },
+      "coverage": {
+        "requestedModel": {
+          "value": [
+            "haiku",
+            "opus",
+            "sonnet"
+          ],
+          "coverage": "21/21"
+        },
+        "effectiveModel": {
+          "value": [
+            "claude-haiku-5-5",
+            "claude-opus-5-5",
+            "claude-sonnet-5-5"
+          ],
+          "coverage": "21/21"
+        },
+        "usage": {
+          "coverage": "21/21"
+        },
+        "inputTokens": {
+          "value": 1547974,
+          "coverage": "21/21"
+        },
+        "outputTokens": {
+          "value": 104951,
+          "coverage": "21/21"
+        },
+        "maxCallInputTokens": {
+          "value": 277478,
+          "coverage": "21/21"
+        },
+        "costUSD": {
+          "value": 0.9606424599999999,
+          "coverage": "21/21"
+        }
+      },
+      "complete": true,
+      "durationMs": {
+        "engine": 617525,
+        "evaluator": 327
+      },
+      "simulated": false
+    },
+    {
+      "host": "claude",
+      "variant": "single-agent",
+      "scenario": "faturamento",
+      "status": "NOT_RUN",
+      "attempted": false,
+      "real": false,
+      "reason": "sem execução nesta sessão",
+      "reportedStatus": null,
+      "externalStatus": null,
+      "falseDone": null,
+      "calls": null,
+      "coverage": null,
+      "complete": null,
+      "durationMs": null,
+      "simulated": false
+    }
+  ],
+  "fixed": [
+    {
+      "host": "claude",
+      "variant": "HISTÓRICO CLAUDE (sonnet/sessão)",
+      "status": "BLOCK / NOT_RUN",
+      "reason": "organização bloqueia assinatura; sem remapeamento"
+    },
+    {
+      "host": "codex",
+      "variant": "planner barato histórico (fora de escopo)",
+      "status": "fora de escopo",
+      "reason": "não entra no produto nem no benchmark"
+    }
+  ]
+}

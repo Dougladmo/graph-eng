@@ -1,0 +1,696 @@
+// Aceite oculto do benchmark Minecraft MVP. Os agentes nunca veem este arquivo.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import * as B from '../src/engine/blocks.js'
+import { hashSeed, createRng, createNoise2D } from '../src/engine/noise.js'
+import * as W from '../src/engine/world.js'
+import { buildChunkMesh } from '../src/engine/mesher.js'
+import { raycast } from '../src/engine/raycast.js'
+import * as P from '../src/engine/physics.js'
+import * as I from '../src/engine/inventory.js'
+import { craft, consumeIngredients } from '../src/engine/crafting.js'
+import { canHarvest, breakTime, dropsFor } from '../src/engine/mining.js'
+import { skyState, DAY_LENGTH } from '../src/engine/daynight.js'
+
+const idle = { forward: false, backward: false, left: false, right: false, jump: false, sprint: false, sneak: false }
+const flat = () => W.createWorld(1, { flat: true })
+const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} ≉ ${b}`)
+const run = (p, input, steps, dt, w) => { for (let i = 0; i < steps; i++) p = P.stepPlayer(p, input, dt, w); return p }
+const s = (id, count = 1) => ({ id, count })
+const floor = (w, x0, x1, z0, z1, y = 0, id = B.STONE) => { for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) W.setBlockAt(w, x, y, z, id) }
+
+// blocks
+test('blocks: todas as linhas da tabela', () => {
+  const rows = [
+    [B.AIR, 'air', false, true, 0, null, null], [B.GRASS, 'grass', true, false, 0.6, null, B.DIRT],
+    [B.DIRT, 'dirt', true, false, 0.5, null, B.DIRT], [B.STONE, 'stone', true, false, 1.5, 'pickaxe', B.COBBLESTONE],
+    [B.SAND, 'sand', true, false, 0.5, null, B.SAND], [B.WATER, 'water', false, true, Infinity, null, null],
+    [B.LOG, 'log', true, false, 2, null, B.LOG], [B.LEAVES, 'leaves', true, true, 0.2, null, null],
+    [B.PLANKS, 'planks', true, false, 2, null, B.PLANKS], [B.COBBLESTONE, 'cobblestone', true, false, 2, 'pickaxe', B.COBBLESTONE],
+    [B.BEDROCK, 'bedrock', true, false, Infinity, null, null], [B.COAL_ORE, 'coal_ore', true, false, 3, 'pickaxe', B.COAL],
+    [B.IRON_ORE, 'iron_ore', true, false, 3, 'stone_pickaxe', B.IRON_ORE], [B.GLASS, 'glass', true, true, 0.3, null, null],
+    [B.CRAFTING_TABLE, 'crafting_table', true, false, 2.5, null, B.CRAFTING_TABLE],
+  ]
+  for (const [id, name, solid, transparent, hardness, tool, drop] of rows) {
+    const b = B.getBlock(id)
+    assert.deepEqual({ id: b.id, name: b.name, solid: b.solid, transparent: b.transparent, hardness: b.hardness, tool: b.tool, drop: b.drop },
+      { id, name, solid, transparent, hardness, tool, drop }, `bloco ${name}`)
+    assert.equal(B.isSolid(id), solid)
+    assert.equal(B.isTransparent(id), transparent)
+  }
+})
+
+test('blocks: getItem com maxStack e placeable', () => {
+  assert.deepEqual(B.getItem(B.WOODEN_PICKAXE), { id: 101, name: 'wooden_pickaxe', maxStack: 1, placeable: false })
+  assert.equal(B.getItem(B.STONE_PICKAXE).maxStack, 1)
+  assert.deepEqual(B.getItem(B.STICK), { id: 100, name: 'stick', maxStack: 64, placeable: false })
+  assert.equal(B.getItem(B.COAL).name, 'coal')
+  assert.equal(B.getItem(B.GLASS).placeable, true)
+  assert.equal(B.getItem(B.AIR).placeable, false)
+  assert.equal(B.getItem(B.WATER).placeable, false)
+  assert.throws(() => B.getItem(104), RangeError)
+  assert.throws(() => B.getBlock(100), RangeError)
+})
+
+// noise
+test('noise: hashSeed uint32 e sensível', () => {
+  for (const seed of [0, 1, -5, 123456789, 'abc', 'mundo']) {
+    const h = hashSeed(seed)
+    assert.ok(Number.isInteger(h) && h >= 0 && h <= 0xffffffff)
+  }
+  assert.notEqual(hashSeed('abc'), hashSeed('abd'))
+})
+
+test('noise: rng em [0,1) e seeds diferentes divergem', () => {
+  const r = createRng('x')
+  for (let i = 0; i < 1000; i++) { const v = r(); assert.ok(v >= 0 && v < 1) }
+  const a = createRng(1), b = createRng(2)
+  assert.notDeepEqual([a(), a(), a()], [b(), b(), b()])
+})
+
+test('noise: contínuo, limitado e dependente da seed', () => {
+  const n = createNoise2D(99), m = createNoise2D(100)
+  let diff = 0
+  for (let i = 0; i < 400; i++) {
+    const x = (i * 7.31) % 200 - 100, z = (i * 3.17) % 150 - 75
+    const v = n(x, z)
+    assert.ok(v >= -1 && v <= 1)
+    assert.ok(Math.abs(n(x + 0.01, z) - v) < 0.05 && Math.abs(n(x, z + 0.01) - v) < 0.05)
+    diff += Math.abs(v - m(x, z))
+  }
+  assert.ok(diff > 1)
+})
+
+// world
+test('world: constantes e chunkIndex', () => {
+  assert.deepEqual([W.CHUNK_SIZE, W.WORLD_HEIGHT, W.SEA_LEVEL], [16, 64, 20])
+  assert.equal(W.chunkIndex(3, 2, 5), 3 + 5 * 16 + 2 * 256)
+})
+
+const column = (c, x, z) => Array.from({ length: 64 }, (_, y) => c[W.chunkIndex(x, y, z)])
+const TERRAIN = [B.STONE, B.DIRT, B.SAND, B.GRASS, B.COAL_ORE, B.IRON_ORE]
+// topo do terreno: o terreno é contínuo de y = 1 até h; acima vêm água, ar, tronco ou folhas
+const terrainHeight = col => {
+  let y = 1
+  while (y < 63 && TERRAIN.includes(col[y + 1])) y++
+  return y
+}
+
+test('world: estrutura das colunas em vários chunks', () => {
+  for (const [cx, cz] of [[0, 0], [-1, 2], [5, -3]]) {
+    const c = W.generateChunk('estrutura', cx, cz)
+    assert.ok(c instanceof Uint8Array && c.length === 16384)
+    for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) {
+      const col = column(c, x, z)
+      assert.equal(col[0], B.BEDROCK)
+      const h = terrainHeight(col)
+      assert.ok(h >= 12 && h <= 40, `altura ${h}`)
+      const top = col[h]
+      assert.equal(top, h > 21 ? B.GRASS : B.SAND)
+      const under = top === B.GRASS ? B.DIRT : B.SAND
+      for (let y = Math.max(1, h - 3); y < h; y++) assert.equal(col[y], under, `subsolo y=${y}`)
+      for (let y = 1; y < h - 3; y++) assert.ok([B.STONE, B.COAL_ORE, B.IRON_ORE].includes(col[y]))
+      for (let y = h + 1; y <= 20; y++) assert.equal(col[y], B.WATER)
+      for (let y = 1; y < 64; y++) {
+        if (col[y] === B.COAL_ORE) assert.ok(y <= 40)
+        if (col[y] === B.IRON_ORE) assert.ok(y <= 24)
+      }
+      for (let y = Math.max(h, 20) + 1; y < 64; y++) assert.ok([B.AIR, B.LOG, B.LEAVES].includes(col[y]))
+    }
+  }
+})
+
+test('world: altura sem emenda entre chunks vizinhos', () => {
+  // o salto de altura na borda entre chunks não pode ser maior que o maior salto dentro de um chunk
+  const seed = 'emenda'
+  let inner = 0, border = 0
+  for (const [cx, cz] of [[0, 0], [-1, 0], [3, -2], [-4, 5]]) {
+    const a = W.generateChunk(seed, cx, cz), b = W.generateChunk(seed, cx + 1, cz), c = W.generateChunk(seed, cx, cz + 1)
+    for (let i = 0; i < 16; i++) {
+      for (let k = 0; k < 15; k++) {
+        inner = Math.max(inner, Math.abs(terrainHeight(column(a, k, i)) - terrainHeight(column(a, k + 1, i))))
+        inner = Math.max(inner, Math.abs(terrainHeight(column(a, i, k)) - terrainHeight(column(a, i, k + 1))))
+      }
+      border = Math.max(border, Math.abs(terrainHeight(column(a, 15, i)) - terrainHeight(column(b, 0, i))))
+      border = Math.max(border, Math.abs(terrainHeight(column(a, i, 15)) - terrainHeight(column(c, i, 0))))
+    }
+  }
+  assert.ok(border <= Math.max(inner, 2), `salto na borda ${border}, dentro do chunk ${inner}`)
+})
+
+test('world: carvão em todo chunk e determinismo', () => {
+  for (let i = 0; i < 12; i++) assert.ok(W.generateChunk('ore', i, -i).includes(B.COAL_ORE), `chunk ${i} sem carvão`)
+  assert.deepEqual(W.generateChunk(5, 2, 3), W.generateChunk(5, 2, 3))
+  assert.notDeepEqual(W.generateChunk(5, 2, 3), W.generateChunk(6, 2, 3))
+})
+
+test('world: árvores dentro do chunk, sobre grama, com tronco de 4 a 6', () => {
+  let trees = 0
+  for (let cx = 0; cx < 10; cx++) {
+    const c = W.generateChunk('floresta', cx, 1)
+    for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) {
+      const col = column(c, x, z)
+      for (let y = 1; y < 64; y++) {
+        if (col[y] !== B.LOG || col[y - 1] === B.LOG) continue
+        trees++
+        assert.equal(col[y - 1], B.GRASS, 'tronco sobre grama')
+        assert.ok(x >= 2 && x <= 13 && z >= 2 && z <= 13, `tronco em ${x},${z}`)
+        let n = 0
+        while (col[y + n] === B.LOG) n++
+        assert.ok(n >= 4 && n <= 6, `tronco de ${n}`)
+      }
+    }
+  }
+  assert.ok(trees > 0, 'nenhuma árvore em 10 chunks')
+})
+
+test('world: coordenadas negativas e limites de y', () => {
+  const w = flat()
+  W.setBlockAt(w, -1, 3, -1, B.GLASS)
+  assert.equal(W.getBlockAt(w, -1, 3, -1), B.GLASS)
+  assert.equal(W.getBlockAt(w, 15, 3, 15), B.AIR)
+  assert.equal(W.getBlockAt(w, -17, 0, 33), B.BEDROCK)
+  assert.equal(W.getBlockAt(w, 0, -1, 0), B.BEDROCK)
+  assert.equal(W.getBlockAt(w, 0, 64, 0), B.AIR)
+  assert.throws(() => W.setBlockAt(w, 0, 64, 0, B.DIRT), RangeError)
+  assert.throws(() => W.setBlockAt(w, 0, -1, 0, B.DIRT), RangeError)
+})
+
+test('world: chunk carregado bate com generateChunk', () => {
+  const w = W.createWorld('igual')
+  const c = W.generateChunk('igual', -2, 1)
+  for (const [x, y, z] of [[0, 0, 0], [5, 10, 7], [15, 25, 3], [9, 40, 12]]) {
+    assert.equal(W.getBlockAt(w, -32 + x, y, 16 + z), c[W.chunkIndex(x, y, z)])
+  }
+})
+
+test('world: superfície', () => {
+  const w = flat()
+  assert.equal(W.getSurfaceHeight(w, 3, 3), 0)
+  W.setBlockAt(w, 3, 9, 3, B.DIRT)
+  W.setBlockAt(w, 3, 12, 3, B.WATER)
+  assert.equal(W.getSurfaceHeight(w, 3, 3), 9)
+  const g = W.createWorld('sup')
+  const h = W.getSurfaceHeight(g, 7, -4)
+  assert.ok(B.isSolid(W.getBlockAt(g, 7, h, -4)))
+  for (let y = h + 1; y < 64; y++) assert.ok(!B.isSolid(W.getBlockAt(g, 7, y, -4)))
+})
+
+test('world: serialização canônica e ida e volta', () => {
+  const w = W.createWorld('save')
+  W.setBlockAt(w, 5, 30, 5, B.GLASS)
+  W.setBlockAt(w, -3, 2, 7, B.PLANKS)
+  W.setBlockAt(w, -3, 1, 9, B.DIRT)
+  W.setBlockAt(w, -3, 1, 8, B.AIR)
+  const json = W.serializeWorld(w)
+  const data = JSON.parse(json)
+  assert.deepEqual(Object.keys(data), ['version', 'seed', 'flat', 'edits'])
+  assert.deepEqual(data, { version: 1, seed: 'save', flat: false, edits: [[-3, 1, 8, 0], [-3, 1, 9, 2], [-3, 2, 7, 8], [5, 30, 5, 13]] })
+  const back = W.deserializeWorld(json)
+  assert.equal(W.serializeWorld(back), json)
+  assert.equal(W.getBlockAt(back, -3, 2, 7), B.PLANKS)
+  assert.throws(() => W.deserializeWorld(JSON.stringify({ ...data, version: 2 })), Error)
+})
+
+test('world: voltar ao bloco gerado apaga a edição', () => {
+  const w = W.createWorld(77)
+  const orig = W.getBlockAt(w, 2, 1, 2)
+  W.setBlockAt(w, 2, 1, 2, B.GLASS)
+  W.setBlockAt(w, 2, 1, 2, orig)
+  assert.deepEqual(JSON.parse(W.serializeWorld(w)).edits, [])
+  const f = flat()
+  W.setBlockAt(f, 0, 5, 0, B.AIR)
+  assert.deepEqual(JSON.parse(W.serializeWorld(f)).edits, [])
+  assert.equal(JSON.parse(W.serializeWorld(f)).flat, true)
+})
+
+test('world: modo plano', () => {
+  const w = flat()
+  for (const [x, z] of [[0, 0], [-40, 13], [100, -100]]) {
+    assert.equal(W.getBlockAt(w, x, 0, z), B.BEDROCK)
+    for (let y = 1; y < 64; y += 7) assert.equal(W.getBlockAt(w, x, y, z), B.AIR)
+  }
+})
+
+// mesher
+const faces = m => m.indices.length / 6
+const meshOf = w => buildChunkMesh(w, 0, 0)
+const baseFlat = () => faces(meshOf(flat()).opaque)
+
+test('mesher: formato e tipos', () => {
+  const w = flat()
+  W.setBlockAt(w, 3, 4, 3, B.STONE)
+  const { opaque, transparent } = meshOf(w)
+  for (const m of [opaque, transparent]) {
+    assert.ok(m.positions instanceof Float32Array && m.normals instanceof Float32Array && m.uvs instanceof Float32Array)
+    assert.ok(m.indices instanceof Uint32Array)
+    const v = m.positions.length / 3
+    assert.equal(m.normals.length, v * 3)
+    assert.equal(m.uvs.length, v * 2)
+    assert.equal(v, faces(m) * 4)
+    for (const u of m.uvs) assert.ok(u >= 0 && u <= 1)
+    for (const i of m.indices) assert.ok(i < v)
+  }
+})
+
+test('mesher: bloco solto no ar gera 6 faces, com bedrock embaixo nada muda', () => {
+  const w = flat()
+  W.setBlockAt(w, 8, 1, 8, B.STONE)
+  // a face de baixo encosta na bedrock (oculta) e a bedrock perde a face de cima: saldo +4
+  assert.equal(faces(meshOf(w).opaque) - baseFlat(), 4)
+  const v = flat()
+  W.setBlockAt(v, 8, 30, 8, B.STONE)
+  assert.equal(faces(meshOf(v).opaque) - baseFlat(), 6)
+})
+
+test('mesher: bedrock plana só mostra o topo dentro do chunk e a base nunca aparece', () => {
+  assert.equal(baseFlat(), 256)
+})
+
+test('mesher: normais para fora e triângulos anti-horários', () => {
+  const w = flat()
+  W.setBlockAt(w, 5, 20, 6, B.DIRT)
+  const m = meshOf(w).opaque
+  let checked = 0
+  for (let t = 0; t < m.indices.length; t += 3) {
+    const [a, b, c] = [m.indices[t], m.indices[t + 1], m.indices[t + 2]].map(i => [m.positions[i * 3], m.positions[i * 3 + 1], m.positions[i * 3 + 2]])
+    const n = [m.normals[m.indices[t] * 3], m.normals[m.indices[t] * 3 + 1], m.normals[m.indices[t] * 3 + 2]]
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]
+    const cross = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+    assert.ok(cross[0] * n[0] + cross[1] * n[1] + cross[2] * n[2] > 0, 'triângulo com winding errado')
+    if (a[1] > 1) {
+      checked++
+      const center = [5.5, 20.5, 6.5]
+      const mid = [(a[0] + b[0] + c[0]) / 3 - center[0], (a[1] + b[1] + c[1]) / 3 - center[1], (a[2] + b[2] + c[2]) / 3 - center[2]]
+      assert.ok(mid[0] * n[0] + mid[1] * n[1] + mid[2] * n[2] > 0, 'normal para dentro')
+      for (const p of [a, b, c]) assert.ok(p[0] >= 5 && p[0] <= 6 && p[1] >= 20 && p[1] <= 21 && p[2] >= 6 && p[2] <= 7)
+    }
+  }
+  assert.equal(checked, 12)
+})
+
+test('mesher: culling entre blocos iguais e vizinho transparente', () => {
+  const w = flat()
+  W.setBlockAt(w, 4, 30, 4, B.STONE)
+  W.setBlockAt(w, 5, 30, 4, B.STONE)
+  assert.equal(faces(meshOf(w).opaque) - baseFlat(), 10)
+  const g = flat()
+  W.setBlockAt(g, 4, 30, 4, B.GLASS)
+  W.setBlockAt(g, 5, 30, 4, B.GLASS)
+  const mg = meshOf(g)
+  assert.equal(faces(mg.transparent), 10)
+  const s = flat()
+  W.setBlockAt(s, 4, 30, 4, B.STONE)
+  W.setBlockAt(s, 5, 30, 4, B.GLASS)
+  const ms = meshOf(s)
+  assert.equal(faces(ms.opaque) - baseFlat(), 6)
+  assert.equal(faces(ms.transparent), 5)
+})
+
+test('mesher: água, folhas e vidro vão para transparent', () => {
+  const w = flat()
+  W.setBlockAt(w, 1, 10, 1, B.WATER)
+  W.setBlockAt(w, 3, 10, 1, B.LEAVES)
+  W.setBlockAt(w, 5, 10, 1, B.GLASS)
+  const m = meshOf(w)
+  assert.equal(faces(m.transparent), 18)
+  assert.equal(faces(m.opaque), baseFlat())
+})
+
+test('mesher: vizinho em outro chunk esconde a face da borda', () => {
+  const w = flat()
+  W.setBlockAt(w, 15, 30, 3, B.STONE)
+  assert.equal(faces(meshOf(w).opaque) - baseFlat(), 6)
+  W.setBlockAt(w, 16, 30, 3, B.STONE)
+  assert.equal(faces(meshOf(w).opaque) - baseFlat(), 5)
+  W.setBlockAt(w, 0, 63, 0, B.STONE)
+  assert.equal(faces(meshOf(w).opaque) - baseFlat(), 11)
+})
+
+test('mesher: posições em coordenadas de mundo em chunk negativo', () => {
+  const w = flat()
+  W.setBlockAt(w, -16, 40, -1, B.STONE)
+  const m = buildChunkMesh(w, -1, -1).opaque
+  let xs = new Set(), maxY = 0
+  for (let i = 0; i < m.positions.length; i += 3) if (m.positions[i + 1] > 1) { xs.add(m.positions[i]); maxY = Math.max(maxY, m.positions[i + 1]) }
+  assert.deepEqual([...xs].sort((a, b) => a - b), [-16, -15])
+  assert.equal(maxY, 41)
+})
+
+// raycast
+test('raycast: face e distância em cada eixo', () => {
+  const w = flat()
+  W.setBlockAt(w, 3, 5, 0, B.STONE)
+  let h = raycast(w, [0.5, 5.5, 0.5], [1, 0, 0], 10)
+  assert.deepEqual([h.x, h.y, h.z, h.block, h.face], [3, 5, 0, B.STONE, [-1, 0, 0]])
+  near(h.distance, 2.5)
+  h = raycast(w, [3.5, 9.5, 0.5], [0, -2, 0], 10)
+  assert.deepEqual([h.x, h.y, h.z, h.face], [3, 5, 0, [0, 1, 0]])
+  near(h.distance, 3.5)
+  h = raycast(w, [0.5, 1.5, 0.5], [0, -1, 0], 10)
+  assert.deepEqual([h.y, h.block, h.face], [0, B.BEDROCK, [0, 1, 0]])
+})
+
+test('raycast: diagonal, alcance e água', () => {
+  const w = flat()
+  W.setBlockAt(w, 2, 7, 2, B.LOG)
+  const h = raycast(w, [0.5, 5.5, 0.5], [1, 1, 1], 10)
+  assert.deepEqual([h.x, h.y, h.z], [2, 7, 2])
+  near(h.distance, Math.sqrt(3) * 1.5)
+  assert.equal(raycast(w, [0.5, 5.5, 0.5], [1, 1, 1], 2), null)
+  W.setBlockAt(w, 0, 5, -2, B.WATER)
+  W.setBlockAt(w, 0, 5, -3, B.SAND)
+  const t = raycast(w, [0.5, 5.5, 0.5], [0, 0, -1], 5)
+  assert.deepEqual([t.z, t.block, t.face], [-3, B.SAND, [0, 0, 1]])
+  assert.equal(raycast(w, [0.5, 5.5, 0.5], [0, 1, 0], 5), null)
+})
+
+test('raycast: origem dentro de bloco sólido', () => {
+  const w = flat()
+  W.setBlockAt(w, 1, 4, 1, B.DIRT)
+  assert.deepEqual(raycast(w, [1.2, 4.7, 1.9], [0, 1, 0], 5), { x: 1, y: 4, z: 1, block: B.DIRT, face: [0, 0, 0], distance: 0 })
+})
+
+test('raycast: coordenadas negativas', () => {
+  const w = flat()
+  W.setBlockAt(w, -4, 3, -1, B.STONE)
+  const h = raycast(w, [-0.5, 3.5, -0.5], [-1, 0, 0], 5)
+  assert.deepEqual([h.x, h.y, h.z, h.face], [-4, 3, -1, [1, 0, 0]])
+  near(h.distance, 2.5)
+})
+
+// physics
+test('physics: constantes e createPlayer', () => {
+  assert.deepEqual([P.PLAYER_WIDTH, P.PLAYER_HEIGHT, P.EYE_HEIGHT, P.GRAVITY, P.JUMP_VELOCITY, P.WALK_SPEED, P.SPRINT_SPEED, P.SNEAK_SPEED, P.TERMINAL_VELOCITY],
+    [0.6, 1.8, 1.62, 32, 9, 4.3, 5.6, 1.3, 78])
+  assert.deepEqual(P.createPlayer([1, 2, 3]), { position: [1, 2, 3], velocity: [0, 0, 0], onGround: false, yaw: 0, pitch: 0, flying: false })
+})
+
+test('physics: stepPlayer é pura', () => {
+  const w = flat()
+  const p = P.createPlayer([0.5, 5, 0.5])
+  const snap = JSON.stringify(p)
+  const q = P.stepPlayer(p, { ...idle, forward: true }, 0.1, w)
+  assert.equal(JSON.stringify(p), snap)
+  assert.notEqual(q, p)
+  assert.notEqual(q.position, p.position)
+})
+
+test('physics: gravidade e pouso exato', () => {
+  const w = flat()
+  let p = P.createPlayer([0.5, 10, 0.5])
+  p = P.stepPlayer(p, idle, 0.05, w)
+  near(p.velocity[1], -1.6, 1e-9)
+  p = run(p, idle, 120, 1 / 60, w)
+  assert.equal(p.position[1], 1)
+  assert.equal(p.onGround, true)
+  assert.equal(p.velocity[1], 0)
+})
+
+test('physics: velocidade terminal e dt grande não atravessa', () => {
+  const w = flat()
+  const p = P.stepPlayer({ ...P.createPlayer([0.5, 60, 0.5]), velocity: [0, -200, 0] }, idle, 0.05, w)
+  assert.ok(p.velocity[1] >= -78)
+  const q = P.stepPlayer(P.createPlayer([0.5, 30, 0.5]), idle, 5, w)
+  assert.equal(q.position[1], 1)
+  assert.equal(q.onGround, true)
+})
+
+test('physics: direção pelo yaw e velocidades', () => {
+  const w = flat()
+  const ground = { ...P.createPlayer([0.5, 1, 0.5]), onGround: true }
+  let p = P.stepPlayer(ground, { ...idle, forward: true }, 0.5, w)
+  near(p.position[2], 0.5 - 4.3 * 0.5, 1e-6)
+  near(p.position[0], 0.5, 1e-9)
+  p = P.stepPlayer(ground, { ...idle, right: true }, 0.5, w)
+  near(p.position[0], 0.5 + 4.3 * 0.5, 1e-6)
+  p = P.stepPlayer({ ...ground, yaw: Math.PI / 2 }, { ...idle, forward: true }, 0.5, w)
+  near(p.position[0], 0.5 - 4.3 * 0.5, 1e-6)
+  near(p.position[2], 0.5, 1e-6)
+  p = P.stepPlayer(ground, { ...idle, forward: true, right: true }, 1, w)
+  near(Math.hypot(p.position[0] - 0.5, p.position[2] - 0.5), 4.3, 1e-6)
+  p = P.stepPlayer(ground, { ...idle, forward: true, sprint: true }, 1, w)
+  near(p.position[2], 0.5 - 5.6, 1e-6)
+  p = P.stepPlayer(ground, { ...idle, backward: true, sprint: true }, 1, w)
+  near(p.position[2], 0.5 + 4.3, 1e-6)
+})
+
+test('physics: parede para o movimento sem atravessar', () => {
+  const w = flat()
+  for (let y = 1; y <= 3; y++) W.setBlockAt(w, 0, y, -3, B.STONE)
+  const p = run({ ...P.createPlayer([0.5, 1, 0.5]), onGround: true }, { ...idle, forward: true }, 60, 1 / 30, w)
+  near(p.position[2], -2 + 0.3, 1e-3)
+  assert.ok(p.position[2] >= -2 + 0.3 - 1e-6)
+  assert.equal(P.collidesAt(w, p.position), false)
+})
+
+test('physics: pulo sobe 1 bloco e não sobe 2', () => {
+  const w = flat()
+  W.setBlockAt(w, 0, 1, -2, B.STONE)
+  let p = { ...P.createPlayer([0.5, 1, 0.5]), onGround: true }
+  for (let i = 0; i < 90; i++) p = P.stepPlayer(p, { ...idle, forward: true, jump: true }, 1 / 60, w)
+  assert.ok(p.position[2] < -2.5, `não passou do degrau: z=${p.position[2]}`)
+  const v = flat()
+  W.setBlockAt(v, 0, 1, -2, B.STONE)
+  W.setBlockAt(v, 0, 2, -2, B.STONE)
+  let q = { ...P.createPlayer([0.5, 1, 0.5]), onGround: true }
+  for (let i = 0; i < 90; i++) q = P.stepPlayer(q, { ...idle, forward: true, jump: true }, 1 / 60, v)
+  assert.ok(q.position[2] > -1.31, `subiu 2 blocos: z=${q.position[2]}`)
+})
+
+test('physics: pulo só no chão e teto zera a subida', () => {
+  const w = flat()
+  const air = P.stepPlayer(P.createPlayer([0.5, 10, 0.5]), { ...idle, jump: true }, 0.05, w)
+  assert.ok(air.velocity[1] < 0)
+  const jump = P.stepPlayer({ ...P.createPlayer([0.5, 1, 0.5]), onGround: true }, { ...idle, jump: true }, 0.01, w)
+  assert.ok(jump.velocity[1] > 8)
+  W.setBlockAt(w, 0, 3, 0, B.STONE)
+  let p = { ...P.createPlayer([0.5, 1, 0.5]), onGround: true }
+  p = P.stepPlayer(p, { ...idle, jump: true }, 0.05, w)
+  p = P.stepPlayer(p, idle, 0.05, w)
+  assert.ok(p.position[1] + 1.8 <= 3 + 1e-9)
+  assert.ok(p.velocity[1] <= 0)
+})
+
+test('physics: sneak não cai da borda', () => {
+  const w = flat()
+  floor(w, -2, 2, -2, 2, 5)
+  let p = { ...P.createPlayer([0.5, 6, 0.5]), onGround: true }
+  p = run(p, { ...idle, forward: true, sneak: true }, 120, 1 / 30, w)
+  assert.ok(p.position[1] >= 6 - 1e-9, `caiu: y=${p.position[1]}`)
+  assert.ok(p.position[2] < -2.2 && p.position[2] > -2.3, `parou em z=${p.position[2]}`)
+  let q = { ...P.createPlayer([0.5, 6, 0.5]), onGround: true }
+  q = run(q, { ...idle, forward: true }, 60, 1 / 30, w)
+  assert.ok(q.position[1] < 6)
+})
+
+test('physics: água reduz gravidade e limita a queda', () => {
+  const w = flat()
+  for (let y = 1; y <= 30; y++) W.setBlockAt(w, 0, y, 0, B.WATER)
+  let p = P.stepPlayer(P.createPlayer([0.5, 20, 0.5]), idle, 0.05, w)
+  near(p.velocity[1], -0.4, 1e-9)
+  p = run(p, idle, 60, 0.05, w)
+  near(p.velocity[1], -3, 1e-9)
+  const up = P.stepPlayer(P.createPlayer([0.5, 20, 0.5]), { ...idle, jump: true }, 0.05, w)
+  near(up.velocity[1], 3, 1e-9)
+})
+
+test('physics: voo sem gravidade, sobe e desce', () => {
+  const w = flat()
+  const f = { ...P.createPlayer([0.5, 20, 0.5]), flying: true }
+  let p = P.stepPlayer(f, idle, 1, w)
+  near(p.position[1], 20, 1e-9)
+  p = P.stepPlayer(f, { ...idle, jump: true }, 1, w)
+  near(p.position[1], 24.3, 1e-6)
+  p = P.stepPlayer(f, { ...idle, sneak: true }, 1, w)
+  near(p.position[1], 15.7, 1e-6)
+  p = P.stepPlayer({ ...f, position: [0.5, 2, 0.5] }, { ...idle, sneak: true }, 1, w)
+  assert.equal(p.position[1], 1)
+})
+
+test('physics: collidesAt e canPlaceBlock', () => {
+  const w = flat()
+  W.setBlockAt(w, 1, 2, 0, B.STONE)
+  assert.equal(P.collidesAt(w, [0.5, 1, 0.5]), false)
+  assert.equal(P.collidesAt(w, [0.75, 1, 0.5]), true)
+  assert.equal(P.collidesAt(w, [0.5, 0.9, 0.5]), true)
+  W.setBlockAt(w, 5, 3, 5, B.WATER)
+  assert.equal(P.collidesAt(w, [5.5, 3, 5.5]), false)
+  const p = P.createPlayer([0.5, 1, 0.5])
+  assert.equal(P.canPlaceBlock(p, 0, 1, 0), false)
+  assert.equal(P.canPlaceBlock(p, 0, 2, 0), false)
+  assert.equal(P.canPlaceBlock(p, 0, 3, 0), true)
+  assert.equal(P.canPlaceBlock(p, 1, 1, 0), true)
+  assert.equal(P.canPlaceBlock(p, 0, 0, 0), true)
+})
+
+// inventory
+test('inventory: createInventory', () => {
+  const inv = I.createInventory()
+  assert.equal(inv.slots.length, 36)
+  assert.ok(inv.slots.every(s => s === null))
+  assert.equal(inv.selected, 0)
+})
+
+test('inventory: addItem completa pilhas antes de abrir slot', () => {
+  let inv = I.createInventory()
+  inv.slots[3] = s(B.DIRT, 60)
+  inv.slots[7] = s(B.DIRT, 63)
+  inv.slots[0] = s(B.STONE, 5)
+  const before = JSON.stringify(inv)
+  const r = I.addItem(inv, B.DIRT, 10)
+  assert.equal(JSON.stringify(inv), before)
+  assert.deepEqual(r.inventory.slots[3], s(B.DIRT, 64))
+  assert.deepEqual(r.inventory.slots[7], s(B.DIRT, 64))
+  assert.deepEqual(r.inventory.slots[1], s(B.DIRT, 5))
+  assert.equal(r.leftover, 0)
+})
+
+test('inventory: picaretas uma por slot e sobra', () => {
+  const r = I.addItem(I.createInventory(), B.WOODEN_PICKAXE, 3)
+  assert.deepEqual(r.inventory.slots.slice(0, 4), [s(101), s(101), s(101), null])
+  const full = { slots: Array(36).fill(null).map(() => s(B.STONE, 64)), selected: 0 }
+  full.slots[35] = s(B.DIRT, 60)
+  const f = I.addItem(full, B.DIRT, 10)
+  assert.equal(f.leftover, 6)
+  assert.deepEqual(f.inventory.slots[35], s(B.DIRT, 64))
+})
+
+test('inventory: remover, selecionar e rolar', () => {
+  let inv = I.addItem(I.createInventory(), B.SAND, 5).inventory
+  assert.deepEqual(I.removeFromSlot(inv, 0, 2).slots[0], s(B.SAND, 3))
+  assert.equal(I.removeFromSlot(inv, 0, 9).slots[0], null)
+  assert.deepEqual(inv.slots[0], s(B.SAND, 5))
+  assert.equal(I.selectSlot(inv, 8).selected, 8)
+  assert.throws(() => I.selectSlot(inv, 9), RangeError)
+  assert.throws(() => I.selectSlot(inv, -1), RangeError)
+  assert.equal(I.scrollSelection(I.selectSlot(inv, 8), 1).selected, 0)
+  assert.equal(I.scrollSelection(inv, -1).selected, 8)
+  assert.equal(I.scrollSelection(inv, 3).selected, 3)
+  assert.equal(inv.selected, 0)
+})
+
+test('inventory: moveStack move, junta e troca', () => {
+  const inv = I.createInventory()
+  inv.slots[0] = s(B.DIRT, 50)
+  inv.slots[1] = s(B.DIRT, 30)
+  inv.slots[2] = s(B.STONE, 4)
+  const merged = I.moveStack(inv, 1, 0)
+  assert.deepEqual([merged.slots[0], merged.slots[1]], [s(B.DIRT, 64), s(B.DIRT, 16)])
+  const swapped = I.moveStack(inv, 0, 2)
+  assert.deepEqual([swapped.slots[0], swapped.slots[2]], [s(B.STONE, 4), s(B.DIRT, 50)])
+  const moved = I.moveStack(inv, 2, 20)
+  assert.deepEqual([moved.slots[2], moved.slots[20]], [null, s(B.STONE, 4)])
+  const all = I.moveStack({ ...inv, slots: inv.slots.map((x, i) => (i === 1 ? s(B.DIRT, 10) : x)) }, 1, 0)
+  assert.deepEqual([all.slots[0], all.slots[1]], [s(B.DIRT, 60), null])
+  assert.deepEqual(inv.slots[0], s(B.DIRT, 50))
+})
+
+test('inventory: selectedItem', () => {
+  let inv = I.addItem(I.createInventory(), B.GLASS, 2).inventory
+  assert.deepEqual(I.selectedItem(inv), s(B.GLASS, 2))
+  assert.equal(I.selectedItem(I.selectSlot(inv, 4)), null)
+})
+
+// crafting
+const g2 = (...c) => [[c[0] ?? null, c[1] ?? null], [c[2] ?? null, c[3] ?? null]]
+const g3 = (...c) => [0, 1, 2].map(r => [0, 1, 2].map(k => c[r * 3 + k] ?? null))
+
+test('crafting: tábuas, gravetos e bancada em 2x2 e 3x3', () => {
+  assert.deepEqual(craft(g2(null, null, null, s(B.LOG, 3))), { id: B.PLANKS, count: 4 })
+  assert.deepEqual(craft(g3(null, null, null, null, null, null, null, null, s(B.LOG))), { id: B.PLANKS, count: 4 })
+  assert.deepEqual(craft(g2(null, s(B.PLANKS), null, s(B.PLANKS))), { id: B.STICK, count: 4 })
+  assert.deepEqual(craft(g3(null, null, null, null, null, s(B.PLANKS), null, null, s(B.PLANKS))), { id: B.STICK, count: 4 })
+  assert.deepEqual(craft(g2(s(B.PLANKS), s(B.PLANKS), s(B.PLANKS), s(B.PLANKS))), { id: B.CRAFTING_TABLE, count: 1 })
+  assert.deepEqual(craft(g3(null, null, null, null, s(B.PLANKS), s(B.PLANKS), null, s(B.PLANKS), s(B.PLANKS))), { id: B.CRAFTING_TABLE, count: 1 })
+})
+
+test('crafting: picaretas só em 3x3', () => {
+  const P_ = s(B.PLANKS), C = s(B.COBBLESTONE), S = s(B.STICK)
+  assert.deepEqual(craft(g3(P_, P_, P_, null, S, null, null, S, null)), { id: B.WOODEN_PICKAXE, count: 1 })
+  assert.deepEqual(craft(g3(C, C, C, null, S, null, null, S, null)), { id: B.STONE_PICKAXE, count: 1 })
+  assert.equal(craft(g3(C, P_, C, null, S, null, null, S, null)), null)
+  assert.equal(craft(g3(P_, P_, P_, S, null, null, S, null, null)), null)
+})
+
+test('crafting: vidro, formas inválidas e item extra', () => {
+  assert.deepEqual(craft(g2(s(B.COAL), null, null, s(B.SAND))), { id: B.GLASS, count: 1 })
+  assert.deepEqual(craft(g3(null, s(B.SAND), null, null, null, null, s(B.COAL))), { id: B.GLASS, count: 1 })
+  assert.equal(craft(g2(s(B.PLANKS), s(B.PLANKS))), null)
+  assert.equal(craft(g2(s(B.PLANKS), null, null, s(B.PLANKS))), null)
+  assert.equal(craft(g2(s(B.LOG), s(B.DIRT))), null)
+  assert.equal(craft(g2(s(B.LOG), s(B.LOG))), null)
+  assert.equal(craft(g2(s(B.PLANKS), s(B.PLANKS), s(B.PLANKS), s(B.DIRT))), null)
+  assert.equal(craft(g2()), null)
+  assert.equal(craft([[s(B.LOG)]]), null)
+  assert.equal(craft([[s(B.LOG), null, null], [null, null, null]]), null)
+})
+
+test('crafting: consumeIngredients é pura', () => {
+  const grid = g2(s(B.PLANKS, 3), s(B.PLANKS, 1), null, s(B.PLANKS, 2))
+  const snap = JSON.stringify(grid)
+  assert.deepEqual(consumeIngredients(grid), g2(s(B.PLANKS, 2), null, null, s(B.PLANKS, 1)))
+  assert.equal(JSON.stringify(grid), snap)
+})
+
+// mining
+test('mining: canHarvest', () => {
+  assert.equal(canHarvest(B.DIRT, null), true)
+  assert.equal(canHarvest(B.LOG, B.STONE_PICKAXE), true)
+  assert.equal(canHarvest(B.STONE, null), false)
+  assert.equal(canHarvest(B.STONE, B.STICK), false)
+  assert.equal(canHarvest(B.STONE, B.WOODEN_PICKAXE), true)
+  assert.equal(canHarvest(B.COAL_ORE, B.STONE_PICKAXE), true)
+  assert.equal(canHarvest(B.IRON_ORE, B.WOODEN_PICKAXE), false)
+  assert.equal(canHarvest(B.IRON_ORE, B.STONE_PICKAXE), true)
+})
+
+test('mining: breakTime', () => {
+  near(breakTime(B.DIRT, null), 0.75)
+  near(breakTime(B.STONE, null), 7.5)
+  near(breakTime(B.STONE, B.WOODEN_PICKAXE), 1.125)
+  near(breakTime(B.STONE, B.STONE_PICKAXE), 0.5625)
+  near(breakTime(B.COBBLESTONE, B.STONE_PICKAXE), 0.75)
+  near(breakTime(B.LOG, B.STONE_PICKAXE), 3)
+  near(breakTime(B.LEAVES, null), 0.3)
+  near(breakTime(B.IRON_ORE, B.STONE_PICKAXE), 1.125)
+  assert.equal(breakTime(B.BEDROCK, B.STONE_PICKAXE), Infinity)
+  assert.equal(breakTime(B.WATER, null), Infinity)
+})
+
+test('mining: dropsFor', () => {
+  assert.deepEqual(dropsFor(B.GRASS, null), [{ id: B.DIRT, count: 1 }])
+  assert.deepEqual(dropsFor(B.STONE, B.WOODEN_PICKAXE), [{ id: B.COBBLESTONE, count: 1 }])
+  assert.deepEqual(dropsFor(B.STONE, null), [])
+  assert.deepEqual(dropsFor(B.COAL_ORE, B.WOODEN_PICKAXE), [{ id: B.COAL, count: 1 }])
+  assert.deepEqual(dropsFor(B.IRON_ORE, B.STONE_PICKAXE), [{ id: B.IRON_ORE, count: 1 }])
+  assert.deepEqual(dropsFor(B.LEAVES, null), [])
+  assert.deepEqual(dropsFor(B.GLASS, B.STONE_PICKAXE), [])
+  assert.deepEqual(dropsFor(B.BEDROCK, B.STONE_PICKAXE), [])
+})
+
+// daynight
+test('daynight: marcos do dia', () => {
+  assert.equal(DAY_LENGTH, 1200)
+  const at = t => skyState(t * 1200)
+  near(at(0.25).daylight, 1)
+  near(at(0.75).daylight, 0.15)
+  near(at(0.5).sunAngle, Math.PI)
+  assert.equal(at(0.25).isNight, false)
+  assert.equal(at(0.5).isNight, false)
+  assert.equal(at(0.6).isNight, true)
+  assert.equal(at(0).isNight, false)
+})
+
+test('daynight: t com volta e negativos', () => {
+  near(skyState(1500).t, 0.25)
+  near(skyState(-300).t, 0.75)
+  near(skyState(-1200).t, 0)
+  assert.ok(skyState(-1200).t >= 0 && skyState(-1200).t < 1)
+  for (let sec = -5000; sec < 5000; sec += 37) {
+    const st = skyState(sec)
+    assert.ok(st.t >= 0 && st.t < 1)
+    assert.ok(st.daylight >= 0.15 - 1e-9 && st.daylight <= 1 + 1e-9)
+    assert.ok(Math.abs(skyState(sec + 1).daylight - st.daylight) < 0.05)
+  }
+})

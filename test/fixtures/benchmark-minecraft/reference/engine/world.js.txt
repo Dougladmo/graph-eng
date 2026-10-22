@@ -1,0 +1,109 @@
+// Referência do benchmark.
+import { AIR, BEDROCK, GRASS, DIRT, STONE, SAND, WATER, LOG, LEAVES, COAL_ORE, IRON_ORE, isSolid } from './blocks.js'
+import { createNoise2D, createRng, hashSeed } from './noise.js'
+
+export const CHUNK_SIZE = 16
+export const WORLD_HEIGHT = 64
+export const SEA_LEVEL = 20
+
+export const chunkIndex = (x, y, z) => x + z * 16 + y * 256
+
+const heightFn = seed => {
+  const noise = createNoise2D(seed)
+  return (x, z) => Math.max(SEA_LEVEL - 8, Math.min(SEA_LEVEL + 20, Math.round(26 + noise(x / 40, z / 40) * 16)))
+}
+
+export function generateChunk(seed, cx, cz) {
+  const data = new Uint8Array(16 * 64 * 16)
+  const height = heightFn(seed)
+  const tops = []
+  for (let lx = 0; lx < 16; lx++) for (let lz = 0; lz < 16; lz++) {
+    const h = height(cx * 16 + lx, cz * 16 + lz)
+    const top = h > SEA_LEVEL + 1 ? GRASS : SAND
+    const under = top === GRASS ? DIRT : SAND
+    data[chunkIndex(lx, 0, lz)] = BEDROCK
+    for (let y = 1; y <= h; y++) data[chunkIndex(lx, y, lz)] = y === h ? top : y >= h - 3 ? under : STONE
+    for (let y = h + 1; y <= SEA_LEVEL; y++) data[chunkIndex(lx, y, lz)] = WATER
+    tops.push([lx, lz, h, top])
+  }
+  const rng = createRng(`${hashSeed(seed)}:${cx}:${cz}`)
+  let coal = 0
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] !== STONE) continue
+    const y = Math.floor(i / 256), r = rng()
+    if (y <= 24 && r < 0.008) data[i] = IRON_ORE
+    else if (y <= 40 && r < 0.02) { data[i] = COAL_ORE; coal++ }
+  }
+  if (coal === 0) data[chunkIndex(8, 5, 8)] = COAL_ORE
+  for (const [lx, lz, h, top] of tops) {
+    if (top !== GRASS || lx < 2 || lx > 13 || lz < 2 || lz > 13 || rng() >= 0.015) continue
+    const trunk = 4 + Math.floor(rng() * 3)
+    const topY = h + trunk
+    for (let y = h + 1; y <= topY; y++) data[chunkIndex(lx, y, lz)] = LOG
+    for (let dy = -2; dy <= 1; dy++) {
+      const r = dy === 1 ? 1 : 2
+      for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+        const i = chunkIndex(lx + dx, topY + dy, lz + dz)
+        if (data[i] === AIR) data[i] = LEAVES
+      }
+    }
+  }
+  return data
+}
+
+const floorDiv = (a, b) => Math.floor(a / b)
+const key = (x, y, z) => `${x},${y},${z}`
+
+export function createWorld(seed, options = {}) {
+  return { seed, flat: options.flat === true, chunks: new Map(), edits: new Map() }
+}
+
+function baseChunk(world, cx, cz) {
+  const k = `${cx},${cz}`
+  let chunk = world.chunks.get(k)
+  if (!chunk) {
+    if (world.flat) {
+      chunk = new Uint8Array(16 * 64 * 16)
+      for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) chunk[chunkIndex(x, 0, z)] = BEDROCK
+    } else chunk = generateChunk(world.seed, cx, cz)
+    world.chunks.set(k, chunk)
+  }
+  return chunk
+}
+
+function generatedAt(world, x, y, z) {
+  const cx = floorDiv(x, 16), cz = floorDiv(z, 16)
+  return baseChunk(world, cx, cz)[chunkIndex(x - cx * 16, y, z - cz * 16)]
+}
+
+export function getBlockAt(world, x, y, z) {
+  if (y < 0) return BEDROCK
+  if (y >= WORLD_HEIGHT) return AIR
+  const edit = world.edits.get(key(x, y, z))
+  return edit === undefined ? generatedAt(world, x, y, z) : edit
+}
+
+export function setBlockAt(world, x, y, z, id) {
+  if (!Number.isInteger(y) || y < 0 || y >= WORLD_HEIGHT) throw new RangeError(`y fora do mundo: ${y}`)
+  if (generatedAt(world, x, y, z) === id) world.edits.delete(key(x, y, z))
+  else world.edits.set(key(x, y, z), id)
+}
+
+export function getSurfaceHeight(world, x, z) {
+  for (let y = WORLD_HEIGHT - 1; y >= 0; y--) if (isSolid(getBlockAt(world, x, y, z))) return y
+  return -1
+}
+
+export function serializeWorld(world) {
+  const edits = [...world.edits].map(([k, id]) => [...k.split(',').map(Number), id])
+  edits.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2])
+  return JSON.stringify({ version: 1, seed: world.seed, flat: world.flat, edits })
+}
+
+export function deserializeWorld(json) {
+  const data = JSON.parse(json)
+  if (data.version !== 1) throw new Error(`versão de save não suportada: ${data.version}`)
+  const world = createWorld(data.seed, { flat: data.flat })
+  for (const [x, y, z, id] of data.edits) world.edits.set(key(x, y, z), id)
+  return world
+}

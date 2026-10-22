@@ -1,0 +1,23 @@
+// Referência do benchmark.
+import { getBlock, WOODEN_PICKAXE, STONE_PICKAXE } from './blocks.js'
+
+const isPickaxe = t => t === WOODEN_PICKAXE || t === STONE_PICKAXE
+
+export function canHarvest(blockId, toolId) {
+  const tool = getBlock(blockId).tool
+  if (tool === null) return true
+  if (tool === 'pickaxe') return isPickaxe(toolId)
+  return toolId === STONE_PICKAXE
+}
+
+export function breakTime(blockId, toolId) {
+  const block = getBlock(blockId)
+  if (block.hardness === Infinity) return Infinity
+  const speed = block.tool !== null && isPickaxe(toolId) ? (toolId === STONE_PICKAXE ? 4 : 2) : 1
+  return (block.hardness * (canHarvest(blockId, toolId) ? 1.5 : 5)) / speed
+}
+
+export function dropsFor(blockId, toolId) {
+  const drop = getBlock(blockId).drop
+  return drop !== null && canHarvest(blockId, toolId) ? [{ id: drop, count: 1 }] : []
+}

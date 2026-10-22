@@ -1,0 +1,5 @@
+// Contrato em task.md. Motor puro: sem three, react nem DOM.
+
+export function raycast() {
+  throw new Error('não implementado: raycast')
+}

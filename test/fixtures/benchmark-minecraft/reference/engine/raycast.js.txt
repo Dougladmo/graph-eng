@@ -1,0 +1,30 @@
+// Referência do benchmark.
+import { AIR, WATER } from './blocks.js'
+import { getBlockAt } from './world.js'
+
+const isTarget = id => id !== AIR && id !== WATER
+
+export function raycast(world, origin, direction, maxDistance) {
+  const len = Math.hypot(direction[0], direction[1], direction[2])
+  if (len === 0) return null
+  const d = direction.map(v => v / len)
+  const pos = origin.map(Math.floor)
+  const first = getBlockAt(world, pos[0], pos[1], pos[2])
+  if (isTarget(first)) return { x: pos[0], y: pos[1], z: pos[2], block: first, face: [0, 0, 0], distance: 0 }
+  const step = d.map(Math.sign)
+  const tDelta = d.map(v => (v === 0 ? Infinity : Math.abs(1 / v)))
+  const tMax = d.map((v, a) => (v > 0 ? (pos[a] + 1 - origin[a]) / v : v < 0 ? (pos[a] - origin[a]) / v : Infinity))
+  for (;;) {
+    const a = tMax[0] < tMax[1] ? (tMax[0] < tMax[2] ? 0 : 2) : (tMax[1] < tMax[2] ? 1 : 2)
+    const t = tMax[a]
+    if (t > maxDistance) return null
+    pos[a] += step[a]
+    tMax[a] += tDelta[a]
+    const block = getBlockAt(world, pos[0], pos[1], pos[2])
+    if (isTarget(block)) {
+      const face = [0, 0, 0]
+      face[a] = -step[a]
+      return { x: pos[0], y: pos[1], z: pos[2], block, face, distance: t }
+    }
+  }
+}

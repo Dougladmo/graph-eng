@@ -1,0 +1,12 @@
+{
+  "reportedStatus": "PARTIAL",
+  "externalStatus": "PASS",
+  "exitCode": 0,
+  "expectedPass": 10,
+  "tap": {
+    "pass": 10,
+    "fail": 0
+  },
+  "durationMs": 88,
+  "falseDone": false
+}

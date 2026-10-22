@@ -1,0 +1,37 @@
+// Referência do benchmark.
+import { AIR, isTransparent } from './blocks.js'
+import { getBlockAt } from './world.js'
+
+const FACES = [
+  { n: [1, 0, 0], c: [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]] },
+  { n: [-1, 0, 0], c: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]] },
+  { n: [0, 1, 0], c: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]] },
+  { n: [0, -1, 0], c: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
+  { n: [0, 0, 1], c: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
+  { n: [0, 0, -1], c: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]] },
+]
+const CORNER_UV = [[0, 0], [1, 0], [1, 1], [0, 1]]
+
+export function buildChunkMesh(world, cx, cz) {
+  const out = { opaque: { p: [], n: [], u: [], i: [] }, transparent: { p: [], n: [], u: [], i: [] } }
+  for (let y = 0; y < 64; y++) for (let lz = 0; lz < 16; lz++) for (let lx = 0; lx < 16; lx++) {
+    const x = cx * 16 + lx, z = cz * 16 + lz
+    const id = getBlockAt(world, x, y, z)
+    if (id === AIR) continue
+    const target = isTransparent(id) ? out.transparent : out.opaque
+    for (const face of FACES) {
+      const nb = getBlockAt(world, x + face.n[0], y + face.n[1], z + face.n[2])
+      if (!(nb === AIR || (isTransparent(nb) && nb !== id))) continue
+      const base = target.p.length / 3
+      const u0 = (id % 16) / 16, v0 = Math.floor(id / 16) / 16
+      face.c.forEach((c, k) => {
+        target.p.push(x + c[0], y + c[1], z + c[2])
+        target.n.push(...face.n)
+        target.u.push(u0 + CORNER_UV[k][0] / 16, v0 + CORNER_UV[k][1] / 16)
+      })
+      target.i.push(base, base + 1, base + 2, base, base + 2, base + 3)
+    }
+  }
+  const pack = m => ({ positions: new Float32Array(m.p), normals: new Float32Array(m.n), uvs: new Float32Array(m.u), indices: new Uint32Array(m.i) })
+  return { opaque: pack(out.opaque), transparent: pack(out.transparent) }
+}
