@@ -680,6 +680,24 @@ test('advisedExecutor Claude roda no Sonnet com --advisor opus; executor e papé
   assert.equal(graphExecutor[graphExecutor.indexOf('--model') + 1], 'haiku')
 })
 
+// Benchmark do fluxo advisor com Haiku (23/10): só o executor contínuo troca de modelo; plano e revisão continuam iguais.
+test('advisedExecutorModel troca só o modelo do executor contínuo e mantém o --advisor opus', async t => {
+  const runDir = await tempRun(t)
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
+  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn }, advisedExecutorModel: 'haiku' })
+  await host.wait(await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema }))
+  const args = fake.calls.at(-1).args
+  assert.equal(args[args.indexOf('--model') + 1], 'haiku')
+  assert.equal(args[args.indexOf('--advisor') + 1], 'opus')
+  for (const [role, model] of [['planner', 'sonnet'], ['planReviewer', 'opus']]) {
+    await host.wait(await host.spawn({ role, prompt: 'x', schema }))
+    const roleArgs = fake.calls.at(-1).args
+    assert.equal(roleArgs[roleArgs.indexOf('--model') + 1], model, role)
+  }
+  assert.throws(() => createHost({ host: 'claude', cwd: runDir, runDir, advisedExecutorModel: 'opus' }), /advisedExecutorModel/)
+  assert.throws(() => createHost({ host: 'codex', cwd: runDir, runDir, advisedExecutorModel: 'haiku' }), /advisedExecutorModel/)
+})
+
 test('executor de escrita ganha Bash só nos comandos aprovados; leitura e papéis de revisão seguem sem shell', async t => {
   const runDir = await tempRun(t)
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })

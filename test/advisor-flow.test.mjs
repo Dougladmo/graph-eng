@@ -138,6 +138,22 @@ test('--flow advisor só vale com implemente e tarefa; graph é o padrão e não
   assert.throws(() => parseGrapheng(['implemente', 'x', '--flow=advisor']), /não é aceito/)
 })
 
+test('--executor haiku troca o modelo do executor contínuo e só vale com --flow advisor', async t => {
+  assert.deepEqual(parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--executor', 'haiku']), { command: 'implemente', task: 'faça', flow: 'advisor', executor: 'haiku' })
+  assert.throws(() => parseGrapheng(['implemente', 'faça', '--executor', 'haiku']), /só vale com --flow advisor/)
+  assert.throws(() => parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--executor', 'opus']), /sonnet ou haiku/)
+  assert.throws(() => parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--executor', 'haiku', '--executor', 'haiku']), /repetido/)
+  const cwd = await tempDir(t)
+  const seen = []
+  await executeGrapheng({
+    invocation: ['implemente', 'faça o jogo', '--flow', 'advisor', '--executor', 'haiku'], cwd, host: 'claude',
+    configImpl: async () => ({ effort: 'medium', effortSource: 'default' }),
+    hostFactory: options => ({ options }),
+    advisorFlowImpl: async options => { seen.push(options); return { flow: 'advisor', status: 'done' } },
+  })
+  assert.equal(seen[0].host.options.advisedExecutorModel, 'haiku')
+})
+
 test('executeGrapheng com --flow advisor roda o fluxo advisor e não o motor de grafo', async t => {
   const cwd = await tempDir(t)
   const seen = []

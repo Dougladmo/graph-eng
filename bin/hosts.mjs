@@ -22,6 +22,8 @@ const MODEL_BY_ROLE = {
 // Fluxo advisor (--flow advisor): o executor faz a implementação inteira numa sessão e consulta o modelo forte quando
 // trava, na mesma sessão (--advisor do Claude Code, ferramenta de servidor que vê a transcrição inteira).
 const ADVISOR_BY_ROLE = { claude: { advisedExecutor: 'opus' } }
+// Modelos aceitos no executor contínuo (--executor do fluxo advisor). O Opus fica de fora: ele já é o advisor.
+const ADVISED_EXECUTOR_MODELS = new Set(['sonnet', 'haiku'])
 const WRITE_SHELL_ROLES = new Set(['executor', 'advisedExecutor'])
 // Comando de check liberado ao executor: texto exato, sem metacaractere de shell nem curinga de permissão.
 const ALLOW_COMMAND = /^[A-Za-z0-9_./@=+:,-]+( [A-Za-z0-9_./@=+:,-]+)*$/
@@ -238,8 +240,9 @@ function validateExperimentalPolicy(policy, host) {
  */
 // C14: onTransportPaths({ id, files, phase: 'created' | 'removed' }) recebe os nomes exatos (relativos à runDir) dos arquivos de transporte
 // do codex. 'created' roda antes de gravar o schema; 'removed' roda depois da limpeza, e o dono exige que os caminhos tenham sumido.
-export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, onTransportPaths = null, experimentalPolicy = null }) {
+export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, onTransportPaths = null, experimentalPolicy = null, advisedExecutorModel = null }) {
   if (!MODEL_BY_ROLE[host]) throw new TypeError(`Host desconhecido: ${host}`)
+  if (advisedExecutorModel !== null && (host !== 'claude' || !ADVISED_EXECUTOR_MODELS.has(advisedExecutorModel))) throw new TypeError('advisedExecutorModel aceita somente sonnet ou haiku, no host claude')
   if (experimentalPolicy) validateExperimentalPolicy(experimentalPolicy, host)
   if (!cwd || !runDir) throw new TypeError('cwd e runDir são obrigatórios')
   let eventSeq = 0
@@ -253,7 +256,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const role = roleFor(request.role)
     const model = experimentalPolicy
       ? (Object.hasOwn(experimentalPolicy.models, role) ? experimentalPolicy.models[role] : undefined)
-      : MODEL_BY_ROLE[host][role]
+      : role === 'advisedExecutor' && advisedExecutorModel ? advisedExecutorModel : MODEL_BY_ROLE[host][role]
     if (experimentalPolicy && !model) throw new HostError('EXPERIMENT_ROLE_UNMAPPED', `Papel fora do mapa experimental: ${request.role}`)
     if (!model) throw new HostError('UNKNOWN_ROLE', `Papel desconhecido: ${request.role}`)
     if (request.model && request.model !== model) throw new HostError('MODEL_MISMATCH', `Modelo do papel ${request.role} deve ser ${model}`)
