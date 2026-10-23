@@ -1,0 +1,67 @@
+{
+  "id": "bench-claude-happy-20261020172233-a14f",
+  "host": "claude",
+  "variant": "adaptive",
+  "scenario": "happy",
+  "simulated": false,
+  "attemptId": "7e73e5a1-7515-4553-bbef-3e22dc647be4",
+  "manifestSha256": "005918d0f6028d6ffd8288e427ac93596a03b030741dd5144758971c83543651",
+  "policy": "produto atual (createHost sem política)",
+  "startedAt": "2026-10-20T17:41:49.698Z",
+  "endedAt": "2026-10-20T17:44:40.747Z",
+  "status": "BLOCK",
+  "attempted": true,
+  "block": {
+    "code": "plan_review_failed_or_invalid"
+  },
+  "reason": "plan_review_failed_or_invalid",
+  "reportedStatus": "BLOCKED",
+  "externalStatus": "FAIL",
+  "falseDone": false,
+  "complete": false,
+  "summary": {
+    "total": 2,
+    "byRole": {
+      "planner": 1,
+      "planReviewer": 1
+    },
+    "completed": 2,
+    "failed": 0,
+    "inflight": 0,
+    "complete": true,
+    "fields": {
+      "requestedModel": {
+        "value": [
+          "opus"
+        ],
+        "coverage": "2/2"
+      },
+      "effectiveModel": {
+        "value": [
+          "claude-opus-5-5"
+        ],
+        "coverage": "2/2"
+      },
+      "usage": {
+        "coverage": "2/2"
+      },
+      "inputTokens": {
+        "value": null,
+        "coverage": "0/2"
+      },
+      "outputTokens": {
+        "value": null,
+        "coverage": "0/2"
+      }
+    }
+  },
+  "workspace": "/Users/douglas/.claude/graph-eng/benchmarks/bench-claude-happy-20261020172233-a14f/adaptive-7e73e5a1/workspace",
+  "durationMs": {
+    "engine": 170851,
+    "evaluator": 114
+  },
+  "engineMs": 170851,
+  "evaluatorMs": 114,
+  "exception": null,
+  "metricErrors": []
+}

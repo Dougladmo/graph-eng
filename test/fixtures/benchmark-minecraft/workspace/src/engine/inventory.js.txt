@@ -1,0 +1,29 @@
+// Contrato em task.md. Motor puro: sem three, react nem DOM.
+
+export function createInventory() {
+  throw new Error('não implementado: createInventory')
+}
+
+export function addItem() {
+  throw new Error('não implementado: addItem')
+}
+
+export function removeFromSlot() {
+  throw new Error('não implementado: removeFromSlot')
+}
+
+export function selectSlot() {
+  throw new Error('não implementado: selectSlot')
+}
+
+export function scrollSelection() {
+  throw new Error('não implementado: scrollSelection')
+}
+
+export function moveStack() {
+  throw new Error('não implementado: moveStack')
+}
+
+export function selectedItem() {
+  throw new Error('não implementado: selectedItem')
+}

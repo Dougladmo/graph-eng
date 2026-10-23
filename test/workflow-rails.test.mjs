@@ -139,9 +139,10 @@ test('orçamento low reserva o esqueleto e todos os gates', async () => {
   const { calls, result } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'low', plan }, defaultScript())
   assert.equal(result.status, 'done')
   assert.deepEqual(result.stats.dropped, [])
-  for (const gate of ['plan-review:r1', 'design-review:r1', 'verify:I1', 'critic:r1', 'polish:1', 'synth']) assert.ok(calls.includes(gate), `${gate} não foi reservado`)
-  assert.equal(result.budget.limitsByRole.executor, 6)
-  assert.equal(result.budget.limitsByRole.verifier, 6)
+  for (const gate of ['plan-review:r1', 'design-review:r1', 'verify:I1', 'critic:r1', 'synth']) assert.ok(calls.includes(gate), `${gate} não foi reservado`)
+  assert.equal(calls.includes('polish:1'), false, 'polish só roda no effort max')
+  assert.equal(result.budget.limitsByRole.executor, 7) // inclui o reparo próprio do nó de código
+  assert.equal(result.budget.limitsByRole.verifier, 8)
 })
 
 test('orçamento: 2 implementações paralelas (arquivos disjuntos) reservam verify para as duas', async () => {
@@ -232,8 +233,8 @@ test('polidores: 3 implementações prontas com arquivos disjuntos geram 2 rótu
     { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['a.js'] },
     { id: 'I2', kind: 'implement', title: 'i2', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['b.js'] },
     { id: 'I3', kind: 'implement', title: 'i3', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['c.js'] },
-  ])
-  const { calls } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan }, defaultScript())
+  ], { effort: { level: 'max', why: 'polish só no max' } })
+  const { calls } = await runWorkflow({ ...BASE, mode: 'implement', effort: 'max', plan }, defaultScript())
   const polishCalls = calls.filter((c) => c.startsWith('polish:'))
   assert.equal(polishCalls.length, 2, `esperado 2 polidores (ceil(2*3/3)), veio ${polishCalls.length}: ${polishCalls}`)
   assert.ok(calls.indexOf('synth') > calls.indexOf(polishCalls[polishCalls.length - 1]))
@@ -242,7 +243,7 @@ test('polidores: 3 implementações prontas com arquivos disjuntos geram 2 rótu
 test('polidor: prompt não usa git checkout, cita só as refs de backup do supervisor e não manda copiar para RUN_DIR', async () => {
   const plan = planWith([
     { id: 'I1', kind: 'implement', title: 'i1', brief: 'b', deps: [], risk: 'low', acceptance: ['a'], files: ['a.js'] },
-  ])
+  ], { effort: { level: 'max', why: 'polish só no max' } })
   let polishPrompt = null
   const routes = {
     polish: (label, prompt) => {
@@ -250,7 +251,7 @@ test('polidor: prompt não usa git checkout, cita só as refs de backup do super
       return { status: 'done', summary: label + ' ok', confidence: 'high', checks: [] }
     },
   }
-  await runWorkflow({ ...BASE, mode: 'implement', effort: 'medium', plan }, defaultScript(routes))
+  await runWorkflow({ ...BASE, mode: 'implement', effort: 'max', plan }, defaultScript(routes))
   assert.ok(polishPrompt, 'rótulo polish:1 não disparou')
   assert.ok(!/git checkout/.test(polishPrompt), 'prompt do polidor ainda manda git checkout')
   assert.ok(!/git (restore|stash|reset)/.test(polishPrompt), 'prompt do polidor ainda manda git restore/stash/reset')

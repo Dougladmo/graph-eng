@@ -1,0 +1,8 @@
+// Referência do benchmark.
+export const DAY_LENGTH = 1200
+
+export function skyState(seconds) {
+  let t = (((seconds / DAY_LENGTH) % 1) + 1) % 1
+  if (t >= 1) t = 0
+  return { t, sunAngle: 2 * Math.PI * t, daylight: 0.575 + 0.425 * Math.sin(2 * Math.PI * t), isNight: t > 0.5 && t < 1 }
+}

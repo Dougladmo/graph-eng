@@ -1,0 +1,82 @@
+{
+  "id": "bench-claude-faturamento-20261021201806-6fac",
+  "host": "claude",
+  "variant": "single-agent",
+  "scenario": "faturamento",
+  "simulated": false,
+  "attemptId": "1ce7b425-2abc-4cf7-8a76-7ba5c08c608f",
+  "manifestSha256": "25281cb501b1e52a9b384339ff93fdc72f47c52d141ab0808a7bff6f85ae9654",
+  "policy": "agente único no modelo forte (opus)",
+  "startedAt": "2026-10-21T20:30:17.646Z",
+  "endedAt": "2026-10-21T20:32:07.099Z",
+  "status": "PASS",
+  "attempted": true,
+  "block": null,
+  "reason": null,
+  "reportedStatus": "DONE",
+  "externalStatus": "PASS",
+  "falseDone": false,
+  "complete": true,
+  "summary": {
+    "total": 1,
+    "byRole": {
+      "singleAgent": 1
+    },
+    "completed": 1,
+    "failed": 0,
+    "inflight": 0,
+    "complete": true,
+    "fields": {
+      "requestedModel": {
+        "value": [
+          "opus"
+        ],
+        "coverage": "1/1"
+      },
+      "effectiveModel": {
+        "value": [
+          "claude-opus-5-5"
+        ],
+        "coverage": "1/1"
+      },
+      "usage": {
+        "coverage": "1/1"
+      },
+      "inputTokens": {
+        "value": 106784,
+        "coverage": "1/1"
+      },
+      "outputTokens": {
+        "value": 12703,
+        "coverage": "1/1"
+      },
+      "maxCallInputTokens": {
+        "value": 106784,
+        "coverage": "1/1"
+      },
+      "costUSD": {
+        "value": 0.4896582,
+        "coverage": "1/1"
+      }
+    }
+  },
+  "workspace": "/var/folders/07/d6zcjgg913j4y41bqgrd_6bh0000gn/T/graph-eng-benchmarks/bench-claude-faturamento-20261021201806-6fac/single-agent-1ce7b425/workspace",
+  "durationMs": {
+    "engine": 108656,
+    "evaluator": 616
+  },
+  "engineMs": 108656,
+  "evaluatorMs": 616,
+  "exception": null,
+  "metricErrors": [],
+  "checks": [
+    {
+      "round": 1,
+      "exitCode": 0,
+      "tap": {
+        "pass": 5,
+        "fail": 0
+      }
+    }
+  ]
+}

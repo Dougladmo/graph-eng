@@ -1,0 +1,34 @@
+function erro(code, message) {
+  return Object.assign(new Error(message), { code })
+}
+
+const VALOR = /^(-)?(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?$/
+
+export function paraCentavos(valor) {
+  if (typeof valor !== 'string') throw erro('VALOR_INVALIDO', 'valor precisa ser string pt-BR')
+  const match = VALOR.exec(valor.trim())
+  if (!match) throw erro('VALOR_INVALIDO', `valor inválido: ${valor}`)
+  const inteiro = Number(match[2].replaceAll('.', ''))
+  const fracao = Number((match[3] ?? '').padEnd(2, '0'))
+  const centavos = inteiro * 100 + fracao
+  return match[1] && centavos !== 0 ? -centavos : centavos
+}
+
+export function arredondar(numerador, denominador) {
+  return Math.round(numerador / denominador)
+}
+
+function partes(centavos) {
+  const abs = Math.abs(centavos)
+  return { sinal: centavos < 0 ? '-' : '', inteiro: String(Math.floor(abs / 100)), fracao: String(abs % 100).padStart(2, '0') }
+}
+
+export function formatarBRL(centavos) {
+  const { sinal, inteiro, fracao } = partes(centavos)
+  return `${sinal}R$ ${inteiro.replace(/\B(?=(\d{3})+$)/g, '.')},${fracao}`
+}
+
+export function formatarDecimal(centavos) {
+  const { sinal, inteiro, fracao } = partes(centavos)
+  return `${sinal}${inteiro},${fracao}`
+}

@@ -1,0 +1,13 @@
+// Contrato em task.md. Motor puro: sem three, react nem DOM.
+
+export function canHarvest() {
+  throw new Error('não implementado: canHarvest')
+}
+
+export function breakTime() {
+  throw new Error('não implementado: breakTime')
+}
+
+export function dropsFor() {
+  throw new Error('não implementado: dropsFor')
+}

@@ -6,12 +6,19 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { runGraph } from './graph-run.mjs'
+import { createHost } from './hosts.mjs'
+import { runAdvisorFlow } from './advisor-flow.mjs'
 import { NODE_CHECK_MAPPING_HASH, NODE_CHECK_POLICY_ID } from './node-check-policy.mjs'
 import { defaultConfigPath, readConfig, resolveConfig, validateConfig } from './config.mjs'
 
 const PLUGIN_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const REMOVED = new Set(['--ceiling', '--economy', '--width', '--model', '--planner-model', '--reviewer-model', '--executor-model', '--max-rounds', '--max-repairs', '--plan-gate', '--lean', '--high', '--manual', '--auto', '--max-agents'])
 const EFFORTS = new Set(['low', 'medium', 'max'])
+const ADAPTIVE = new Set(['on', 'off'])
+// --flow advisor: sessão contínua do executor com o modelo forte de advisor (bin/advisor-flow.mjs). graph é o padrão.
+const FLOWS = new Set(['graph', 'advisor'])
+// --executor: modelo do executor contínuo do fluxo advisor. Plano e revisão não mudam.
+const EXECUTORS = new Set(['sonnet', 'haiku'])
 const COMMANDS = ['plan', 'clarify', 'tasks', 'implemente', 'init']
 const TASK_FREE_COMMANDS = new Set(['clarify', 'tasks'])
 // Tabela do brief (I1): cada comando vira exatamente um runGraph com este pipeline.
@@ -31,6 +38,9 @@ export function parseGrapheng(argv) {
   const [command, ...tail] = argv
   if (!COMMANDS.includes(command)) throw new Error(command === 'implement' ? 'comando desconhecido; use implemente' : `comando desconhecido; use ${COMMANDS.join(', ')}`)
   let effort
+  let adaptive
+  let flow
+  let executor
   const taskTokens = []
   let literal = false
   for (let i = 0; i < tail.length; i++) {
@@ -47,6 +57,33 @@ export function parseGrapheng(argv) {
       effort = value
       continue
     }
+    if (!literal && token.startsWith('--adaptive=')) {
+      const value = token.slice('--adaptive='.length)
+      throw new Error(`--adaptive=${value} não é aceito; use --adaptive ${value}`)
+    }
+    if (!literal && token === '--adaptive') {
+      if (adaptive !== undefined) throw new Error('--adaptive repetido')
+      const value = tail[++i]
+      if (!ADAPTIVE.has(value)) throw new Error('--adaptive aceita somente on ou off')
+      adaptive = value
+      continue
+    }
+    if (!literal && token.startsWith('--flow=')) throw new Error(`--flow=${token.slice('--flow='.length)} não é aceito; use --flow ${token.slice('--flow='.length)}`)
+    if (!literal && token === '--flow') {
+      if (flow !== undefined) throw new Error('--flow repetido')
+      const value = tail[++i]
+      if (!FLOWS.has(value)) throw new Error('--flow aceita somente graph ou advisor')
+      flow = value
+      continue
+    }
+    if (!literal && token.startsWith('--executor=')) throw new Error(`--executor=${token.slice('--executor='.length)} não é aceito; use --executor ${token.slice('--executor='.length)}`)
+    if (!literal && token === '--executor') {
+      if (executor !== undefined) throw new Error('--executor repetido')
+      const value = tail[++i]
+      if (!EXECUTORS.has(value)) throw new Error('--executor aceita somente sonnet ou haiku')
+      executor = value
+      continue
+    }
     if (!literal && token.startsWith('-')) {
       const flag = token.split('=')[0]
       if (REMOVED.has(flag)) throw new Error(`${flag}: opção removida`)
@@ -55,18 +92,21 @@ export function parseGrapheng(argv) {
     }
     taskTokens.push(token)
   }
+  if (flow === 'advisor' && command !== 'implemente') throw new Error('--flow advisor só vale com implemente')
+  if (executor !== undefined && flow !== 'advisor') throw new Error('--executor só vale com --flow advisor')
   if (command === 'init') {
-    if (taskTokens.length || effort !== undefined) throw new Error('init não recebe tarefa nem esforço')
+    if (taskTokens.length || effort !== undefined || adaptive !== undefined) throw new Error('init não recebe tarefa, esforço nem --adaptive')
     return { command }
   }
   if (TASK_FREE_COMMANDS.has(command)) {
     if (taskTokens.length) throw new Error('clarify/tasks usam o plano aprovado do workspace; não recebem tarefa')
-    return { command, ...(effort ? { effort } : {}) }
+    return { command, ...(effort ? { effort } : {}), ...(adaptive ? { adaptive } : {}) }
   }
   const task = taskTokens.join(' ')
   if (taskTokens.length && !task.trim()) throw new Error('tarefa vazia')
   if (command === 'plan' && !task) throw new Error('plan exige uma tarefa')
-  return { command, ...(task ? { task } : {}), ...(effort ? { effort } : {}) }
+  if (flow === 'advisor' && !task) throw new Error('--flow advisor exige a tarefa')
+  return { command, ...(task ? { task } : {}), ...(effort ? { effort } : {}), ...(adaptive ? { adaptive } : {}), ...(flow === 'advisor' ? { flow } : {}), ...(executor ? { executor } : {}) }
 }
 
 // Valida a forma das respostas de clarify. Não compara questionSetId com o slot: isso só entra no passo R.
@@ -149,7 +189,7 @@ async function startPanel({ spawnImpl = spawn } = {}) {
   return { status: 'started', url: match[1].replace(/[.,;]+$/, '') }
 }
 
-export async function executeGrapheng({ invocation, clarification, cwd = process.cwd(), host, runGraphImpl = runGraph, startPanelImpl = startPanel, discoverChecksImpl = discoverChecks, configImpl = configuredEffort } = {}) {
+export async function executeGrapheng({ invocation, clarification, cwd = process.cwd(), host, runGraphImpl = runGraph, startPanelImpl = startPanel, discoverChecksImpl = discoverChecks, configImpl = configuredEffort, advisorFlowImpl = runAdvisorFlow, hostFactory = createHost } = {}) {
   const trustedHost = validateHost(host)
   const parsed = parseGrapheng(invocation)
   if (clarification !== undefined) {
@@ -170,7 +210,14 @@ export async function executeGrapheng({ invocation, clarification, cwd = process
   }
   // Tarefa só entra em plan e implemente com tarefa; clarify/tasks/implemente sem tarefa usam o slot único "feature corrente" no runner.
   if (parsed.task) args.task = parsed.task
+  if (parsed.adaptive) args.adaptive = parsed.adaptive
   if (parsed.command === 'clarify' && clarification !== undefined) args.clarification = clarification
+  if (parsed.flow === 'advisor') {
+    const runDir = path.resolve(cwd, args.runDir)
+    const flowHost = hostFactory({ host: trustedHost, cwd, runDir, runId, ...(parsed.executor ? { advisedExecutorModel: parsed.executor } : {}) })
+    const result = await advisorFlowImpl({ host: flowHost, hostName: trustedHost, cwd, task: parsed.task, runDir })
+    return { ...result, runId, runDir }
+  }
   if (parsed.command === 'implemente') {
     const discovery = await discoverChecksImpl(cwd)
     if (discovery.block) return { status: 'blocked', runId, runDir: path.resolve(cwd, args.runDir), feedback: { kind: 'BLOCK', reason: 'trusted_check_discovery_failed', detail: discovery.block, severity: 'high', affectedNodes: [], evidenceIds: [] } }

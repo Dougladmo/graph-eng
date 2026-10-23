@@ -1,0 +1,36 @@
+// Contrato em task.md. Motor puro: sem three, react nem DOM.
+export const AIR = 0
+export const GRASS = 1
+export const DIRT = 2
+export const STONE = 3
+export const SAND = 4
+export const WATER = 5
+export const LOG = 6
+export const LEAVES = 7
+export const PLANKS = 8
+export const COBBLESTONE = 9
+export const BEDROCK = 10
+export const COAL_ORE = 11
+export const IRON_ORE = 12
+export const GLASS = 13
+export const CRAFTING_TABLE = 14
+export const STICK = 100
+export const WOODEN_PICKAXE = 101
+export const STONE_PICKAXE = 102
+export const COAL = 103
+
+export function getBlock() {
+  throw new Error('não implementado: getBlock')
+}
+
+export function getItem() {
+  throw new Error('não implementado: getItem')
+}
+
+export function isSolid() {
+  throw new Error('não implementado: isSolid')
+}
+
+export function isTransparent() {
+  throw new Error('não implementado: isTransparent')
+}

@@ -1,0 +1,27 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { validarPedido } from '../src/validacao.mjs'
+
+const valido = () => ({ id: 'P-1', emissao: '2026-01-06', uf: 'SP', moeda: 'USD', itens: [{ sku: 'X', categoria: 'geral', quantidade: 1, preco: '0' }] })
+
+test('validacao: pedido válido, preço zero e UF que só existe no formato', () => {
+  assert.deepEqual(validarPedido(valido()), [])
+  assert.deepEqual(validarPedido({ ...valido(), uf: 'XX' }), [])
+})
+
+test('validacao: cada regra no seu código', () => {
+  assert.deepEqual(validarPedido({ ...valido(), id: '   ' }), ['ID_AUSENTE'])
+  assert.deepEqual(validarPedido({ ...valido(), emissao: '2026-02-29' }), ['DATA_INVALIDA'])
+  assert.deepEqual(validarPedido({ ...valido(), uf: 'sp' }), ['UF_INVALIDA'])
+  assert.deepEqual(validarPedido({ ...valido(), moeda: 'GBP' }), ['MOEDA_INVALIDA'])
+  assert.deepEqual(validarPedido({ ...valido(), itens: [] }), ['ITENS_VAZIOS'])
+  assert.deepEqual(validarPedido({ ...valido(), itens: [{ sku: 'X', quantidade: 1.5, preco: '1' }] }), ['QUANTIDADE_INVALIDA'])
+  assert.deepEqual(validarPedido({ ...valido(), itens: [{ sku: 'X', quantidade: 1, preco: '-1,00' }] }), ['PRECO_INVALIDO'])
+  assert.deepEqual(validarPedido({ ...valido(), itens: [{ sku: 'X', quantidade: 1, preco: '1,005' }] }), ['PRECO_INVALIDO'])
+})
+
+test('validacao: vários erros na ordem do contrato, cada um uma vez, sem lançar', () => {
+  assert.deepEqual(validarPedido(null), ['ID_AUSENTE', 'DATA_INVALIDA', 'UF_INVALIDA', 'MOEDA_INVALIDA', 'ITENS_VAZIOS'])
+  const pedido = { id: 7, emissao: '2026/01/06', uf: 'S', moeda: 'brl', itens: [{ quantidade: 0, preco: 'x' }, { quantidade: -1, preco: 'y' }] }
+  assert.deepEqual(validarPedido(pedido), ['ID_AUSENTE', 'DATA_INVALIDA', 'UF_INVALIDA', 'MOEDA_INVALIDA', 'QUANTIDADE_INVALIDA', 'PRECO_INVALIDO'])
+})

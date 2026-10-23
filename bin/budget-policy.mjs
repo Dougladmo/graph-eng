@@ -35,12 +35,14 @@ function ancestorsOf(node, byId) {
   return seen
 }
 
-function applyRails(nodes, mode, researchImported = false) {
+// tier fast/standard (fluxo adaptativo): sem pesquisa nem design injetados; quem lê o repo é o planner e o decomposer.
+function applyRails(nodes, mode, researchImported = false, tier = 'full') {
   const changes = []
   const note = (rule, node, action, detail) => changes.push({ rule, node, action, detail })
   const byId = new Map(nodes.map(node => [node.id, node]))
   const round = nodes.length ? nodes[0].round : 1
-  if (!researchImported && !nodes.some(node => node.kind === 'research')) {
+  const lean = tier === 'fast' || tier === 'standard'
+  if (!researchImported && !lean && !nodes.some(node => node.kind === 'research')) {
     let base = byId.get('research-base')
     if (!base) {
       base = { id: 'research-base', kind: 'research', round, title: 'Pesquisa de base', brief: 'Levantar código, docs do repo e docs externas das bibliotecas envolvidas, na versão instalada, para a tarefa.', deps: [], files: [], risk: 'medium', acceptance: ['achados com evidência (file:line ou URL + versão)'], explore: false, injected: true, reason: 'plano sem pesquisa', inputs: [], outputs: [], inputsDeclared: true, outputsDeclared: true }
@@ -48,7 +50,7 @@ function applyRails(nodes, mode, researchImported = false) {
       note('R1', base.id, 'inject', 'research-base injetado na raiz (plano sem pesquisa)')
     }
   }
-  if ((mode === 'implement' || mode === 'architecture') && !nodes.some(node => node.kind === 'design')) {
+  if ((mode === 'implement' || mode === 'architecture') && !lean && !nodes.some(node => node.kind === 'design')) {
     const researchIds = nodes.filter(node => node.kind === 'research').map(node => node.id)
     let base = byId.get('design-base')
     if (!base) {
@@ -87,7 +89,7 @@ function applyRails(nodes, mode, researchImported = false) {
   return changes
 }
 
-export function normalizeBudgetNodes({ list, prefix = '', round = 1, rails = false, fresh = false, mode, existingIds = [], researchImported = false } = {}) {
+export function normalizeBudgetNodes({ list, prefix = '', round = 1, rails = false, fresh = false, mode, existingIds = [], researchImported = false, tier = 'full' } = {}) {
   if (!Array.isArray(list) || !['research', 'architecture', 'implement', 'review'].includes(mode) || !Number.isSafeInteger(round) || round < 1 || typeof prefix !== 'string' || !Array.isArray(existingIds) || existingIds.some(id => typeof id !== 'string')) throw new TypeError('budget_policy_plan_input_invalid')
   const idMap = new Map()
   const existing = new Set(existingIds)
@@ -123,7 +125,7 @@ export function normalizeBudgetNodes({ list, prefix = '', round = 1, rails = fal
     }
     delete node.rawDeps
   }
-  const railChanges = rails ? applyRails(nodes, mode, researchImported === true) : []
+  const railChanges = rails ? applyRails(nodes, mode, researchImported === true, tier) : []
   for (const node of nodes) {
     node.files ??= []
     node.inputs ??= []
@@ -239,7 +241,8 @@ export function allocateBudget({ planVersion, reason, mode, effort, nodes, pendi
   const pendingImpl = pending.filter(node => node.kind === 'implement')
   const polishCalls = mode === 'implement' && pendingImpl.length ? Math.max(1, Math.ceil((2 * pendingImpl.length) / 3)) : 0
   const executorBase = pending.reduce((sum, node) => sum + (node.explore ? 3 : 1), 0) + polishCalls
-  const repairAllowance = 2 - localRepairsUsed
+  // Pool da run (plano, pesquisa, design) + um reparo próprio por nó de código pendente.
+  const repairAllowance = 2 - localRepairsUsed + pendingImpl.length
   const executorRequired = executorBase + repairAllowance
   const deferVerify = node => node.kind !== 'implement' && node.round === 1 && (effort === 'low' || effort === 'medium')
   const verifiedNodes = pending.filter(node => !deferVerify(node))

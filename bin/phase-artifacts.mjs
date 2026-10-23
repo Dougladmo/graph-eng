@@ -151,6 +151,7 @@ export function validateArtifact(artifact, kind) {
   } else if (artifact.critic !== undefined && artifact.critic !== null) {
     return bad('critic')
   }
+  if (artifact.tier !== undefined && !['fast', 'standard', 'full'].includes(artifact.tier)) return bad('tier')
   if (kind === 'tasks' && !isHex64(artifact.planContentHash)) return bad('planContentHash')
   if (kind === 'plan' && artifact.planContentHash !== undefined) return bad('planContentHash')
   if (artifact.contentHash !== contentHashOf(artifact)) return bad('contentHash')
@@ -343,7 +344,7 @@ export async function verifySource({ repo, artifact, readJournal, readMeta }) {
 }
 
 // Ordem fixa de motivos. O primeiro que falha vai em rejected[0]. "absent" significa só que não há slot.
-export async function resolveReuse({ repo, kind, slot, planningKey, workspace, planArtifact, readJournal, readMeta }) {
+export async function resolveReuse({ repo, kind, slot, planningKey, workspace, planArtifact, readJournal, readMeta, tier = 'fast' }) {
   assertSlotKind(kind)
   const reject = (reason, detail) => ({ ok: false, artifact: null, rejected: [{ kind, reason, ...(detail !== undefined ? { detail } : {}) }] })
   if (slot?.invalid) return reject('artifact_invalid', 'json')
@@ -357,6 +358,9 @@ export async function resolveReuse({ repo, kind, slot, planningKey, workspace, p
   if (artifact.workspace.identity !== workspace?.identity) return reject('workspace_changed')
   if (artifact.status !== 'approved') return reject(`not_approved:${artifact.status}`)
   if (kind === 'tasks' && (!planArtifact || planArtifact.contentHash !== artifact.planContentHash)) return reject('tasks_plan_mismatch')
+  // Artefato feito num tier menor pulou revisões que o tier vigente exige (artefato sem tier veio do fluxo completo).
+  const TIER_ORDER = ['fast', 'standard', 'full']
+  if (TIER_ORDER.indexOf(artifact.tier ?? 'full') < TIER_ORDER.indexOf(tier)) return reject('reuse_tier_lower', `${artifact.tier}<${tier}`)
   return { ok: true, artifact, rejected: [] }
 }
 

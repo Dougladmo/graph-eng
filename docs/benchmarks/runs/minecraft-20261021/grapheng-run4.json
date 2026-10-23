@@ -1,0 +1,641 @@
+{
+  "engineMs": 261267,
+  "engine": "adaptive",
+  "simulated": false,
+  "reportedStatus": "BLOCKED",
+  "result": {
+    "status": "blocked",
+    "feedback": {
+      "kind": "BLOCK",
+      "reason": "local_repair_budget_exhausted",
+      "severity": "high",
+      "affectedNodes": [
+        "render-world",
+        "ui-react"
+      ],
+      "evidenceIds": [
+        "test/engine.test.js:3-12",
+        "test/engine.test.js:66",
+        "test/engine.test.js:82",
+        "test/engine.test.js:88",
+        "src/main.jsx:1-9",
+        "package.json:10"
+      ]
+    },
+    "plan": {
+      "goal": "Jogo clone de Minecraft jogável em React 18 + three.js, com todos os módulos de src/engine/ seguindo o contrato, de modo que npm test e npm run build passem e npm run dev mostre o jogo completo.",
+      "complexity": "complex",
+      "mode": "implement",
+      "effort": {
+        "level": "medium",
+        "why": "Plano limitado a 6 nós: motor em dois nós sequenciais (play depende do core), render e UI em seguida, mantendo cada nó coeso."
+      },
+      "doneWhen": [
+        "npm test passa, com todos os módulos do motor seguindo o contrato, inclusive os casos de borda",
+        "npm run build termina sem erro",
+        "npm run dev abre o jogo com menu, mundo em chunks, mineração, construção, inventário, crafting, dia e noite, HUD, pausa e salvar/continuar",
+        "src/engine/ não importa three, react nem DOM; package.json, vite.config.js, index.html e test/ ficam intactos"
+      ],
+      "assumptions": [
+        "Os módulos de src/engine/ são stubs que lançam 'não implementado'.",
+        "Os testes usam o mundo plano (flat: true) e alguns usam o gerador real.",
+        "engine-play depende de engine-core, porque física e mineração leem blocks.js e world.js.",
+        "O layout do atlas fica em src/engine/atlas.js (JS puro), usado pelo mesher e pelo renderizador.",
+        "Ninguém pode rodar comandos; o supervisor roda npm test e npm run build."
+      ],
+      "nodes": [
+        {
+          "id": "engine-core",
+          "title": "Motor: blocos, ruído, mundo, atlas, mesher, raycast",
+          "kind": "implement",
+          "brief": "Implementar blocks.js, noise.js, atlas.js (novo, layout puro de tiles: nome do bloco/face -> índice, função de UV com tile 16x16 e inset pequeno), world.js e mesher.js e raycast.js conforme a spec. Atenção: altura h em [SEA_LEVEL-8, SEA_LEVEL+20] igual entre chunks; árvores com tronco em x,z locais 2..13 só sobre GRASS; ao menos 1 COAL_ORE por chunk (y<=40); serialize ordenado por x,y,z; setBlockAt reverter ao gerado apaga edição; y<0 BEDROCK, y>=64 AIR; culling: face emitida se vizinho AIR ou transparente com id diferente; índices anti-horários vistos de fora; um bloco isolado = 36 índices; raycast DDA com origem dentro de sólido -> face [0,0,0], distance 0, AIR/WATER ignorados. Sem imports de three/react/DOM.",
+          "deps": [],
+          "files": [
+            "src/engine/blocks.js",
+            "src/engine/noise.js",
+            "src/engine/atlas.js",
+            "src/engine/world.js",
+            "src/engine/mesher.js",
+            "src/engine/raycast.js"
+          ],
+          "inputs": [
+            "src/engine/blocks.js",
+            "src/engine/noise.js",
+            "src/engine/world.js",
+            "src/engine/mesher.js",
+            "src/engine/raycast.js",
+            "test/engine.test.js"
+          ],
+          "outputs": [
+            "src/engine/blocks.js",
+            "src/engine/noise.js",
+            "src/engine/atlas.js",
+            "src/engine/world.js",
+            "src/engine/mesher.js",
+            "src/engine/raycast.js"
+          ],
+          "interface": {
+            "atlas": "TILE_COUNT/ATLAS_COLS, tileFor(blockId, face), tileUV(tile) -> [u0,v0,u1,v1]",
+            "world": "createWorld, getBlockAt, setBlockAt, getSurfaceHeight, generateChunk, serializeWorld, deserializeWorld, chunkIndex, constantes",
+            "mesher": "buildChunkMesh(world,cx,cz) -> {opaque,transparent}"
+          },
+          "risk": "high",
+          "acceptance": [
+            "Todas as funções de blocks, noise, world, mesher e raycast seguem o contrato, inclusive bordas",
+            "Os testes de test/engine.test.js relativos a esses módulos passam",
+            "Nenhum import de three, react ou DOM em src/engine/"
+          ],
+          "explore": false
+        },
+        {
+          "id": "engine-play",
+          "title": "Motor: física, inventário, crafting, mineração, dia/noite",
+          "kind": "implement",
+          "brief": "Implementar physics.js, inventory.js, crafting.js, mining.js, daynight.js conforme a spec, já sobre blocks.js e world.js reais de engine-core. Física: pura, subpassos de 0.05, eixos Y,X,Z, pés exatos no topo do bloco (1/30 s por 60 passos em mundo plano -> position[1]===1 e onGround), sneak na borda, água, voo, canPlaceBlock, collidesAt. Inventário puro com leftover; moveStack junta/troca. craft só olha ids; formas deslocáveis; item extra invalida; consumeIngredients puro. breakTime(DIRT,null)===0.75. skyState(300).daylight===1 exato (use cálculo que dê 1 exato em t=0.25, ou ramo exato). Importar blocks.js e world.js só pela API do contrato.",
+          "deps": [
+            "engine-core"
+          ],
+          "files": [
+            "src/engine/physics.js",
+            "src/engine/inventory.js",
+            "src/engine/crafting.js",
+            "src/engine/mining.js",
+            "src/engine/daynight.js"
+          ],
+          "inputs": [
+            "src/engine/physics.js",
+            "src/engine/inventory.js",
+            "src/engine/crafting.js",
+            "src/engine/mining.js",
+            "src/engine/daynight.js",
+            "src/engine/blocks.js",
+            "src/engine/world.js",
+            "test/engine.test.js"
+          ],
+          "outputs": [
+            "src/engine/physics.js",
+            "src/engine/inventory.js",
+            "src/engine/crafting.js",
+            "src/engine/mining.js",
+            "src/engine/daynight.js"
+          ],
+          "interface": {
+            "physics": "createPlayer, stepPlayer(player,input,dt,world), collidesAt, canPlaceBlock, constantes",
+            "inventory": "createInventory, addItem, removeFromSlot, selectSlot, scrollSelection, moveStack, selectedItem",
+            "crafting": "craft(grid), consumeIngredients(grid)",
+            "mining": "canHarvest, breakTime, dropsFor",
+            "daynight": "DAY_LENGTH, skyState"
+          },
+          "risk": "high",
+          "acceptance": [
+            "Todas as funções seguem o contrato, funções puras não mutam argumentos",
+            "Os testes de física, inventário, crafting, mineração e dia/noite em test/engine.test.js passam (engine-core já está no lugar)",
+            "Nenhum import de three, react ou DOM"
+          ],
+          "explore": false
+        },
+        {
+          "id": "render-world",
+          "title": "Renderização: atlas de canvas, cena, chunks, céu, controles e interação",
+          "kind": "implement",
+          "brief": "Camada three.js em src/render/: textura de atlas gerada em canvas 16x16 por tile (grama topo/lado/base, tronco topo com anéis, minérios, vidro, água, folhas, bancada, rachaduras em estágios) usando src/engine/atlas.js; NearestFilter, generateMipmaps=false, SRGBColorSpace, cuidado com flipY. Materiais opaco (Lambert/Basic), folha/vidro com alphaTest, água transparent+depthWrite=false. Gerenciador de chunks: carrega/descarrega em volta do jogador até a distância, fila com poucas malhas por frame, remesh dos vizinhos ao editar (incluindo bordas), dispose de geometrias. Céu com cor por skyState, sol e lua, luz ambiente/direcional por daylight, neblina na borda. Controlador de jogo (classe pura JS, sem React) com loop: pointer lock, mouse look (pitch ±89°), WASD/espaço/shift/ctrl/duplo W/F, stepPlayer, raycast alcance 5 com wireframe, mineração segurando botão com breakTime e rachadura, colocar bloco com canPlaceBlock, botão do meio, hotbar por teclas/roda, spawn em getSurfaceHeight+1 no centro, autosave 30 s via callbacks. Expõe API/eventos para a UI (estado do HUD, abrir inventário/bancada, pausa).",
+          "deps": [
+            "engine-core",
+            "engine-play"
+          ],
+          "files": [
+            "src/render/textures.js",
+            "src/render/materials.js",
+            "src/render/chunkManager.js",
+            "src/render/sky.js",
+            "src/render/GameController.js"
+          ],
+          "inputs": [
+            "src/engine/atlas.js",
+            "src/engine/world.js",
+            "src/engine/mesher.js",
+            "src/engine/raycast.js",
+            "src/engine/physics.js",
+            "src/engine/inventory.js",
+            "src/engine/mining.js",
+            "src/engine/daynight.js",
+            "src/engine/blocks.js"
+          ],
+          "outputs": [
+            "src/render/textures.js",
+            "src/render/materials.js",
+            "src/render/chunkManager.js",
+            "src/render/sky.js",
+            "src/render/GameController.js"
+          ],
+          "interface": {
+            "GameController": "new GameController({container, seed, renderDistance, save, callbacks}); métodos start/dispose/pause/resume/getSaveData; callbacks onHud(state), onOpenInventory(mode:'inventory'|'table'), onPause, onSave(data)",
+            "textures": "createAtlasCanvas(), iconDataURL(itemId) para a UI"
+          },
+          "risk": "high",
+          "acceptance": [
+            "npm run build compila os módulos sem erro",
+            "Chunks carregam/descarregam sem travar; no máximo poucas malhas por frame",
+            "Mineração, colocação, pega-bloco, voo e sprint funcionam conforme a spec",
+            "Geometrias e texturas são descartadas ao descarregar/sair"
+          ],
+          "explore": false
+        },
+        {
+          "id": "ui-react",
+          "title": "Interface React: menu, HUD, inventário/crafting, pausa, debug, salvamento",
+          "kind": "implement",
+          "brief": "React 18 em src/ui/ e src/main.jsx/App: Menu principal (título, campo de seed aleatória, Novo mundo, Continuar só com save em localStorage 'mc-mvp-save', slider 2-8 padrão 4). Componente Game que monta o GameController e o desmonta ao sair. HUD: mira, hotbar com ícones do atlas e contagem, nome do item por 2 s, overlay azul na água, overlay F3 (FPS, XYZ, chunk, direção, bloco mirado, seed, hora). Tela de inventário (E) com 36 slots, crafting 2x2 e 3x3 (bancada), clicar pega/solta pilhas via moveStack/craft/consumeIngredients, devolve itens da grade ao fechar. Pausa (Esc): Continuar, Salvar, Sair para o menu. Módulo save.js: save/load em localStorage com serializeWorld, posição e olhar, inventário, hora do dia; autosave 30 s e ao pausar; Continuar restaura tudo. Estilos em CSS caprichado. Não alterar index.html nem package.json. Por ser o nó final, verifica o conjunto: npm test passa (todo o motor) e grep não acha imports de three, react ou DOM em src/engine/.",
+          "deps": [
+            "render-world"
+          ],
+          "files": [
+            "src/main.jsx",
+            "src/ui/App.jsx",
+            "src/ui/MainMenu.jsx",
+            "src/ui/Game.jsx",
+            "src/ui/Hud.jsx",
+            "src/ui/InventoryScreen.jsx",
+            "src/ui/PauseMenu.jsx",
+            "src/ui/DebugOverlay.jsx",
+            "src/ui/save.js",
+            "src/ui/styles.css"
+          ],
+          "inputs": [
+            "src/main.jsx",
+            "src/render/GameController.js",
+            "src/render/textures.js",
+            "src/engine/inventory.js",
+            "src/engine/crafting.js",
+            "src/engine/world.js",
+            "src/engine/blocks.js",
+            "src/engine/daynight.js"
+          ],
+          "outputs": [
+            "src/main.jsx",
+            "src/ui/App.jsx",
+            "src/ui/MainMenu.jsx",
+            "src/ui/Game.jsx",
+            "src/ui/Hud.jsx",
+            "src/ui/InventoryScreen.jsx",
+            "src/ui/PauseMenu.jsx",
+            "src/ui/DebugOverlay.jsx",
+            "src/ui/save.js",
+            "src/ui/styles.css"
+          ],
+          "risk": "medium",
+          "acceptance": [
+            "npm run build termina sem erro",
+            "npm test passa (todo o motor)",
+            "grep não encontra imports de three, react ou DOM em src/engine/",
+            "Menu, HUD, inventário/crafting, pausa, F3 e save/continuar funcionam conforme a spec",
+            "package.json, vite.config.js, index.html e test/ intactos"
+          ],
+          "explore": false
+        }
+      ]
+    },
+    "runDir": "/Volumes/DouglasNvme/Documents/GitHub/mc-mvp-grapheng/.graph-runs/grapheng-20261022003604-815d37dd",
+    "stats": {
+      "agents": 4,
+      "dropped": [],
+      "usedByRole": {
+        "planner": 3,
+        "planReviewer": 2,
+        "designReviewer": 0,
+        "critic": 2,
+        "synth": 0,
+        "executor": 2,
+        "verifier": 0
+      },
+      "limitsByRole": {
+        "planner": 5,
+        "planReviewer": 5,
+        "designReviewer": 5,
+        "critic": 5,
+        "synth": 3,
+        "executor": 3,
+        "verifier": 4
+      },
+      "reservedByRole": {
+        "planner": 0,
+        "planReviewer": 0,
+        "designReviewer": 1,
+        "critic": 1,
+        "synth": 1,
+        "executor": 0,
+        "verifier": 0
+      },
+      "plan": 2,
+      "plan-review": 2
+    },
+    "budget": {
+      "usedByRole": {
+        "planner": 3,
+        "planReviewer": 2,
+        "designReviewer": 0,
+        "critic": 2,
+        "synth": 0,
+        "executor": 2,
+        "verifier": 0
+      },
+      "reservedByRole": {
+        "planner": 0,
+        "planReviewer": 0,
+        "designReviewer": 1,
+        "critic": 1,
+        "synth": 1,
+        "executor": 0,
+        "verifier": 0
+      },
+      "limitsByRole": {
+        "planner": 5,
+        "planReviewer": 5,
+        "designReviewer": 5,
+        "critic": 5,
+        "synth": 3,
+        "executor": 3,
+        "verifier": 4
+      },
+      "tokenUsageByRole": {
+        "planner": null,
+        "planReviewer": null,
+        "designReviewer": null,
+        "critic": null,
+        "synth": null,
+        "executor": null,
+        "verifier": null
+      },
+      "localRepairsUsed": 2,
+      "structuralReplansUsed": 0
+    },
+    "reuse": {
+      "decided": {
+        "stages": [
+          "plan",
+          "tasks"
+        ],
+        "pipelineTo": "implement"
+      },
+      "rejected": [
+        {
+          "kind": "plan",
+          "reason": "absent"
+        },
+        {
+          "kind": "tasks",
+          "reason": "absent"
+        }
+      ]
+    },
+    "phaseArtifacts": {
+      "published": [
+        {
+          "kind": "graph-eng.plan",
+          "contentHash": "ad6cd5613ef0e3e949f9f21ac223c43ed4754f8e48520cdad9a13dc736696dd1"
+        }
+      ],
+      "rejected": []
+    },
+    "runId": "grapheng-20261022003604-815d37dd",
+    "report": "/Volumes/DouglasNvme/Documents/GitHub/mc-mvp-grapheng/.graph-runs/grapheng-20261022003604-815d37dd/REPORT.md"
+  },
+  "block": null,
+  "exception": null,
+  "calls": [
+    {
+      "role": "planner",
+      "status": "completed",
+      "requestedModel": "sonnet",
+      "effectiveModel": "claude-sonnet-5-5",
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 8,
+          "outputTokens": 7440,
+          "cacheReadInputTokens": 58654,
+          "cacheCreationInputTokens": 13376,
+          "webSearchRequests": 0,
+          "costUSD": 0.1337854,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 20,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "exitCode": 0,
+      "errorCode": null,
+      "startedAt": "2026-10-22T00:36:04.988Z",
+      "endedAt": "2026-10-22T00:36:59.070Z",
+      "permissionDenials": []
+    },
+    {
+      "role": "researcher",
+      "status": "completed",
+      "requestedModel": "sonnet",
+      "effectiveModel": "claude-sonnet-5-5",
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 8,
+          "outputTokens": 1480,
+          "cacheReadInputTokens": 59165,
+          "cacheCreationInputTokens": 14207,
+          "webSearchRequests": 0,
+          "costUSD": 0.0775605,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 0,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "exitCode": 0,
+      "errorCode": null,
+      "startedAt": "2026-10-22T00:37:09.921Z",
+      "endedAt": "2026-10-22T00:37:25.788Z",
+      "permissionDenials": []
+    },
+    {
+      "role": "critic",
+      "status": "completed",
+      "requestedModel": "sonnet",
+      "effectiveModel": "claude-sonnet-5-5",
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 6,
+          "outputTokens": 1809,
+          "cacheReadInputTokens": 41347,
+          "cacheCreationInputTokens": 12770,
+          "webSearchRequests": 0,
+          "costUSD": 0.07331670000000001,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 211,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "exitCode": 0,
+      "errorCode": null,
+      "startedAt": "2026-10-22T00:37:26.024Z",
+      "endedAt": "2026-10-22T00:37:45.565Z",
+      "permissionDenials": []
+    },
+    {
+      "role": "researcher",
+      "status": "completed",
+      "requestedModel": "sonnet",
+      "effectiveModel": "claude-sonnet-5-5",
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 8,
+          "outputTokens": 3459,
+          "cacheReadInputTokens": 62484,
+          "cacheCreationInputTokens": 19029,
+          "webSearchRequests": 0,
+          "costUSD": 0.1169704,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 149,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "exitCode": 0,
+      "errorCode": null,
+      "startedAt": "2026-10-22T00:37:57.620Z",
+      "endedAt": "2026-10-22T00:38:23.619Z",
+      "permissionDenials": []
+    },
+    {
+      "role": "critic",
+      "status": "completed",
+      "requestedModel": "sonnet",
+      "effectiveModel": "claude-sonnet-5-5",
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 4,
+          "outputTokens": 1439,
+          "cacheReadInputTokens": 23245,
+          "cacheCreationInputTokens": 11431,
+          "webSearchRequests": 0,
+          "costUSD": 0.062446499999999995,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 180,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "exitCode": 0,
+      "errorCode": null,
+      "startedAt": "2026-10-22T00:38:24.801Z",
+      "endedAt": "2026-10-22T00:38:42.055Z",
+      "permissionDenials": []
+    },
+    {
+      "role": "planner",
+      "status": "completed",
+      "requestedModel": "sonnet",
+      "effectiveModel": "claude-sonnet-5-5",
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 2,
+          "outputTokens": 4333,
+          "cacheReadInputTokens": 5716,
+          "cacheCreationInputTokens": 12090,
+          "webSearchRequests": 0,
+          "costUSD": 0.0922656,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 0,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "exitCode": 0,
+      "errorCode": null,
+      "startedAt": "2026-10-22T00:38:42.491Z",
+      "endedAt": "2026-10-22T00:39:12.570Z",
+      "permissionDenials": []
+    },
+    {
+      "role": "planReviewer",
+      "status": "completed",
+      "requestedModel": "opus",
+      "effectiveModel": "claude-opus-5-5",
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 6,
+          "outputTokens": 1554,
+          "cacheReadInputTokens": 44320,
+          "cacheCreationInputTokens": 15512,
+          "webSearchRequests": 0,
+          "costUSD": 0.16406400000000002,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 661,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "exitCode": 0,
+      "errorCode": null,
+      "startedAt": "2026-10-22T00:39:13.219Z",
+      "endedAt": "2026-10-22T00:39:38.169Z",
+      "permissionDenials": []
+    },
+    {
+      "role": "planner",
+      "status": "completed",
+      "requestedModel": "sonnet",
+      "effectiveModel": "claude-sonnet-5-5",
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 2,
+          "outputTokens": 4413,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 20368,
+          "webSearchRequests": 0,
+          "costUSD": 0.125606,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 0,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "exitCode": 0,
+      "errorCode": null,
+      "startedAt": "2026-10-22T00:39:38.548Z",
+      "endedAt": "2026-10-22T00:40:01.528Z",
+      "permissionDenials": []
+    },
+    {
+      "role": "planReviewer",
+      "status": "completed",
+      "requestedModel": "opus",
+      "effectiveModel": "claude-opus-5-5",
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 6,
+          "outputTokens": 1987,
+          "cacheReadInputTokens": 44503,
+          "cacheCreationInputTokens": 15929,
+          "webSearchRequests": 0,
+          "costUSD": 0.17609660000000002,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 769,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "exitCode": 0,
+      "errorCode": null,
+      "startedAt": "2026-10-22T00:40:01.709Z",
+      "endedAt": "2026-10-22T00:40:25.835Z",
+      "permissionDenials": []
+    }
+  ],
+  "spawnAttempts": 9,
+  "inflight": 0,
+  "metricErrors": [],
+  "summary": {
+    "total": 9,
+    "byRole": {
+      "planner": 3,
+      "researcher": 2,
+      "critic": 2,
+      "planReviewer": 2
+    },
+    "completed": 9,
+    "failed": 0,
+    "inflight": 0,
+    "complete": true,
+    "fields": {
+      "requestedModel": {
+        "value": [
+          "opus",
+          "sonnet"
+        ],
+        "coverage": "9/9"
+      },
+      "effectiveModel": {
+        "value": [
+          "claude-opus-5-5",
+          "claude-sonnet-5-5"
+        ],
+        "coverage": "9/9"
+      },
+      "usage": {
+        "coverage": "9/9"
+      },
+      "inputTokens": {
+        "value": 474196,
+        "coverage": "9/9"
+      },
+      "outputTokens": {
+        "value": 27914,
+        "coverage": "9/9"
+      },
+      "maxCallInputTokens": {
+        "value": 81521,
+        "coverage": "9/9"
+      },
+      "costUSD": {
+        "value": 1.0221117,
+        "coverage": "9/9"
+      }
+    }
+  }
+}

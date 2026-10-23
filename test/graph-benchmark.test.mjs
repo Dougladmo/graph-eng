@@ -2,7 +2,7 @@ import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { PassThrough, Writable } from 'node:stream'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, cp } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -11,7 +11,7 @@ import { createHost } from '../bin/hosts.mjs'
 import { workspaceResourceOf } from '../bin/resource-lock.mjs'
 import * as bench from '../bin/graph-benchmark.mjs'
 import {
-  FIXTURE_DIR, EVIDENCE_ROOT, BASELINE, V1_LABEL_MAP,
+  FIXTURE_DIR, BASELINE, V1_LABEL_MAP,
   sha256, hashTree, diffTrees, grantPrefixes, auditWrites, extractBaseline, prepareWorkspace,
   applyFixtureReference, applyContractChange, policyFor, createAgentBridge, runV1, runAdaptive,
   runAcceptance, evaluateExternal, summarizeCalls, buildManifest, verifyManifest, runVariant,
@@ -28,9 +28,9 @@ const STATE_ROOT = await mkdtemp(path.join(os.tmpdir(), 'graph-eng-bench-state-'
 const previousStateDir = process.env.GRAPH_ENG_STATE_DIR
 process.env.GRAPH_ENG_STATE_DIR = STATE_ROOT
 
+// Fora do repo: num worktree em .claude/worktrees/ o caminho herdaria o segmento .claude e a guarda CWD_PROTECTED_PATH recusaria a escrita.
 async function tempDir(name) {
-  await mkdir(EVIDENCE_ROOT, { recursive: true })
-  const dir = await mkdtemp(path.join(EVIDENCE_ROOT, `_tests-${name}-`))
+  const dir = await mkdtemp(path.join(os.tmpdir(), `graph-eng-bench-${name}-`))
   created.push(dir)
   return dir
 }
@@ -44,7 +44,7 @@ after(async () => {
 })
 
 // Transporte fake: nunca chama CLI real. Escreve a saída que o CLI escreveria e fecha o processo.
-function fakeTransport({ mode = 'ok', writes = () => ({}), output = () => ({ ok: true }) } = {}) {
+function fakeTransport({ mode = 'ok', writes = () => ({}), output = () => ({ ok: true }), modelUsage = () => ({}) } = {}) {
   const spawns = []
   const children = new Map()
   let inflight = 0
@@ -82,7 +82,7 @@ function fakeTransport({ mode = 'ok', writes = () => ({}), output = () => ({ ok:
       await writeFile(record.args[at + 1], JSON.stringify(output(record)))
       child.stdout.end(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 7, output_tokens: 0 } }) + '\n')
     } else {
-      child.stdout.end(JSON.stringify({ is_error: false, structured_output: output(record), modelUsage: {} }))
+      child.stdout.end(JSON.stringify({ is_error: false, structured_output: output(record), modelUsage: modelUsage(record) }))
     }
     child.stderr.end()
     setImmediate(() => child.emit('close', 0, null))
@@ -820,3 +820,263 @@ test('B2: runV1 sem feedback do motor deriva o motivo de nó bloqueado, critic n
   assert.equal(modelText.result.feedback, 'v1_node_failed:x_y_ignore_instructions')
 })
 
+
+// Baseline de agente único: o modelo forte faz a tarefa inteira; mesma avaliação externa e mesmo formato de evidência.
+const referenceWrites = () => Object.fromEntries(['a', 'b', 'c'].map(name => [`src/${name}.mjs`, readFileSync(path.join(FIXTURE_DIR, 'reference', 'src', `${name}.mjs.txt`), 'utf8')]))
+const opusUsage = () => ({ 'claude-opus-5-5': { inputTokens: 10, outputTokens: 200, cacheReadInputTokens: 30000, cacheCreationInputTokens: 5000, costUSD: 0.5 } })
+
+async function singleAgentHost(fake) {
+  const { dir, ws } = await workspaceCopy('single')
+  await bench.initWorkspaceRepo(ws)
+  const hostApi = createHost({ host: 'claude', cwd: ws, runDir: path.join(dir, 'host-runs'), transport: { spawn: fake.spawn }, killProcess: fake.killProcess, experimentalPolicy: bench.singleAgentPolicy('claude') })
+  return { ws, hostApi, task: await readFile(path.join(ws, 'task.md'), 'utf8') }
+}
+
+// Regressão: com o repo num worktree em .claude/worktrees/, workspace criado dentro do repo herdava o segmento
+// .claude e a guarda CWD_PROTECTED_PATH recusava o papel de escrita antes do spawn (spawns ficava 0).
+test('single-agent: workspace de teste fica em os.tmpdir(), sem segmento .claude, mesmo com o repo sob .claude', { timeout: 30000 }, async () => {
+  const fake = fakeTransport({ output: () => ({ status: 'DONE', summary: 'feito' }) })
+  const { ws, hostApi, task } = await singleAgentHost(fake)
+  assert.ok(ws.startsWith(path.resolve(os.tmpdir()) + path.sep), ws)
+  assert.ok(!ws.startsWith(ROOT + path.sep), 'workspace não fica dentro do repo')
+  assert.ok(!ws.split(path.sep).includes('.claude'), ws)
+  await bench.runSingleAgent({ workspaceDir: ws, hostApi, task, rounds: 1, runChecks: async () => ({ exitCode: 0, tap: { pass: 1, fail: 0 }, outputTail: '' }) })
+  assert.equal(fake.spawns.length, 1, 'papel de escrita chega ao spawn')
+})
+
+test('single-agent: uma chamada do modelo forte, avaliação externa PASS e custo, tokens e maior contexto no run.json', { timeout: 60000 }, async () => {
+  const dir = await tempDir('single-run')
+  const manifestPath = path.join(dir, 'manifest.json')
+  await writeFile(manifestPath, JSON.stringify(await buildManifest({ id: 'single', host: 'claude', scenario: 'happy', repoRoot: ROOT, fixtureDir: FIXTURE_DIR, evidenceDir: dir, baseline: await extractBaseline({ repoRoot: ROOT, destDir: dir }) }), null, 2))
+  const fake = fakeTransport({ writes: referenceWrites, output: () => ({ status: 'DONE', summary: 'feito' }), modelUsage: opusUsage })
+  const outDir = path.join(dir, 'variant-single-agent')
+  const run = await runVariant({ manifestPath, variant: 'single-agent', outDir, transportFactory: () => fake })
+  assert.equal(fake.spawns.length, 1)
+  assert.equal(fake.spawns[0].args[fake.spawns[0].args.indexOf('--model') + 1], 'opus', 'modelo forte do host')
+  assert.match(fake.spawns[0].prompt, /somarInteiros/, 'o prompt leva o task.md')
+  assert.equal(run.status, 'PASS')
+  assert.equal(run.reportedStatus, 'DONE')
+  assert.equal(run.externalStatus, 'PASS')
+  assert.equal(run.falseDone, false)
+  assert.deepEqual(run.summary.byRole, { singleAgent: 1 })
+  assert.equal(run.summary.fields.costUSD.value, 0.5)
+  assert.equal(run.summary.fields.maxCallInputTokens.value, 35010)
+  assert.deepEqual(run.checks.map(check => check.exitCode), [0])
+  const calls = (await readFile(path.join(outDir, 'calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].requestedModel, 'opus')
+  assert.equal(JSON.parse(await readFile(path.join(outDir, 'run.json'), 'utf8')).variant, 'single-agent')
+})
+
+test('single-agent: npm test do supervisor falhou, a saída volta para a próxima chamada do mesmo modelo', { timeout: 30000 }, async () => {
+  const fake = fakeTransport({ output: () => ({ status: 'DONE', summary: 'feito' }) })
+  const { ws, hostApi, task } = await singleAgentHost(fake)
+  const results = [{ exitCode: 1, tap: { pass: 0, fail: 1 }, outputTail: 'not ok 1 - erro_marcado' }, { exitCode: 0, tap: { pass: 1, fail: 0 }, outputTail: '' }]
+  const run = await bench.runSingleAgent({ workspaceDir: ws, hostApi, task, runChecks: async () => results.shift() })
+  assert.equal(fake.spawns.length, 2)
+  assert.doesNotMatch(fake.spawns[0].prompt, /erro_marcado/)
+  assert.match(fake.spawns[1].prompt, /erro_marcado/)
+  assert.equal(run.reportedStatus, 'DONE')
+  assert.deepEqual(run.checks.map(check => check.exitCode), [1, 0])
+})
+
+test('single-agent: escrita fora de src/ bloqueia sem nova chamada; BLOCKED do agente e npm test falhando até o fim viram BLOCKED com motivo', { timeout: 30000 }, async () => {
+  const outside = fakeTransport({ writes: () => ({ 'package.json': '{}' }), output: () => ({ status: 'DONE', summary: 'x' }) })
+  const a = await singleAgentHost(outside)
+  const violated = await bench.runSingleAgent({ ...a, workspaceDir: a.ws, runChecks: async () => ({ exitCode: 1, tap: {}, outputTail: '' }) })
+  assert.equal(violated.block.code, 'grant_violation')
+  assert.deepEqual(violated.block.paths, ['package.json'])
+  assert.equal(outside.spawns.length, 1)
+
+  const blocked = fakeTransport({ output: () => ({ status: 'BLOCKED', summary: 'sem saída' }) })
+  const b = await singleAgentHost(blocked)
+  const refused = await bench.runSingleAgent({ ...b, workspaceDir: b.ws })
+  assert.equal(refused.reportedStatus, 'BLOCKED')
+  assert.equal(refused.result.feedback.reason, 'single_agent_blocked')
+
+  const failing = fakeTransport({ output: () => ({ status: 'DONE', summary: 'x' }) })
+  const c = await singleAgentHost(failing)
+  const exhausted = await bench.runSingleAgent({ ...c, workspaceDir: c.ws, rounds: 2, runChecks: async () => ({ exitCode: 1, tap: {}, outputTail: 'falhou' }) })
+  assert.equal(failing.spawns.length, 2)
+  assert.equal(exhausted.reportedStatus, 'BLOCKED')
+  assert.equal(exhausted.result.feedback.reason, 'single_agent_checks_failed')
+})
+
+test('CLI aceita --variant single-agent', () => {
+  assert.equal(parseBenchmarkArgs(['run', '--variant', 'single-agent']).variant, 'single-agent')
+})
+
+// Cenário faturamento: 9 módulos com dependência, contratos em docs/contratos/ e aceites de borda que o teste visível não cobre.
+const FAT_DIR = bench.FATURAMENTO_FIXTURE_DIR
+const solutionWrites = (...folders) => () => {
+  const files = {}
+  for (const folder of folders) {
+    const dir = path.join(FAT_DIR, folder, 'src')
+    for (const name of readdirSync(dir).filter(file => file.endsWith('.mjs.txt'))) files[`src/${name.slice(0, -'.txt'.length)}`] = readFileSync(path.join(dir, name), 'utf8')
+  }
+  return files
+}
+
+async function faturamentoManifest(id) {
+  const dir = await tempDir(id)
+  const manifestPath = path.join(dir, 'manifest.json')
+  await writeFile(manifestPath, JSON.stringify(await buildManifest({ id, host: 'claude', scenario: 'faturamento', repoRoot: ROOT, evidenceDir: dir, baseline: await extractBaseline({ repoRoot: ROOT, destDir: dir }) }), null, 2))
+  return { dir, manifestPath }
+}
+
+test('faturamento fixture: aceites reprovam o inicial e a solução ingênua, aprovam a referência; o teste visível aprova as duas', { timeout: 120000 }, async () => {
+  const acceptanceDir = path.join(FAT_DIR, 'acceptance')
+  const expected = await bench.countAcceptanceTests(acceptanceDir)
+  assert.ok(expected >= 30, `aceites suficientes para cobrir os 9 módulos (${expected})`)
+  const copy = async (name, folders) => {
+    const dir = await tempDir(`fat-${name}`)
+    const ws = path.join(dir, 'ws')
+    await prepareWorkspace({ fixtureDir: FAT_DIR, destDir: ws })
+    for (const folder of folders) await applyFixtureReference({ fixtureDir: FAT_DIR, workspaceDir: ws, folder })
+    return ws
+  }
+  const initial = await copy('inicial', [])
+  assert.ok(existsSync(path.join(initial, 'test', 'caminho-feliz.test.mjs')), 'teste visível chega ao workspace sem o .txt')
+  assert.ok(!existsSync(path.join(initial, 'test', 'caminho-feliz.test.mjs.txt')))
+  assert.notEqual((await bench.runNodeTest(initial)).exitCode, 0, 'teste visível reprova o estado inicial')
+  assert.notEqual((await runAcceptance({ workspaceDir: initial, acceptanceDir })).exitCode, 0)
+
+  const reference = await copy('referencia', ['reference'])
+  assert.equal((await bench.runNodeTest(reference)).exitCode, 0)
+  const refRun = await runAcceptance({ workspaceDir: reference, acceptanceDir })
+  assert.equal(refRun.exitCode, 0, refRun.outputTail)
+  assert.deepEqual(refRun.tap, { pass: expected, fail: 0 })
+
+  // A ingênua passa no npm test do workspace: um agente que confia só nele declara DONE e erra o aceite.
+  const naive = await copy('ingenua', ['reference', 'ingenua'])
+  assert.equal((await bench.runNodeTest(naive)).exitCode, 0, 'ingênua passa no teste visível')
+  const naiveRun = await runAcceptance({ workspaceDir: naive, acceptanceDir })
+  assert.notEqual(naiveRun.exitCode, 0)
+  assert.ok(naiveRun.tap.fail >= 10, `ingênua falha em vários módulos (${naiveRun.tap.fail})`)
+})
+
+test('faturamento manifesto: fixture própria, sem contract-v2, contagem de aceites e verify ok; contract-v2 criado depois diverge', async () => {
+  const { dir, manifestPath } = await faturamentoManifest('fat-manifest')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  assert.equal(manifest.scenario, 'faturamento')
+  assert.equal(manifest.fixtureDir, FAT_DIR)
+  assert.deepEqual(manifest.fixture.contractV2, {})
+  assert.equal(manifest.acceptance.expectedPass, await bench.countAcceptanceTests(path.join(FAT_DIR, 'acceptance')))
+  assert.ok(Object.keys(manifest.fixture.workspace).filter(file => file.startsWith('docs/contratos/')).length >= 9, 'contrato espalhado em vários arquivos')
+  assert.deepEqual(await verifyManifest(manifestPath), { ok: true, mismatches: [] })
+  assert.equal(bench.fixtureDirFor('happy'), FIXTURE_DIR)
+  assert.throws(() => bench.fixtureDirFor('nenhum'), /cenário desconhecido/)
+
+  const copyDir = path.join(dir, 'fixture-copia')
+  await cp(FAT_DIR, copyDir, { recursive: true })
+  const copyManifest = path.join(dir, 'manifest-copia.json')
+  await writeFile(copyManifest, JSON.stringify({ ...manifest, fixtureDir: copyDir, fixture: { ...manifest.fixture } }, null, 2))
+  assert.equal((await verifyManifest(copyManifest)).ok, true)
+  await mkdir(path.join(copyDir, 'contract-v2'))
+  await writeFile(path.join(copyDir, 'contract-v2', 'x.mjs.txt'), 'export {}\n')
+  assert.deepEqual((await verifyManifest(copyManifest)).mismatches, ['fixture.contractV2:x.mjs.txt'])
+})
+
+test('faturamento single-agent: solução ingênua passa no npm test do supervisor, declara DONE e vira falso DONE', { timeout: 120000 }, async () => {
+  const { dir, manifestPath } = await faturamentoManifest('fat-naive')
+  const fake = fakeTransport({ writes: solutionWrites('reference', 'ingenua'), output: () => ({ status: 'DONE', summary: 'feito' }) })
+  const run = await runVariant({ manifestPath, variant: 'single-agent', outDir: path.join(dir, 'variant-single-agent'), transportFactory: () => fake })
+  assert.equal(fake.spawns.length, 1, 'npm test verde na primeira rodada: sem nova chamada')
+  assert.match(fake.spawns[0].prompt, /docs\/contratos\//, 'o prompt leva o task.md do faturamento')
+  assert.deepEqual(run.checks.map(check => check.exitCode), [0])
+  assert.equal(run.reportedStatus, 'DONE')
+  assert.equal(run.externalStatus, 'FAIL')
+  assert.equal(run.falseDone, true)
+  assert.equal(run.status, 'FAIL')
+  assert.equal(run.scenario, 'faturamento')
+})
+
+test('faturamento single-agent: referência completa passa no aceite externo sem falso DONE', { timeout: 120000 }, async () => {
+  const { dir, manifestPath } = await faturamentoManifest('fat-ref')
+  const fake = fakeTransport({ writes: solutionWrites('reference'), output: () => ({ status: 'DONE', summary: 'feito' }) })
+  const run = await runVariant({ manifestPath, variant: 'single-agent', outDir: path.join(dir, 'variant-single-agent'), transportFactory: () => fake })
+  assert.equal(run.status, 'PASS')
+  assert.equal(run.externalStatus, 'PASS')
+  assert.equal(run.falseDone, false)
+})
+
+test('CLI aceita --scenario faturamento e lista os cenários no erro', () => {
+  assert.equal(parseBenchmarkArgs(['prepare', '--host', 'claude', '--scenario', 'faturamento']).scenario, 'faturamento')
+  assert.throws(() => parseBenchmarkArgs(['prepare', '--host', 'claude', '--scenario', 'gigante']), /happy, contract-change, faturamento/)
+})
+
+// Cenário chess: gerador de lances de xadrez; os aceites conferem perft contra os valores publicados.
+const CHESS_DIR = bench.CHESS_FIXTURE_DIR
+
+test('chess fixture: aceites reprovam o esqueleto inicial e aprovam a referência (15 casos, perft incluso)', { timeout: 180000 }, async () => {
+  const acceptanceDir = path.join(CHESS_DIR, 'acceptance')
+  const expected = await bench.countAcceptanceTests(acceptanceDir)
+  assert.equal(expected, 15)
+  const dir = await tempDir('chess-fixture')
+  const initial = path.join(dir, 'inicial')
+  await prepareWorkspace({ fixtureDir: CHESS_DIR, destDir: initial })
+  const initialRun = await runAcceptance({ workspaceDir: initial, acceptanceDir })
+  assert.notEqual(initialRun.exitCode, 0)
+  // Só os dois aceites de recusa (FEN inválida e lance ilegal) passam: o esqueleto lança sempre.
+  assert.deepEqual(initialRun.tap, { pass: 2, fail: 13 })
+  const reference = path.join(dir, 'referencia')
+  await prepareWorkspace({ fixtureDir: CHESS_DIR, destDir: reference })
+  assert.deepEqual(await applyFixtureReference({ fixtureDir: CHESS_DIR, workspaceDir: reference }), ['fen.mjs', 'game.mjs', 'movegen.mjs', 'perft.mjs'])
+  const refRun = await runAcceptance({ workspaceDir: reference, acceptanceDir })
+  assert.equal(refRun.exitCode, 0, refRun.outputTail)
+  assert.deepEqual(refRun.tap, { pass: expected, fail: 0 })
+})
+
+test('chess single-agent: prompt leva o task.md do xadrez; referência escrita pelo agente passa no aceite externo', { timeout: 180000 }, async () => {
+  const dir = await tempDir('chess-single')
+  const manifestPath = path.join(dir, 'manifest.json')
+  await writeFile(manifestPath, JSON.stringify(await buildManifest({ id: 'chess-single', host: 'claude', scenario: 'chess', repoRoot: ROOT, evidenceDir: dir, baseline: await extractBaseline({ repoRoot: ROOT, destDir: dir }) }), null, 2))
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  assert.equal(manifest.fixtureDir, CHESS_DIR)
+  assert.equal(manifest.acceptance.expectedPass, 15)
+  const writes = () => Object.fromEntries(readdirSync(path.join(CHESS_DIR, 'reference', 'src')).map(name => [`src/${name.slice(0, -'.txt'.length)}`, readFileSync(path.join(CHESS_DIR, 'reference', 'src', name), 'utf8')]))
+  const fake = fakeTransport({ writes, output: () => ({ status: 'DONE', summary: 'feito' }) })
+  const run = await runVariant({ manifestPath, variant: 'single-agent', outDir: path.join(dir, 'variant-single-agent'), transportFactory: () => fake })
+  assert.match(fake.spawns[0].prompt, /perft/)
+  assert.equal(run.scenario, 'chess')
+  assert.equal(run.status, 'PASS')
+  assert.equal(run.falseDone, false)
+})
+
+test('CLI aceita --scenario chess', () => {
+  assert.equal(parseBenchmarkArgs(['prepare', '--host', 'claude', '--scenario', 'chess']).scenario, 'chess')
+})
+
+test('archive copia só a evidência da run e regera RESULTADOS.md com custo do calls.jsonl', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'bench-archive-'))
+  after(() => rm(root, { recursive: true, force: true }))
+  const runDir = path.join(root, 'evidence', 'bench-x-chess-1')
+  const variantDir = path.join(runDir, 'variant-single-agent')
+  await mkdir(path.join(variantDir, 'workspace'), { recursive: true })
+  await mkdir(path.join(runDir, 'baseline'), { recursive: true })
+  await writeFile(path.join(runDir, 'manifest.json'), JSON.stringify({ id: 'bench-x-chess-1' }))
+  await writeFile(path.join(runDir, 'report.json'), '{}')
+  await writeFile(path.join(runDir, 'baseline', 'graph-eng.js'), 'v1')
+  await writeFile(path.join(variantDir, 'run.json'), JSON.stringify({ scenario: 'chess', host: 'claude', status: 'PASS', reason: null, reportedStatus: 'DONE', externalStatus: 'PASS', falseDone: false, summary: { total: 2 }, engineMs: 261000 }))
+  await writeFile(path.join(variantDir, 'external-eval.json'), JSON.stringify({ tap: { pass: 15, fail: 0 }, expectedPass: 15 }))
+  await writeFile(path.join(variantDir, 'external-eval-2026.json'), '{}')
+  const usage = cost => ({ 'claude-opus-5-5': { inputTokens: 10, outputTokens: 1000, cacheReadInputTokens: 40000, cacheCreationInputTokens: 0, costUSD: cost } })
+  await writeFile(path.join(variantDir, 'calls.jsonl'), [usage(0.25), usage(0.5)].map(u => JSON.stringify({ role: 'singleAgent', status: 'completed', usage: u })).join('\n') + '\n')
+  await writeFile(path.join(variantDir, 'workspace', 'lixo.mjs'), 'x')
+
+  const archiveRoot = path.join(root, 'docs')
+  const result = await bench.archiveRun(path.join(runDir, 'manifest.json'), { archiveRoot })
+  assert.deepEqual(result.copied, ['manifest.json', 'report.json', 'variant-single-agent/calls.jsonl', 'variant-single-agent/external-eval-2026.json', 'variant-single-agent/external-eval.json', 'variant-single-agent/run.json'])
+  assert.equal(existsSync(path.join(archiveRoot, 'runs', 'bench-x-chess-1', 'variant-single-agent', 'workspace')), false)
+  assert.equal(existsSync(path.join(archiveRoot, 'runs', 'bench-x-chess-1', 'baseline')), false)
+  const md = await readFile(path.join(archiveRoot, 'RESULTADOS.md'), 'utf8')
+  assert.match(md, /\| bench-x-chess-1 \| chess \| claude \| single-agent \| PASS \| — \| DONE \| PASS 15\/15 \| false \| 2 \| US\$ 0\.75 \| 261 \|/)
+
+  // Arquivar de novo a mesma run não duplica a linha.
+  await bench.archiveRun(path.join(runDir, 'manifest.json'), { archiveRoot })
+  assert.equal((await readFile(path.join(archiveRoot, 'RESULTADOS.md'), 'utf8')).match(/bench-x-chess-1/g).length, 1)
+})
+
+test('CLI aceita o comando archive', () => {
+  assert.equal(parseBenchmarkArgs(['archive', '--manifest', path.join(bench.EVIDENCE_ROOT, 'x', 'manifest.json')]).command, 'archive')
+})

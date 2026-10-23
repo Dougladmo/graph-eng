@@ -1,0 +1,55 @@
+// Referência do benchmark (não vai para os agentes).
+export const AIR = 0
+export const GRASS = 1
+export const DIRT = 2
+export const STONE = 3
+export const SAND = 4
+export const WATER = 5
+export const LOG = 6
+export const LEAVES = 7
+export const PLANKS = 8
+export const COBBLESTONE = 9
+export const BEDROCK = 10
+export const COAL_ORE = 11
+export const IRON_ORE = 12
+export const GLASS = 13
+export const CRAFTING_TABLE = 14
+export const STICK = 100
+export const WOODEN_PICKAXE = 101
+export const STONE_PICKAXE = 102
+export const COAL = 103
+
+const B = (id, name, solid, transparent, hardness, tool, drop) => Object.freeze({ id, name, solid, transparent, hardness, tool, drop })
+const BLOCKS = new Map([
+  B(AIR, 'air', false, true, 0, null, null),
+  B(GRASS, 'grass', true, false, 0.6, null, DIRT),
+  B(DIRT, 'dirt', true, false, 0.5, null, DIRT),
+  B(STONE, 'stone', true, false, 1.5, 'pickaxe', COBBLESTONE),
+  B(SAND, 'sand', true, false, 0.5, null, SAND),
+  B(WATER, 'water', false, true, Infinity, null, null),
+  B(LOG, 'log', true, false, 2, null, LOG),
+  B(LEAVES, 'leaves', true, true, 0.2, null, null),
+  B(PLANKS, 'planks', true, false, 2, null, PLANKS),
+  B(COBBLESTONE, 'cobblestone', true, false, 2, 'pickaxe', COBBLESTONE),
+  B(BEDROCK, 'bedrock', true, false, Infinity, null, null),
+  B(COAL_ORE, 'coal_ore', true, false, 3, 'pickaxe', COAL),
+  B(IRON_ORE, 'iron_ore', true, false, 3, 'stone_pickaxe', IRON_ORE),
+  B(GLASS, 'glass', true, true, 0.3, null, null),
+  B(CRAFTING_TABLE, 'crafting_table', true, false, 2.5, null, CRAFTING_TABLE),
+].map(b => [b.id, b]))
+const ITEMS = new Map([[STICK, 'stick'], [WOODEN_PICKAXE, 'wooden_pickaxe'], [STONE_PICKAXE, 'stone_pickaxe'], [COAL, 'coal']])
+
+export function getBlock(id) {
+  const block = BLOCKS.get(id)
+  if (!block) throw new RangeError(`bloco desconhecido: ${id}`)
+  return block
+}
+
+export function getItem(id) {
+  if (BLOCKS.has(id)) return { id, name: BLOCKS.get(id).name, maxStack: 64, placeable: id !== AIR && id !== WATER }
+  if (ITEMS.has(id)) return { id, name: ITEMS.get(id), maxStack: id === WOODEN_PICKAXE || id === STONE_PICKAXE ? 1 : 64, placeable: false }
+  throw new RangeError(`item desconhecido: ${id}`)
+}
+
+export const isSolid = id => getBlock(id).solid
+export const isTransparent = id => getBlock(id).transparent

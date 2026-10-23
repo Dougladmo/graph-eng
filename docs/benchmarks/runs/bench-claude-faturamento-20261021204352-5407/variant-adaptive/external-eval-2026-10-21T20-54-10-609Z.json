@@ -1,0 +1,12 @@
+{
+  "reportedStatus": "DONE",
+  "externalStatus": "PASS",
+  "exitCode": 0,
+  "expectedPass": 31,
+  "tap": {
+    "pass": 31,
+    "fail": 0
+  },
+  "durationMs": 304,
+  "falseDone": false
+}

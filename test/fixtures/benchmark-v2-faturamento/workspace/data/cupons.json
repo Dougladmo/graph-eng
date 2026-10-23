@@ -1,0 +1,32 @@
+{
+  "BEMVINDO10": {
+    "tipo": "percentual",
+    "valor": 1000,
+    "inicio": "2026-01-01",
+    "fim": "2026-03-31"
+  },
+  "CARNAVAL15": {
+    "tipo": "percentual",
+    "valor": 1500,
+    "inicio": "2026-02-09",
+    "fim": "2026-02-18"
+  },
+  "FIXO50": {
+    "tipo": "fixo",
+    "valor": 5000,
+    "inicio": "2026-01-15",
+    "fim": "2026-02-28"
+  },
+  "FIXO500": {
+    "tipo": "fixo",
+    "valor": 50000,
+    "inicio": "2026-01-01",
+    "fim": "2026-12-31"
+  },
+  "JANEIRO5": {
+    "tipo": "percentual",
+    "valor": 500,
+    "inicio": "2026-01-01",
+    "fim": "2026-01-31"
+  }
+}

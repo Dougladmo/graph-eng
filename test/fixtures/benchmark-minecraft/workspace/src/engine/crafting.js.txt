@@ -1,0 +1,9 @@
+// Contrato em task.md. Motor puro: sem three, react nem DOM.
+
+export function craft() {
+  throw new Error('não implementado: craft')
+}
+
+export function consumeIngredients() {
+  throw new Error('não implementado: consumeIngredients')
+}

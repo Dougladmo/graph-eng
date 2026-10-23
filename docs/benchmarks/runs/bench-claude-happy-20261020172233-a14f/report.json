@@ -1,0 +1,117 @@
+{
+  "rows": [
+    {
+      "host": "claude",
+      "variant": "v1-normalized",
+      "scenario": "happy",
+      "status": "BLOCK",
+      "attempted": true,
+      "real": true,
+      "reason": "engine_blocked",
+      "reportedStatus": "BLOCKED",
+      "externalStatus": "FAIL",
+      "falseDone": false,
+      "calls": {
+        "planner": 1,
+        "executor": 3,
+        "designReviewer": 2,
+        "critic": 2,
+        "synth": 1
+      },
+      "coverage": {
+        "requestedModel": {
+          "value": [
+            "haiku",
+            "opus"
+          ],
+          "coverage": "9/9"
+        },
+        "effectiveModel": {
+          "value": [
+            "claude-haiku-5-5",
+            "claude-opus-5-5"
+          ],
+          "coverage": "9/9"
+        },
+        "usage": {
+          "coverage": "9/9"
+        },
+        "inputTokens": {
+          "value": null,
+          "coverage": "0/9"
+        },
+        "outputTokens": {
+          "value": null,
+          "coverage": "0/9"
+        }
+      },
+      "complete": false,
+      "durationMs": {
+        "engine": 1148839,
+        "evaluator": 114
+      },
+      "simulated": false
+    },
+    {
+      "host": "claude",
+      "variant": "adaptive",
+      "scenario": "happy",
+      "status": "BLOCK",
+      "attempted": true,
+      "real": true,
+      "reason": "plan_review_failed_or_invalid",
+      "reportedStatus": "BLOCKED",
+      "externalStatus": "FAIL",
+      "falseDone": false,
+      "calls": {
+        "planner": 1,
+        "planReviewer": 1
+      },
+      "coverage": {
+        "requestedModel": {
+          "value": [
+            "opus"
+          ],
+          "coverage": "2/2"
+        },
+        "effectiveModel": {
+          "value": [
+            "claude-opus-5-5"
+          ],
+          "coverage": "2/2"
+        },
+        "usage": {
+          "coverage": "2/2"
+        },
+        "inputTokens": {
+          "value": null,
+          "coverage": "0/2"
+        },
+        "outputTokens": {
+          "value": null,
+          "coverage": "0/2"
+        }
+      },
+      "complete": false,
+      "durationMs": {
+        "engine": 170851,
+        "evaluator": 114
+      },
+      "simulated": false
+    }
+  ],
+  "fixed": [
+    {
+      "host": "claude",
+      "variant": "HISTÓRICO CLAUDE (sonnet/sessão)",
+      "status": "BLOCK / NOT_RUN",
+      "reason": "organização bloqueia assinatura; sem remapeamento"
+    },
+    {
+      "host": "codex",
+      "variant": "planner barato histórico (fora de escopo)",
+      "status": "fora de escopo",
+      "reason": "não entra no produto nem no benchmark"
+    }
+  ]
+}

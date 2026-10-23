@@ -6,6 +6,8 @@ import path from 'node:path'
 import { canonicalJsonOf, contentHashOf, decidePipelineStages, planningInputsOf, planningKeyOf, questionSetIdOf, readSlot, resolveReuse, sealArtifact, STAGE_BY_STATUS, validateArtifact, workspaceOf, writeSlot } from './phase-artifacts.mjs'
 import { readJournalFile } from './run-state.mjs'
 import { ENGINE_PATH } from './workflow-source.mjs'
+import { maxTier, TIERS, triageTask } from './triage.mjs'
+import { mergeTriage } from './triage-classifier.mjs'
 
 const RESUME_ROLES = ['planner', 'planReviewer', 'designReviewer', 'critic', 'synth', 'executor', 'verifier']
 const PIPELINE_CHECK_FNS = ['approveCheckNodes', 'beginCheckWindow', 'endCheckWindow', 'checkWindowDelta', 'beginCheckNode']
@@ -23,7 +25,7 @@ export const isReadOnlyStage = (stage, pipelineTo) => stage === 'plan' || stage 
 
 // Prepara a run com pipeline antes da primeira invocação: workspace inicial, slots, tarefa herdada do plano e decisão de reuso.
 // Não escreve na run. Qualquer decisão que não roda estágio sai como pipelineStop.
-export async function preparePipeline({ args, runId, runDir, cwd, cwdReal, hostName, models, evidenceFactory, heavyLock, emit, integrity = null }) {
+export async function preparePipeline({ args, runId, runDir, cwd, cwdReal, hostName, models, evidenceFactory, heavyLock, emit, integrity = null, triageClassifier = null }) {
   const pipeline = args.pipeline
   const repo = cwdReal
   const evidence = evidenceFactory({ cwd, runDir, heavyLock, emit, integrity })
@@ -50,17 +52,25 @@ export async function preparePipeline({ args, runId, runDir, cwd, cwdReal, hostN
     modelPolicyHash: sha256(canonicalJsonOf(models)), workflowSourceHash: sha256(await readFile(ENGINE_PATH)),
   })
   const planningKey = planningKeyOf(planningInputs)
+  // Triagem (fluxo adaptativo): decide o tier antes do reuso, que recusa artefato de tier menor. Fica fora do planningKey.
+  // Com o classificador Jev ligado, o merge só sobe o tier (ou confirma fast sem sinal duro); qualquer falha dele vale a heurística.
+  const heuristic = args.adaptive === 'on' ? triageTask({ task, context, spec, doneWhen: args.doneWhen, checks: args.checks }) : null
+  const triage = !heuristic
+    ? { adaptive: 'off', source: 'adaptive_off', tier: 'full', floor: 'full', reasons: [], features: null }
+    : triageClassifier
+      ? { adaptive: 'on', ...mergeTriage(heuristic, await Promise.resolve().then(() => triageClassifier({ task, context })).catch(() => ({ ok: false, error: 'classifier_failed' }))) }
+      : { adaptive: 'on', source: 'heuristic', ...heuristic }
   const readMeta = async dir => JSON.parse(await readFile(path.join(dir, 'run.meta.json'), 'utf8'))
-  const planRes = await resolveReuse({ repo, kind: 'plan', slot: planSlot, planningKey, workspace: startWorkspace, planArtifact: null, readJournal: readJournalFile, readMeta })
+  const planRes = await resolveReuse({ repo, kind: 'plan', slot: planSlot, planningKey, workspace: startWorkspace, planArtifact: null, readJournal: readJournalFile, readMeta, tier: triage.tier })
   // Tasks só se apoiam em um plano que passou na própria verificação de origem; senão, vale tasks_plan_mismatch.
-  const tasksRes = await resolveReuse({ repo, kind: 'tasks', slot: tasksSlot, planningKey, workspace: startWorkspace, planArtifact: planRes.ok ? planSlot.artifact : null, readJournal: readJournalFile, readMeta })
+  const tasksRes = await resolveReuse({ repo, kind: 'tasks', slot: tasksSlot, planningKey, workspace: startWorkspace, planArtifact: planRes.ok ? planSlot.artifact : null, readJournal: readJournalFile, readMeta, tier: triage.tier })
   const clarification = args.clarification ?? null
   if (clarification && pipeline.from !== 'clarify' && pipeline.from !== 'plan') throw pipelineStop(blockOf('clarification_stage_mismatch'))
   const decision = decidePipelineStages({ pipeline, planRes, tasksRes, planSlot, clarification })
   if (decision.action === 'block') throw pipelineStop(blockOf(decision.reason, { ...(decision.clarification ? { clarification: decision.clarification } : {}), ...(decision.next ? { next: decision.next } : {}) }))
   if (decision.action === 'questions') throw pipelineStop({ status: 'needs_clarification', clarification: decision.clarification, next: 'clarify', runId, runDir: path.resolve(cwd, runDir), report: null })
   return {
-    runId, task, context, planSlot, tasksSlot, startWorkspace, planningInputs, planningKey, decision,
+    runId, task, context, planSlot, tasksSlot, startWorkspace, planningInputs, planningKey, decision, triage,
     planHash: decision.importedPlan?.contentHash ?? null,
     rejected: [...(planRes.rejected || []), ...(tasksRes.rejected || [])],
     startHash: { plan: planSlot.hash, tasks: tasksSlot.hash },
@@ -82,7 +92,7 @@ export async function writePrivateNew({ guard = null, runDir, dir, name, bytes }
 
 // Rascunho de fase: sela, valida e grava em phase-drafts/ antes de devolver o hash. Nunca publica no slot.
 export function makePreparePhaseArtifact({ runId, runDir, drafts, getPipelineState, snapshotNow, guard = null }) {
-  return async ({ kind, status, content, critic = null, planContentHash } = {}) => {
+  return async ({ kind, status, content, critic = null, planContentHash, tier } = {}) => {
     const pipelineState = getPipelineState()
     if (!pipelineState) throw new Error('phase_artifact_runtime_unavailable')
     if (!['plan', 'tasks'].includes(kind)) throw new Error('phase_artifact_invalid:kind')
@@ -101,6 +111,8 @@ export function makePreparePhaseArtifact({ runId, runDir, drafts, getPipelineSta
       planningKey: pipelineState.planningKey, planningInputs: pipelineState.planningInputs,
       source: { runId, runDir: `.graph-runs/${runId}`, seq: 1 }, workspace: pipelineState.startWorkspace,
       content: contentOut, critic, reason: null, ...(kind === 'tasks' ? { planContentHash } : {}),
+      // O motor pode subir o tier, nunca descer abaixo da triagem gravada no journal.
+      tier: maxTier(TIERS.includes(tier) ? tier : 'fast', pipelineState.triage?.tier ?? 'full'),
     }
     const artifact = sealArtifact(body)
     const valid = validateArtifact(artifact, kind)
@@ -120,18 +132,22 @@ export function makePreparePhaseArtifact({ runId, runDir, drafts, getPipelineSta
 
 // Aprovação de tasks: o ÚLTIMO voto do planReviewer entre a fronteira do estágio tasks e a transição precisa ser APPROVE.
 // Sem fronteira de tasks no journal, nega (fecha por falta de prova, sem valor padrão).
+// Tier fast (gravado pelo runner na fronteira do estágio): sem voto do planReviewer, vale a aprovação sintética do plan-approved.
 export function tasksReviewApproved(events, transitionSeq) {
   const boundary = events.filter(event => event.type === 'phase.stage.started' && event.payload?.stage === 'tasks' && event.seq < transitionSeq).at(-1)
   if (!boundary) return false
   const votes = events.filter(event => event.type === 'result' && event.seq > boundary.seq && event.seq < transitionSeq && event.payload?.role === 'planReviewer')
-  return votes.at(-1)?.result?.feedback?.kind === 'APPROVE'
+  if (votes.length) return votes.at(-1)?.result?.feedback?.kind === 'APPROVE'
+  if (boundary.payload?.tier !== 'fast') return false
+  return events.some(event => event.type === 'control.transition' && event.seq > boundary.seq && event.seq < transitionSeq && event.payload?.stage === 'plan-approved'
+    && event.payload?.checkpoint?.approvals?.planReview?.synthetic === true && event.payload.checkpoint.approvals.planReview.tier === 'fast' && event.payload.checkpoint.budgetPolicy?.tier === 'fast')
 }
 
 // R10a: fatos que o phase.reuse.resolved grava para reconstruir o pipelineState na retomada, sem resolver o reuso de novo.
 const importsOf = decision => ({ plan: decision.importedPlan?.contentHash ?? null, tasks: decision.importedTasks?.contentHash ?? null })
 const clarificationHashOf = context => (context ? sha256(canonicalJsonOf(context)) : null)
 export function reuseFactsOf(pipelineState) {
-  return { planningKey: pipelineState.planningKey, planningInputs: pipelineState.planningInputs, imports: importsOf(pipelineState.decision), clarificationContextHash: clarificationHashOf(pipelineState.decision.clarificationContext) }
+  return { planningKey: pipelineState.planningKey, planningInputs: pipelineState.planningInputs, imports: importsOf(pipelineState.decision), clarificationContextHash: clarificationHashOf(pipelineState.decision.clarificationContext), triage: pipelineState.triage ?? null }
 }
 
 // Grava os importados em phase-imports/ (wx, 0600), no mesmo molde dos rascunhos. A retomada confere cada um pelo hash do evento.
@@ -194,6 +210,8 @@ export async function reconstructPipelineState({ runDir, runId, reuse, planningI
   return {
     runId, planningKey: reuse.planningKey, planningInputs: reuse.planningInputs, startWorkspace: reuse.startWorkspace, startHash: reuse.startHash,
     rejected: reuse.rejected ?? [], planHash,
+    // Run anterior ao fluxo adaptativo não tem triagem no journal: vale o fluxo completo.
+    triage: reuse.triage ?? { adaptive: 'off', source: 'legacy', tier: 'full', floor: 'full', reasons: [], features: null },
     decision: { stages: [...reuse.decided.stages], pipelineTo: reuse.decided.pipelineTo ?? null, importedPlan: plan, importedTasks: tasks, clarificationContext },
   }
 }
@@ -368,7 +386,8 @@ export async function runPipelineStages({ invoke, runtime, args, checks, checkCo
         drafts.push({ kind, status: draft.status, contentHash: approval.contentHash, artifact: draft })
       }
     }
-    if (!entering) await emit({ type: 'phase.stage.started', phase: 'Prepare', payload: { index: index + 1, stage, pipelineTo: stageTo, carry, baseReservedByRole: baseReservedFor(stage) } })
+    const stageTier = maxTier(pipelineState.triage?.tier ?? 'full', importedPlan ? importedPlan.tier ?? 'full' : 'fast', importedTasks ? importedTasks.tier ?? 'full' : 'fast')
+    if (!entering) await emit({ type: 'phase.stage.started', phase: 'Prepare', payload: { index: index + 1, stage, pipelineTo: stageTo, carry, baseReservedByRole: baseReservedFor(stage), tier: stageTier } })
     // resumeCheckpoint é explícito em toda invocação: a runtime herda o do runGraph, e só o estágio reinvocado no caso B pode recebê-lo.
     const stageRuntime = {
       ...runtime, stageCarry: carry,
@@ -384,6 +403,10 @@ export async function runPipelineStages({ invoke, runtime, args, checks, checkCo
       // baseArgs herda checkContract da run; o estágio só de leitura não o recebe.
       ...(readOnly ? { checkContract: undefined } : {}),
       stage, pipelineTo: stageTo,
+      // plan seguido de tasks (implemente): o tasks revisa o grafo completo, então o plan não gasta uma revisão própria.
+      ...(stage === 'plan' && stages[index + 1] === 'tasks' ? { planReviewDeferred: true } : {}),
+      // Tier do estágio: o da triagem, subido pelo tier gravado no artefato importado (artefato sem tier conta como full).
+      tier: stageTier,
       importedPlan: importedPlan ? importedPlan.content : null,
       importedTasks: importedTasks ? importedTasks.content : null,
       // M7: a aprovação do plano importado (critic) vai junto; o clarify a reaproveita para publicar as perguntas.

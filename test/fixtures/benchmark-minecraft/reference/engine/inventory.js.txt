@@ -1,0 +1,55 @@
+// Referência do benchmark.
+import { getItem } from './blocks.js'
+
+const clone = inv => ({ slots: inv.slots.map(s => (s ? { ...s } : null)), selected: inv.selected })
+
+export const createInventory = () => ({ slots: Array(36).fill(null), selected: 0 })
+
+export function addItem(inv, id, count) {
+  const next = clone(inv)
+  const max = getItem(id).maxStack
+  let left = count
+  for (const s of next.slots) {
+    if (left === 0) break
+    if (s && s.id === id && s.count < max) { const take = Math.min(max - s.count, left); s.count += take; left -= take }
+  }
+  for (let i = 0; i < next.slots.length && left > 0; i++) {
+    if (next.slots[i]) continue
+    const take = Math.min(max, left)
+    next.slots[i] = { id, count: take }
+    left -= take
+  }
+  return { inventory: next, leftover: left }
+}
+
+export function removeFromSlot(inv, slot, count) {
+  const next = clone(inv)
+  const s = next.slots[slot]
+  if (!s) return next
+  s.count -= Math.min(count, s.count)
+  if (s.count === 0) next.slots[slot] = null
+  return next
+}
+
+export function selectSlot(inv, index) {
+  if (!Number.isInteger(index) || index < 0 || index > 8) throw new RangeError(`slot fora da hotbar: ${index}`)
+  return { ...clone(inv), selected: index }
+}
+
+export const scrollSelection = (inv, delta) => ({ ...clone(inv), selected: (((inv.selected + delta) % 9) + 9) % 9 })
+
+export function moveStack(inv, from, to) {
+  const next = clone(inv)
+  const a = next.slots[from], b = next.slots[to]
+  if (!a || from === to) return next
+  if (!b) { next.slots[to] = a; next.slots[from] = null }
+  else if (b.id === a.id) {
+    const take = Math.min(getItem(a.id).maxStack - b.count, a.count)
+    b.count += take
+    a.count -= take
+    if (a.count === 0) next.slots[from] = null
+  } else { next.slots[to] = a; next.slots[from] = b }
+  return next
+}
+
+export const selectedItem = inv => (inv.slots[inv.selected] ? { ...inv.slots[inv.selected] } : null)

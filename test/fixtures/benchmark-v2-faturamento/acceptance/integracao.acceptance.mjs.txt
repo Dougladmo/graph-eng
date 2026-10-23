@@ -1,0 +1,26 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import os from 'node:os'
+import { carregarContexto } from '../src/dados.mjs'
+import { gerarFatura } from '../src/fatura.mjs'
+import { relatorioCSV } from '../src/relatorio.mjs'
+
+const ler = nome => JSON.parse(readFileSync(new URL(`../data/${nome}.json`, import.meta.url), 'utf8'))
+
+test('integração dados: carregarContexto lê as quatro tabelas mesmo com outro diretório corrente', async () => {
+  process.chdir(os.tmpdir())
+  assert.deepEqual(await carregarContexto(), { feriados: ler('feriados'), cambio: ler('cambio'), impostos: ler('impostos'), cupons: ler('cupons') })
+})
+
+test('integração ponta a ponta: 120 pedidos de exemplo viram o relatório esperado', async () => {
+  const contexto = await carregarContexto()
+  const faturas = ler('pedidos-exemplo').map(pedido => gerarFatura(pedido, contexto))
+  assert.equal(faturas.length, 120)
+  const csv = relatorioCSV(faturas)
+  const linhas = csv.split('\n')
+  assert.equal(linhas.length, 123)
+  assert.equal(linhas.at(-2), 'TOTAL;;;3499397,98;101375,59;439333,26;3837355,65')
+  assert.equal(createHash('sha256').update(csv).digest('hex'), 'cebc420cb8ee825372c8d411827a4a0f826dde65d5a8e6bb5f5815c33182c4c9')
+})

@@ -1,5 +1,71 @@
 # Changelog
 
+## 1.1.0 — 2026-10-23
+
+### Added
+
+- **Advisor flow (`grapheng implemente <task> --flow advisor`).** A short alternative to the graph for tasks a single implementer can carry:
+  - 1 planner (Sonnet, read-only) and 1 plan review (Opus, read-only). A `REVISE` does not open another round: its notes go straight to the implementer.
+  - 1 continuous implementer session (Sonnet, with `--advisor opus`) writes all the code with the whole context. Its Bash runs only `npm test` and `npm run build`, and it may consult the Opus advisor at most 3 times.
+  - The supervisor's external gate (`npm test` and `npm run build`) ends the run. If it fails, the implementer gets one more session with the failure output, up to 2 sessions.
+  - Cost is split into input, cache write, cache read and output, and advisor calls are counted from the session transcript.
+  - Minecraft MVP benchmark (22/10): 55/55 hidden tests and the game on screen, for US$ 1.79 in 662 s, against US$ 5.97 and 1375 s for the single Opus agent.
+- **`--executor haiku` in the advisor flow.** Swaps only the implementer model; planner and plan review stay the same, and Opus stays the advisor. Accepts `sonnet` (default) or `haiku`, on the Claude host only.
+  - Minecraft MVP benchmark (23/10): 54/55 and the game on screen, but US$ 2.33 in 1222 s. Haiku called the advisor once (US$ 1.21 of Opus) and needed far more turns, so Sonnet stays the default.
+- **Adaptive flow (tiers).** The runner triages each task before planning and picks `fast`, `standard` or `full`. Simple tasks no longer go through every review:
+  - `fast`: the planner reads the code itself, with no research nodes, no design and a synthetic plan review. Implement, checks, verify, the final critic and synth always run.
+  - `standard`: adds the real plan review on Opus.
+  - `full`: research, design and both reviews, as before.
+  - The engine can only raise the tier, never lower it. It raises it when the planner says `complex`, when the plan is over the tier's node cap, or when a `risk: high` node, a design node or a research node shows up.
+  - The tier is recorded in the journal and in the published artifact. Reuse rejects an artifact with a lower tier (`reuse_tier_lower`).
+  - On by default for pipeline runs. `--adaptive off` or `GRAPH_ENG_ADAPTIVE=off` restore the full flow. Changing it on resume blocks with `resume_adaptive_changed`.
+- **Optional complexity classifier (Jev 1.13 via OpenRouter).**
+  - Opt-in only. Configure it with `node bin/graph-run.mjs triage-config`, which reads the key from stdin into `~/.graph-eng/config.json` (0600, outside any git repo), or set `OPENROUTER_API_KEY` together with `GRAPH_ENG_TRIAGE_CLASSIFIER=on`.
+  - It makes two calls with the options in reversed order. If the answers disagree, or the call times out or fails, the heuristic applies.
+  - It can only raise the tier, except standard to fast at high confidence with no hard signal.
+- **Research stage.**
+  - On Claude, research nodes get `WebSearch` and `WebFetch`. Only the read-only researcher has web access.
+  - Research nodes run in their own wider lane: twice the effort width, capped at 4.
+  - A Haiku notetaker merges the findings of two or more research nodes, conflicts included, for the decomposer.
+
+### Changed
+
+- **Model roles on Claude.** Opus only reviews: the plan and the design.
+  - Sonnet plans, researches (new `researcher` role), designs (new `designer` role) and runs the final critic.
+  - Haiku implements, verifies, writes the research notes (new `notetaker` role) and synthesizes.
+  - In the chess benchmark (21/10), four Opus calls were 89% of the run cost and did not improve acceptance.
+- **Reasoning effort reaches the CLI.** The workflow already asked for an effort per call, but the Claude adapter dropped it. It is now passed as `--effort`.
+  - Every role defaults to `medium`.
+  - `--effort max` raises only the strong roles, the escalation vote and high-risk nodes to `high`.
+- **No duplicate plan review in `implemente`.** The plan stage no longer reviews its research-only plan, because the tasks stage reviews the full implementation graph.
+- **Polish runs only with `--effort max`.** Each polish area used to reopen verification for all of its nodes (about 6 minutes in the chess run) only to fix style.
+- **Smaller graphs and a leaner critic.**
+  - Planners are told to prefer 2–4 cohesive implement nodes.
+  - The final critic gets a reading budget instead of re-reading the repository.
+
+### Fixed
+
+- **The design review now repairs a node that has several blocking items.** The repair gate expected one blocking item per node, so a FIX_LOCAL with two items on the same design node failed closed with `feedback_scope_invalid` and never tried the repair. Seen in the faturamento benchmark (21/10).
+- **In the lean plan stage, implement or design nodes sketched by the planner become findings** instead of blocking the run with `plan_stage_non_research_node`. The tasks stage builds the real nodes. Seen in the chess benchmark (21/10).
+- **The plan stage no longer writes done criteria about the research.** With no user criteria, the planner wrote `doneWhen` such as "each contract has its rules listed with file:line". Those criteria stay locked until the final critic, which then asked the implementation for a record that no node could write, and the run blocked with `critic_fix_incomplete` while external acceptance was 31/31. The prompt now says `doneWhen` describes the finished task, never the research. Seen in the faturamento benchmark (21/10).
+- **The task decomposer gets the manifest rule.** Its prompt did not say that `files`, `inputs` and `outputs` take one file path per entry, so it listed the `data/` folder and the run blocked with `invalid_dag` before any node ran. Both planner prompts now also say "no directories". Seen in the faturamento benchmark (21/10).
+- **A local plan correction can now add or remove deps of a node the reviewer named, while that node has not run.** The reviewer asked "N2 depends on N1" as FIX_LOCAL; the correction did exactly that and the run blocked with `local_plan_correction_changed_structure` before any node ran. Deps of nodes the reviewer did not name, or of nodes that already ran, stay locked. Seen in the Minecraft MVP benchmark (21/10).
+- **The plan stage is told that goal and doneWhen are about the whole task, not the research stage**, with a bad and a good example. The earlier sentence was not enough: Sonnet still wrote goal "Investigation plan…" and doneWhen "the engine contract is mapped to each stub". Seen in the Minecraft MVP benchmark (21/10).
+- **Each pipeline stage gets its own pool of 2 local repairs.** The pool used to carry across plan, tasks and implement, so the Minecraft benchmark blocked in the plan stage (critic plus two plan reviews) before any code ran. A stage now starts with the pool empty; the boundary carry still records what the previous stage spent, and resume resets the counter at the boundary instead of reading it as `resume_control_counters_decreased`. Structural replans still carry over.
+- **Code nodes get their own repairs.** The run's pool of 2 local repairs was shared by plan, design and code, and in the Minecraft benchmark plan and design spent it before any code node failed verify, so the node stopped with no repair. An implement node now repairs up to the per-node limit (2) without touching the pool, and the budget sets aside one repair (1 executor + 2 verifier calls) per pending implement node. Research and design repairs still share the pool of 2.
+- **A node the verifier rejected now says why in the block reason.** A failed node returned without a note, so the next node hit `provenance_unsealed_window:<id> (causa: sem nota registrada)`. The note now lists the verifier's issues and why repair stopped: no progress, no budget slots, or the run's local repairs used up (2/2).
+- **A run blocked by the final critic now carries the reason.** The final result had no top-level `feedback`, so `run.finished` recorded `feedback: null` and the benchmark only saw `engine_blocked`.
+- **Design and research nodes keep receiving the worker's memory** after moving to the new `designer` and `researcher` roles.
+- **Benchmark tests no longer fail inside `.claude/worktrees/`.** Their workspaces were created inside the repository, so in a worktree under `.claude` the `CWD_PROTECTED_PATH` guard refused the writer role before the spawn. They now live in the system temp directory.
+- **Agents and trusted checks no longer inherit graph-eng secrets.** Child processes used to inherit the whole environment. They now get it without `OPENROUTER_API_KEY` and without `GRAPH_ENG_*`.
+
+- **A local plan correction no longer blocks when the reviewer names a node it left out of `affectedNodes`.** The correction may now change every node the reason names, and its prompt lists those nodes. The plan reviewer is also told that `doneWhen` is locked and that `affectedNodes` must list every node it asks to change.
+  - Seen in the chess benchmark (21/10): the reviewer asked for a change to N1 but listed only N2, so the run stopped with `local_plan_correction_changed_structure`.
+
+### Compatibility
+
+- Checkpoints from before this release do not resume, because the engine source hash changed. Start a new run.
+
 ## 1.0.0 — 2026-10-21
 
 1.0 replaces the 0.1 engine with an **adaptive bidirectional orchestration**. The plan runs as a graph, and reviewer feedback flows back through it with four decisions, all backed by evidence:

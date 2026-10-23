@@ -1,0 +1,26 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { relatorioCSV } from '../src/relatorio.mjs'
+
+const fatura = (id, vencimento, total) => ({ id, emissao: '2026-01-02', vencimento, uf: 'SP', itens: [], subtotal: total, desconto: 0, imposto: 0, total, avisos: [] })
+const CABECALHO = 'id;emissao;vencimento;subtotal;desconto;imposto;total'
+
+test('relatorio: lista vazia tem cabeçalho e TOTAL zerado', () => {
+  assert.equal(relatorioCSV([]), `${CABECALHO}\nTOTAL;;;0,00;0,00;0,00;0,00\n`)
+})
+
+test('relatorio: ordena por vencimento e id em ponto de código, sem alterar a entrada', () => {
+  const entrada = [fatura('PED-9', '2026-01-10', 100), fatura('b', '2026-01-09', 1), fatura('PED-10', '2026-01-10', 123456), fatura('B', '2026-01-09', 2)]
+  const copia = JSON.stringify(entrada)
+  const linhas = relatorioCSV(entrada).split('\n')
+  assert.deepEqual(linhas.slice(1, 5).map(linha => linha.split(';')[0]), ['B', 'b', 'PED-10', 'PED-9'])
+  assert.equal(linhas[3], 'PED-10;2026-01-02;2026-01-10;1234,56;0,00;0,00;1234,56')
+  assert.equal(linhas[5], 'TOTAL;;;1235,59;0,00;0,00;1235,59')
+  assert.equal(linhas[6], '')
+  assert.equal(JSON.stringify(entrada), copia)
+})
+
+test('relatorio: id com separador ou aspas vai entre aspas duplas', () => {
+  const linhas = relatorioCSV([fatura('A;"B"', '2026-01-09', 5)]).split('\n')
+  assert.equal(linhas[1], '"A;""B""";2026-01-02;2026-01-09;0,05;0,00;0,00;0,05')
+})

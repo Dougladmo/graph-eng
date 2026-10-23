@@ -61,8 +61,65 @@ o motivo vão para o journal. Os motivos possíveis são `workspace_changed`, `t
 `tasks_plan_mismatch`, `source_unverified`, `artifact_tampered`, `needs_clarification` e
 `clarification_stale`.
 
-**Sem atalho trivial.** Cada modo roda o esqueleto inteiro de fases. O motor não tem um caminho de um nó
-só para tarefa pequena: quem decide se a tarefa merece o grafo é o usuário (seção 11).
+**Fluxo adaptativo (tiers).** Tarefa simples não passa por todas as revisões. Antes do primeiro estágio, o
+runner faz a triagem da tarefa (`bin/triage.mjs`, pura e sem rede) e escolhe um de três tiers:
+
+| Fase | fast | standard | full |
+| --- | --- | --- | --- |
+| planner (Sonnet) | sim | sim | sim |
+| nós de pesquisa (Sonnet, com web no Claude) + notetaker (Haiku) | não | não | sim |
+| critic do estágio plan | sintético | sintético | real |
+| decomposer (Sonnet) | sim | sim | sim |
+| revisão do plano (Opus) | sintética | real | real |
+| nós de design (Sonnet) + revisão do design (Opus) | não | não | sim |
+| implement (Haiku), checks, verify (Haiku), critic final (Sonnet), synth (Haiku) | sim | sim | sim |
+
+- **Sinais da triagem** (o tamanho do texto nunca conta). Cada sinal só sobe o tier a partir de fast:
+  - sem check e sem critério verificável: `full` (`ambiguous_spec`);
+  - domínio de risco (dinheiro, fatura, pagamento, auth, senha, token, migração, permissão, produção, exclusão
+    de dados): `standard` (`risk_domain`);
+  - contrato fora do texto (`docs/`, `spec`) ou aviso de que o teste visível não basta: `standard`
+    (`external_contracts`);
+  - 8 ou mais caminhos de arquivo citados, ou 3 camadas (front, back, banco, infra): `full`;
+  - 5 a 7 arquivos: `standard`, como sinal brando;
+  - texto pedindo para pular revisão ou tratar como simples: `standard` (`injection_suspect`). Esse texto nunca
+    rebaixa o tier.
+- **O motor só sobe o tier.** Logo depois do plano, o tier sobe se acontecer qualquer um destes:
+  - o planner disser `complex`;
+  - o plano passar do teto de nós (fast 3, standard 4);
+  - aparecer nó `risk: high` ou nó de design;
+  - o planner pedir nós de pesquisa.
+  Subir só acrescenta revisão real. Não existe caminho para rebaixar.
+- **Aprovação sintética.** `{kind: 'APPROVE', synthetic: true, reason: 'triage_<tier>', tier}`. O runner só
+  aceita um plan-review sintético quando o tier gravado na fronteira do estágio é `fast`, no journal e no
+  checkpoint.
+- **Proveniência do tier.** O artefato publicado grava `tier`, e artefato sem tier conta como `full`. O reuso
+  recusa artefato de tier menor que o vigente, com `reuse_tier_lower`. A triagem vai para o journal em
+  `phase.reuse.resolved`, e o tier de cada estágio vai em `phase.stage.started`.
+- **Liga e desliga.** O tier é argumento interno: quem passa `tier` recebe `internal_arg_forbidden`. O
+  adaptativo vem ligado nas runs com pipeline. `--adaptive off` ou `GRAPH_ENG_ADAPTIVE=off` voltam ao fluxo
+  completo. Mudar o adaptive numa retomada bloqueia com `resume_adaptive_changed`, e run anterior ao adaptativo
+  conta como off.
+- **Nunca pulam.** Verify, checks confiáveis, gate final com receipts e critic final rodam em todo tier. Quando
+  algo falha, o fluxo segue o caminho de reparo, replan ou bloqueio de sempre, então falha nunca vira DONE.
+
+**Classificador opcional (Jev).** Quem quiser mais adaptação liga o Jev 1.13 (TypeSafe, modelo System One) via
+OpenRouter (`bin/triage-classifier.mjs`).
+- Só liga com chave **e** opt-in. Configuração:
+  - `node bin/graph-run.mjs triage-config`, com a chave no stdin;
+  - grava `~/.graph-eng/config.json` em modo 0600 e fora de repo git;
+  - ou `OPENROUTER_API_KEY` com `GRAPH_ENG_TRIAGE_CLASSIFIER=on`.
+- Faz duas chamadas com as opções em ordem invertida, porque o 1.13 tende à primeira opção. Se as respostas
+  divergirem, vale a heurística. Timeout de 5 s, HTTP de erro, JSON ruim ou opção desconhecida também deixam
+  valer a heurística, e só o código do erro vai para o journal.
+- O merge só sobe o tier. A única descida é de standard para fast, quando valem as três condições:
+  - confiança >= 0,8;
+  - nenhum sinal duro da heurística;
+  - nenhuma suspeita de injeção.
+- A chave nunca chega aos agentes nem aos checks. Os processos filhos recebem o ambiente sem
+  `OPENROUTER_API_KEY` e sem `GRAPH_ENG_*` (`bin/child-env.mjs`).
+- O Laya (pesos abertos, auto-hospedado em Python) não está no OpenRouter. Fica como alternativa documentada,
+  sem código.
 
 ## 3. Papéis fixos por host
 
@@ -71,11 +128,21 @@ e o workflow confere a mesma tabela em `REQUIRED_MODELS` antes de rodar.
 
 | Papel | Claude Code | Codex |
 | --- | --- | --- |
-| planner, planReviewer, designReviewer, critic (papéis fortes) | opus | gpt-6.1-sol |
-| executor, verifier, synth (papéis operacionais) | haiku | gpt-6-luna |
+| planReviewer, designReviewer (só revisam: o carimbo final) | opus | gpt-6.1-sol |
+| planner, researcher (nós de pesquisa, com web), designer (nós de design), critic | sonnet | gpt-6.1-sol |
+| executor, verifier, synth, notetaker | haiku | gpt-6-luna |
 
-Papéis fortes decidem o plano, revisam o design e julgam a entrega. Papéis operacionais executam, verificam
-nós e sintetizam. Se o host não expõe o modelo exigido, a run bloqueia com
+No Claude, o Opus só revisa: o plano e o design, os gates em que um erro custa o grafo inteiro. O Sonnet pesquisa,
+planeja e desenha. O Haiku implementa, verifica, consolida as notas da pesquisa e sintetiza. O critic final
+continua no Sonnet, porque ele mede o resultado contra receipts de checks reais e não precisa do carimbo caro.
+
+O esforço de raciocínio (`--effort` do Claude Code) é `medium` em todo papel. Com `--effort max`, só os papéis
+fortes, o voto de escalonamento e os nós de risco alto sobem para `high`. No benchmark de xadrez (21/10), quatro
+chamadas de Opus no esforço padrão do CLI respondiam por 89% do custo, sem ganho de aceite.
+
+Também por custo:
+- no `implemente`, o estágio plan não revisa o plano de pesquisa, porque o estágio tasks revisa o grafo completo;
+- o polish só roda com `--effort max`. Se o host não expõe o modelo exigido, a run bloqueia com
 `trusted_host_capability_or_model_policy_unavailable`. Não há troca silenciosa de modelo nem API alternativa.
 
 Quem escreve não verifica. Cada implementação é verificada por outro agente, pelo mesmo motivo de viés de
@@ -92,6 +159,9 @@ enfraquece checks nem critic.
 | `low` | 1 | 3 |
 | `medium` (padrão) | 2 | 6 |
 | `max` | 2 | 10 |
+
+Os nós de pesquisa só leem e rodam numa raia própria, com o dobro da largura do effort e teto de 4. O total em
+voo nunca passa desse teto. No tier fast o teto de nós é 3, e no standard é 4: o menor entre tier e effort.
 
 O orçamento é contado **por papel**, em `bin/budget-policy.mjs`. Planner, planReviewer, designReviewer e
 critic têm 5 chamadas cada, e synth tem 3. Executor e verifier não têm teto fixo: o motor calcula a demanda
@@ -150,7 +220,8 @@ No Claude Code, cada papel roda com `claude -p` isolado do ambiente do usuário:
 - `--disable-slash-commands`: nenhuma skill ou command herdado.
 - `--setting-sources project,local`: nenhum settings global.
 - `--permission-mode dontAsk`: o que não tem regra explícita é negado.
-- Leitura: `--allowedTools Read,Glob,Grep`. Escrita: `Edit(./**)`, só dentro do cwd. As negações voltam no
+- Leitura: `--allowedTools Read,Glob,Grep`. Só o researcher ganha também `WebSearch,WebFetch`, para ler a doc
+  atual das bibliotecas na versão instalada; nenhum papel de escrita tem web. Escrita: `Edit(./**)`, só dentro do cwd. As negações voltam no
   resultado, em `permissionDenials`.
 - Um cwd com segmento `.claude` é recusado para papel de escrita, com `CWD_PROTECTED_PATH`, porque o
   `dontAsk` negaria o Write nesse caminho.

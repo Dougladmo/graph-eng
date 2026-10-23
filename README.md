@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="stars"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="version 1.0.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="version 1.1.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat-square" alt="MIT license"></a>
   <a href="#the-five-commands"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="Claude Code plugin"></a>
   <a href="#the-five-commands"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="Codex plugin"></a>
@@ -37,7 +37,7 @@
 </p>
 
 <p align="center">
-  <strong>strong role plans and reviews · cheap role executes · real checks per node · DONE only with evidence · live panel</strong><br>
+  <strong>strong role only reviews · mid role plans · cheap role executes · flow sized to the task · real checks per node · DONE only with evidence · live panel</strong><br>
   <sub>graph-eng plans or runs complex tasks as small graphs, with roles set by the host, trusted checks and per-run evidence. The package keeps the <code>graph-eng</code> identity and finds <code>skills/</code> in a portable location.</sub>
 </p>
 
@@ -53,19 +53,19 @@
 
 ## In 30 seconds
 
-> You describe the task. A **strong** model plans and reviews, **cheap** models do the work, and the supervisor runs **real tests** at every step. The run only ends as **DONE** when there is evidence; otherwise it stops with a **readable reason**.
+> You describe the task. A **mid** model plans, the **strong** model only gives the final review, **cheap** models do the work, and the supervisor runs **real tests** at every step. The run only ends as **DONE** when there is evidence; otherwise it stops with a **readable reason**.
 >
 > The point: complex tasks without paying the strong model's price for every line of work. The expensive model only thinks; the cheap one does the volume. See [why split the models](#benchmark).
 
 | | |
 | --- | --- |
-| 🧠 **Plans strong** | The host's strong model builds the plan as a graph and reviews every stage. |
+| 🧠 **Reviews strong** | A mid model builds the plan as a graph; the strong model only stamps the plan and the design. Small tasks skip the heavy review. |
 | ⚙️ **Executes cheap** | The host's operational model, cheaper, does the work of each node. |
 | 🧪 **Checks with tests** | `node --test` on each node's files, and the whole suite at the end. |
 | 🔁 **Fixes along the way** | Reviewer feedback flows back through the graph: redo a node, replan, or stop. |
 | 🔒 **No false DONE** | Without passing tests, an approving critic and current evidence, DONE is denied. |
 
-Current version: **1.0.0** · see the [CHANGELOG](CHANGELOG.md).
+Current version: **1.1.0** · see the [CHANGELOG](CHANGELOG.md).
 
 ## Installation
 
@@ -140,17 +140,43 @@ flowchart TD
 
 ### Who does what
 
-Each role's model is fixed per host (Claude Code or Codex): strong to plan and review, operational to execute. There is no flag to change it.
+Each role's model is fixed per host. There is no flag to change it. The strong model only reviews: it gives the final stamp on the plan and the design. The mid model thinks, the cheap one does the volume. Hosts with only two models use the strong one for the mid roles.
 
 | Role | Kind | What it does |
 | --- | --- | --- |
-| Planner | 🧠 strong | Builds the plan as a graph, with done criteria (`doneWhen`). |
-| Reviewers (plan and design) | 🧠 strong | Approve, or send it back with the reason. |
-| Critic | 🧠 strong | Checks every done criterion against the evidence and decides. |
+| Researchers | mid | Read the code and, on Claude, current docs on the web. They run in parallel. |
+| Notetaker | ⚙️ cheap | Merges the researchers' notes into one summary and flags conflicts. |
+| Planner | mid | Builds the plan as a graph, with done criteria (`doneWhen`). |
+| Plan reviewer | 🧠 strong | Approves, or sends it back with the reason. |
+| Designer | mid | Writes the design for the nodes that need one. |
+| Design reviewer | 🧠 strong | Approves the design, or sends it back. |
+| Critic | mid | Checks every done criterion against the evidence and decides. |
 | Executor | ⚙️ cheap | Does one node's work, only in the files granted to it. |
 | Verifier | ⚙️ cheap | Reads what the executor did and the test receipts. |
 | Synth | ⚙️ cheap | Writes the final summary. |
 | Supervisor | 🧪 code | Runs the tests, seals the evidence and denies DONE without proof. It is not a model. |
+
+Every role runs at `medium` effort.
+
+### Adaptive flow
+
+Not every task needs the whole cycle. Before planning, the runner triages the task and picks a tier:
+
+| Tier | When | What runs |
+| --- | --- | --- |
+| ⚡ `fast` | small, local change with a runnable check | plan → implement → verify → critic |
+| ⚖️ `standard` | several files, or a sensitive domain (money, auth, production data) | adds the strong plan review |
+| 🧭 `full` | broad or unclear task | adds research, design and the strong design review |
+
+Verify, the checks and the final critic run in every tier. The engine can only raise the tier (a design node, a high-risk node, a large plan), never lower it. The decision and its reasons go to the run journal. `--adaptive off` forces the complete flow.
+
+Optional classifier: with an OpenRouter key, a small external classifier (Jev 1.13 by TypeSafe) helps the triage. Without the key, or on any failure, the heuristic alone decides. To turn it on, run this in your own terminal and paste the key when asked:
+
+```bash
+node bin/graph-run.mjs triage-config
+```
+
+The key is saved in `~/.graph-eng/config.json` with mode 0600 and never reaches the agents.
 
 ### The four decisions
 
@@ -241,7 +267,7 @@ Running the executor, verifier and synth calls on the strong model would cost ab
 
 ## Execution details
 
-Effort accepts `low`, `medium` (default) or `max`, in the separate form (`--effort max`); `--effort` overrides the configuration in `plan`, `clarify`, `tasks` and `implemente`. Roles and models are fixed by the trusted Claude or Codex adapter. There are no public flags for models, roles, width or internal limits.
+Effort accepts `low`, `medium` (default) or `max`, in the separate form (`--effort max`); `--effort` overrides the configuration in `plan`, `clarify`, `tasks` and `implemente`. Roles and models are fixed by the trusted Claude or Codex adapter. There are no public flags for models, roles, width or internal limits. `--adaptive on|off` (default `on`) turns the tiers on or off; see [Adaptive flow](#adaptive-flow).
 
 The execution adapter in this release only supports the Node native test runner, in repositories with a readable `package.json` and `scripts.test` set to exactly `node --test`. Vitest, Jest, scripts with extra flags and repositories without that contract produce `BLOCK` for `implemente`; `plan` still works. Each node gets a local selection derived from the `inputs`, `outputs` and `files` the supervisor approved. A known internal mapping runs the affected tests; without a complete mapping, coverage is marked as limited and only the applicable `node --check` runs plus the contract and grant validation. The final gate runs the whole suite with concurrency 2, only after all polish. Checks use `process.execPath`, explicit argv and spawn without a shell. Each run writes its selection and receipts to `.graph-runs/` in the repository.
 

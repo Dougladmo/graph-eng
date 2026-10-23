@@ -10,6 +10,8 @@ import { allocateBudget, areasForImplementIds, polishAffectedClosure, polishReva
 import { compileWorkflow } from './workflow-source.mjs'
 import { createRunState, TRUSTED_STATE_FILES } from './run-state.mjs'
 import { createIntegrityGuard } from './run-integrity.mjs'
+import { tierRank } from './triage.mjs'
+import { createTriageClassifier, writeClassifierConfig } from './triage-classifier.mjs'
 import { baseReservedFor, blockOf, isReadOnlyStage, makePreparePhaseArtifact, pipelineStop, preparePipeline, reconstructPipelineState, reuseFactsOf, runPipelineStages, TOMBSTONE_STAGES, tasksReviewApproved, writePhaseImports } from './phase-pipeline.mjs'
 import { workspaceOf } from './phase-artifacts.mjs'
 import { createEvidence } from './run-evidence.mjs'
@@ -88,7 +90,7 @@ const APPROVAL_STAGES = ['plan-artifact-approved', 'plan-needs-clarification', '
 // Em que estágio cada decisão sem checkpoint (aprovação ou tombstone) pode aparecer (A1 do critic R10).
 const DECISION_BOUNDARY = { 'plan-artifact-approved': ['plan', 'clarify'], 'plan-needs-clarification': ['plan', 'clarify'], 'plan-artifact-rejected': ['plan'], 'tasks-approved': ['tasks'], 'tasks-rejected': ['tasks'] }
 
-function validateControlCheckpoint(cp, event, { runId, expectedGuards, originalArgs, approvedCriteria, expectedMode, boundaryStage = null }) {
+function validateControlCheckpoint(cp, event, { runId, expectedGuards, originalArgs, approvedCriteria, expectedMode, boundaryStage = null, boundaryTier = 'full' }) {
   const invalid = reason => `resume_control_checkpoint_invalid:${event.seq}:${reason}`
   if (!cp || typeof cp !== 'object' || Array.isArray(cp) || cp.schemaVersion !== 2 || !Number.isSafeInteger(cp.planVersion) || cp.planVersion < 1 || event.planVersion !== cp.planVersion || cp.control?.stage !== event.payload?.stage) return invalid('identity')
   if (boundaryStage === null ? cp.control.pipelineStage !== undefined : cp.control.pipelineStage !== boundaryStage) return invalid('pipeline_stage')
@@ -134,7 +136,10 @@ function validateControlCheckpoint(cp, event, { runId, expectedGuards, originalA
   if (!preallocation) {
     if (!allocation || allocation.planVersion !== cp.planVersion || allocation.mode !== policy.mode || allocation.effort !== expectedEffort) return invalid('budget_allocation_missing')
     let normalized
-    try { normalized = normalizeBudgetNodes({ list: cp.plan.nodes, mode: policy.mode, rails: true, existingIds: [], researchImported: boundaryStage === 'tasks' || boundaryStage === 'implement' }).nodes }
+    // O motor só sobe o tier do estágio; checkpoint sem tier é do fluxo completo.
+    const policyTier = policy.tier ?? 'full'
+    if (tierRank(policyTier) < 0 || tierRank(policyTier) < tierRank(boundaryTier)) return invalid('tier')
+    try { normalized = normalizeBudgetNodes({ list: cp.plan.nodes, mode: policy.mode, rails: true, existingIds: [], researchImported: boundaryStage === 'tasks' || boundaryStage === 'implement', tier: policyTier }).nodes }
     catch { return invalid('budget_plan_normalization') }
     let recomputed
     try { recomputed = allocateBudget({
@@ -154,6 +159,8 @@ function validateControlCheckpoint(cp, event, { runId, expectedGuards, originalA
 export function validateResumeJournal({ events, runId, originalGuards, originalArgs }) {
   const approvedCriteria = { value: originalGuards.acceptedCriteria }
   let boundaryStage = null
+  let boundaryTier = 'full'
+  let decidedTier = 'full'
   let boundarySeq = null
   // R10d: carry gravado na fronteira corrente (caso C reinvoca com ele) e o payload do último checkpoint (caso B).
   let boundaryCarry = null
@@ -182,6 +189,8 @@ export function validateResumeJournal({ events, runId, originalGuards, originalA
       const decidedOk = Array.isArray(dec?.stages) && ACCEPTED_DECISIONS.some(set => sameJson(dec.stages, set))
       if (decided !== null || stageIndex !== 0 || !sameJson(payload.pipeline, originalArgs.pipeline) || !decidedOk) throw new Error(`resume_reuse_invalid:${event.seq}`)
       decided = { stages: [...dec.stages], pipelineTo: dec.pipelineTo ?? null }
+      decidedTier = payload.triage?.tier ?? 'full'
+      if (tierRank(decidedTier) < 0) throw new Error(`resume_reuse_invalid:${event.seq}:tier`)
       continue
     }
     if (event.type === 'phase.stage.started') {
@@ -200,11 +209,16 @@ export function validateResumeJournal({ events, runId, originalGuards, originalA
       if (!sameJson(payload.baseReservedByRole, reserved)) throw new Error(`resume_stage_boundary_invalid:${event.seq}:reserved`)
       if (RESUME_ROLES.some(role => historicLedger.limitsByRole[role] - historicLedger.usedByRole[role] < reserved[role])) throw new Error(`resume_stage_budget_exhausted:${event.seq}`)
       historicLedger = { ...historicLedger, reservedByRole: { ...reserved } }
+      // Pool de reparos locais é do estágio: recomeça na fronteira (o carry acima já conferiu o do estágio anterior).
+      historicCounters = { ...historicCounters, localRepairsUsed: 0 }
       activeAllocation = null
       checkpointSinceBoundary = false
       decisionsInBoundary = 0
       stageIndex = payload.index
       boundaryStage = payload.stage
+      // Tier do estágio, gravado pelo runner: nunca abaixo da triagem do phase.reuse.resolved.
+      boundaryTier = payload.tier ?? 'full'
+      if (tierRank(boundaryTier) < tierRank(decidedTier)) throw new Error(`resume_stage_boundary_invalid:${event.seq}:tier`)
       boundarySeq = event.seq
       boundaryCarry = carry
       stageBasePlanVersion = carry ? carry.planVersion + 1 : 1
@@ -242,7 +256,7 @@ export function validateResumeJournal({ events, runId, originalGuards, originalA
       continue
     }
     const cp = event.payload?.checkpoint
-    const invalid = validateControlCheckpoint(cp, event, { runId, expectedGuards: originalGuards, originalArgs: originalArgs, approvedCriteria, expectedMode: boundaryStage === 'plan' ? 'research' : undefined, boundaryStage })
+    const invalid = validateControlCheckpoint(cp, event, { runId, expectedGuards: originalGuards, originalArgs: originalArgs, approvedCriteria, expectedMode: boundaryStage === 'plan' ? 'research' : undefined, boundaryStage, boundaryTier })
     if (invalid) throw new Error(invalid)
     if (cp.control.counters.localRepairsUsed < historicCounters.localRepairsUsed || cp.control.counters.structuralReplansUsed < historicCounters.structuralReplansUsed) throw new Error(`resume_control_counters_decreased:${event.seq}`)
     const allocation = cp.budgetPolicy.allocation
@@ -395,9 +409,12 @@ function blockedResume(runId, reason) {
 
 const PIPELINE_PAIRS = new Set(['plan>plan', 'clarify>clarify', 'tasks>tasks', 'auto>implement'])
 const ACCEPTED_DECISIONS = [['plan'], ['clarify'], ['tasks'], ['implement'], ['plan', 'tasks']]
-const PIPELINE_INTERNAL_KEYS = ['stage', 'pipelineTo', 'importedPlan', 'importedTasks', 'clarificationContext', 'stageCarry']
+const PIPELINE_INTERNAL_KEYS = ['stage', 'pipelineTo', 'importedPlan', 'importedTasks', 'clarificationContext', 'stageCarry', 'planReviewDeferred', 'tier']
 // pipeline é interno ao runner/driver: só os pares fixos, sem plan do chamador e com runDir da própria run.
 function validatePipelineArgs(args, runId) {
+  // tier é decidido pela triagem do runner e gravado no journal; quem chama nunca o escolhe, com ou sem pipeline.
+  if (Object.hasOwn(args, 'tier')) return { reason: 'internal_arg_forbidden', detail: 'tier' }
+  if (args.adaptive !== undefined && !['on', 'off'].includes(args.adaptive)) return { reason: 'invalid_adaptive', detail: String(args.adaptive) }
   if (!Object.hasOwn(args, 'pipeline')) return null
   const pipeline = args.pipeline
   if (!pipeline || typeof pipeline !== 'object' || Array.isArray(pipeline) || Object.keys(pipeline).sort().join(',') !== 'from,to' || !PIPELINE_PAIRS.has(`${pipeline.from}>${pipeline.to}`)) return { reason: 'pipeline_invalid' }
@@ -409,7 +426,7 @@ function validatePipelineArgs(args, runId) {
 }
 
 function pickOriginalArgs(args) {
-  const keys = ['task', 'context', 'spec', 'doneWhen', 'mode', 'effort', 'checks', 'checkContract', 'nodeCheckPolicy', 'planOnly', 'pipeline']
+  const keys = ['task', 'context', 'spec', 'doneWhen', 'mode', 'effort', 'checks', 'checkContract', 'nodeCheckPolicy', 'planOnly', 'pipeline', 'adaptive']
   const original = Object.fromEntries(keys.filter(key => key !== 'planOnly' && Object.hasOwn(args, key)).map(key => [key, args[key]]))
   original.planOnly = args.planOnly === true
   // Internal sealed provenance for the initial planner reservation; never a resume knob.
@@ -475,8 +492,8 @@ async function assertNativeNodeCheckContract(cwd, contract) {
 const PHASES = { plan: 'Plan', clarify: 'Plan', 'plan-review': 'Plan review', work: 'Execute', repair: 'Verify', 'design-repair': 'Design review', verify: 'Verify', escalate: 'Verify', 'design-review': 'Design review', critic: 'Critic', polish: 'Synthesize', synth: 'Synthesize', judge: 'Research', 'draft-a': 'Research', 'draft-b': 'Research' }
 const ROLE_BY_LABEL = { plan: 'planner', clarify: 'planner', 'plan-review': 'planReviewer', 'design-review': 'designReviewer', critic: 'critic', synth: 'synth', verify: 'verifier', escalate: 'verifier' }
 const MODELS = {
-  claude: { planner: 'opus', planReviewer: 'opus', designReviewer: 'opus', executor: 'haiku', verifier: 'haiku', critic: 'opus', synth: 'haiku' },
-  codex: { planner: 'gpt-6.1-sol', planReviewer: 'gpt-6.1-sol', designReviewer: 'gpt-6.1-sol', executor: 'gpt-6-luna', verifier: 'gpt-6-luna', critic: 'gpt-6.1-sol', synth: 'gpt-6-luna' },
+  claude: { planner: 'sonnet', planReviewer: 'opus', designReviewer: 'opus', executor: 'haiku', verifier: 'haiku', critic: 'sonnet', synth: 'haiku', researcher: 'sonnet', designer: 'sonnet', notetaker: 'haiku' },
+  codex: { planner: 'gpt-6.1-sol', planReviewer: 'gpt-6.1-sol', designReviewer: 'gpt-6.1-sol', executor: 'gpt-6-luna', verifier: 'gpt-6-luna', critic: 'gpt-6.1-sol', synth: 'gpt-6-luna', researcher: 'gpt-6.1-sol', designer: 'gpt-6.1-sol', notetaker: 'gpt-6-luna' },
 }
 
 // Motivos de drenagem e de release não são sobrescritos pelo erro de heartbeat (C15 FIX3).
@@ -499,8 +516,10 @@ async function realpathNearest(target) {
 }
 const KEEP_RESULT = new Set(['agent_drain_unproven', 'lease_release_failed', 'workspace_release_failed'])
 
-export async function runGraph({ hostName, args: suppliedArgs = {}, cwd = process.cwd(), hostFactory = createHost, stateFactory = createRunState, evidenceFactory = createEvidence, resourceLockFactory = createResourceLock, processIdentityProvider = processIdentity, lookupProcessIdentityProvider = lookupProcessIdentity, stateDir: configuredStateDir, dataDir: configuredDataDir, workflowCompiler = compileWorkflow, heartbeatIntervalMs = 10_000, drainDeadlineMs = 30_000 } = {}) {
+export async function runGraph({ hostName, args: suppliedArgs = {}, cwd = process.cwd(), hostFactory = createHost, stateFactory = createRunState, evidenceFactory = createEvidence, resourceLockFactory = createResourceLock, processIdentityProvider = processIdentity, lookupProcessIdentityProvider = lookupProcessIdentity, stateDir: configuredStateDir, dataDir: configuredDataDir, workflowCompiler = compileWorkflow, heartbeatIntervalMs = 10_000, drainDeadlineMs = 30_000, env = process.env, triageClassifierFactory = createTriageClassifier } = {}) {
   let args = suppliedArgs
+  // Fluxo adaptativo (triagem por tier): ligado por padrão. args.adaptive ganha de GRAPH_ENG_ADAPTIVE; o valor resolvido fica no run.meta.
+  const envAdaptive = env?.GRAPH_ENG_ADAPTIVE === 'off' ? 'off' : env?.GRAPH_ENG_ADAPTIVE === 'on' ? 'on' : undefined
   if (!['claude', 'codex'].includes(hostName)) throw new Error('host precisa ser claude ou codex')
   let resumeMeta = null
   let resumeMetaRaw = null
@@ -519,8 +538,12 @@ export async function runGraph({ hostName, args: suppliedArgs = {}, cwd = proces
       if (Object.hasOwn(suppliedArgs, key) && canonicalJson(suppliedArgs[key]) !== canonicalJson(resumeMeta.originalArgs[key])) return blockedResume(requestedRunId, `resume_guard_changed:${key}`)
     }
     if (suppliedArgs.effort !== undefined && suppliedArgs.effort !== resumeMeta.originalArgs.effort) return blockedResume(requestedRunId, 'resume_effort_change_requires_new_run')
+    // O journal manda: ligar ou desligar o adaptive numa retomada (por arg ou ambiente) bloqueia, nos dois sentidos.
+    const resumeAdaptive = suppliedArgs.adaptive ?? envAdaptive
+    if (resumeMeta.originalArgs.pipeline && resumeAdaptive !== undefined && resumeAdaptive !== (resumeMeta.originalArgs.adaptive ?? 'off')) return blockedResume(requestedRunId, 'resume_adaptive_changed')
     args = { ...resumeMeta.originalArgs, runId: requestedRunId, runDir: suppliedArgs.runDir, resume: resumeRequest }
   }
+  if (!suppliedArgs?.resume && args.pipeline && args.adaptive === undefined) args = { ...args, adaptive: envAdaptive ?? 'on' }
   const budgetArgError = validateBudgetArgs(args)
   if (budgetArgError) return { status: 'blocked', feedback: { kind: 'BLOCK', ...budgetArgError, severity: 'critical', affectedNodes: [], evidenceIds: [] }, runId: String(args.runId || ''), report: null }
   const runId = String(args.runId || randomUUID())
@@ -714,7 +737,9 @@ export async function runGraph({ hostName, args: suppliedArgs = {}, cwd = proces
     await guardWatch.install()
     const loaded = await loadDecisional({ recoverPartial: resumeRequest?.recoverPartial === true })
     if (args.pipeline && !resumeMeta) {
-      pipelineState = await preparePipeline({ args, runId, runDir, cwd, cwdReal: await realpath(cwd), hostName, models, evidenceFactory, heavyLock, emit, integrity: guardWatch })
+      // Classificador opcional (Jev via OpenRouter): só com chave e opt-in; desligado ou com erro de config, segue a heurística.
+      const triageClassifier = args.adaptive === 'on' ? await Promise.resolve().then(() => triageClassifierFactory({ env })).catch(() => null) : null
+      pipelineState = await preparePipeline({ args, runId, runDir, cwd, cwdReal: await realpath(cwd), hostName, models, evidenceFactory, heavyLock, emit, integrity: guardWatch, triageClassifier })
       args = { ...args, task: pipelineState.task, context: pipelineState.context }
     }
     const cwdReal = await realpath(cwd)
@@ -1343,7 +1368,7 @@ export async function runGraph({ hostName, args: suppliedArgs = {}, cwd = proces
         // C15: checagem da árvore inteira antes do spawn.
         await integrityCheck()
         if (stopping) throw stoppingError()
-        const handle = await host.spawn({ role, model: options.model || models[role], prompt, schema: options.schema, cwd, readOnly, label, timeoutMs: args.timeoutMs })
+        const handle = await host.spawn({ role, model: options.model || models[role], prompt, schema: options.schema, cwd, readOnly, label, timeoutMs: args.timeoutMs, ...(typeof options.effort === 'string' ? { effort: options.effort } : {}) })
         handles.add(handle)
         if (stopping) host.cancel?.(handle)
         const agentResult = await host.wait(handle).finally(() => handles.delete(handle))
@@ -1494,8 +1519,10 @@ export function decisionArtifactId(runId, identity) {
   return `${runId}.${identity}`
 }
 
+// Todo agente que faz o trabalho de um nó (executor, designer, researcher) recebe a memória do worker.
+const WORKER_ROLES = new Set(['executor', 'designer', 'researcher'])
 export function memoryRoleFor(role) {
-  return role === 'executor' ? 'worker' : null
+  return WORKER_ROLES.has(role) ? 'worker' : null
 }
 
 // FIX5 3E: JSON delimitado, com aviso de dados não confiáveis; "<" vira \u003c para não fechar a tag por dentro do conteúdo.
@@ -1552,7 +1579,18 @@ export function directCliPolicyError(args = {}) {
   return { status: 'blocked', feedback: { kind: 'BLOCK', reason: 'write_audit_unavailable', severity: 'critical', affectedNodes: [], evidenceIds: [] }, error: 'implementação exige nodeCheckPolicy para auditar escrita por nó', runId: String(args.runId || ''), report: null }
 }
 
+// Liga o classificador opcional de triagem (Jev via OpenRouter). A chave vem só pelo stdin, nunca por argv,
+// e vai para ~/.graph-eng/config.json (0600, fora de repo git). Nada da chave é impresso.
+export async function triageConfigCommand({ stdin = process.stdin, env = process.env, write = text => process.stdout.write(text), writeConfig = writeClassifierConfig } = {}) {
+  let raw = ''
+  for await (const chunk of stdin) { raw += chunk; if (raw.length > 4096) throw new Error('triage_config_key_invalid') }
+  const { path: file } = await writeConfig({ apiKey: raw.trim(), env })
+  write(`classificador de triagem ligado: config gravada em ${file} (0600). Para desligar: GRAPH_ENG_TRIAGE_CLASSIFIER=off ou classifier.enabled=false.\n`)
+  return { path: file }
+}
+
 async function main() {
+  if (process.argv[2] === 'triage-config') { await triageConfigCommand(); return }
   const cli = parseCli(process.argv.slice(2))
   const argsPath = path.resolve(cli.args)
   const args = JSON.parse(await readFile(argsPath, 'utf8'))

@@ -1,0 +1,29 @@
+// Referência do benchmark.
+import { LOG, PLANKS, STICK, CRAFTING_TABLE, WOODEN_PICKAXE, STONE_PICKAXE, COBBLESTONE, SAND, COAL, GLASS } from './blocks.js'
+
+const validGrid = g => Array.isArray(g) && (g.length === 2 || g.length === 3) && g.every(r => Array.isArray(r) && r.length === g.length)
+
+export function craft(grid) {
+  if (!validGrid(grid)) return null
+  const n = grid.length
+  const cells = []
+  grid.forEach((row, r) => row.forEach((c, k) => { if (c) cells.push({ r, c: k, id: c.id }) }))
+  const ids = cells.map(c => c.id)
+  if (cells.length === 1 && ids[0] === LOG) return { id: PLANKS, count: 4 }
+  if (cells.length === 2 && ids.includes(SAND) && ids.includes(COAL)) return { id: GLASS, count: 1 }
+  if (cells.length === 2 && ids.every(i => i === PLANKS) && cells[0].c === cells[1].c && Math.abs(cells[0].r - cells[1].r) === 1) return { id: STICK, count: 4 }
+  if (cells.length === 4 && ids.every(i => i === PLANKS)) {
+    const r0 = Math.min(...cells.map(c => c.r)), c0 = Math.min(...cells.map(c => c.c))
+    if (cells.every(c => c.r - r0 <= 1 && c.c - c0 <= 1)) return { id: CRAFTING_TABLE, count: 1 }
+  }
+  if (n === 3 && cells.length === 5) {
+    const at = (r, c) => grid[r][c] && grid[r][c].id
+    const head = at(0, 0)
+    if ((head === PLANKS || head === COBBLESTONE) && at(0, 1) === head && at(0, 2) === head && at(1, 1) === STICK && at(2, 1) === STICK) {
+      return { id: head === PLANKS ? WOODEN_PICKAXE : STONE_PICKAXE, count: 1 }
+    }
+  }
+  return null
+}
+
+export const consumeIngredients = grid => grid.map(row => row.map(c => (c && c.count > 1 ? { ...c, count: c.count - 1 } : null)))

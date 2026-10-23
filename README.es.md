@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="estrellas"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versi%C3%B3n-1.0.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versión 1.0.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versi%C3%B3n-1.1.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versión 1.1.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licencia-MIT-1d1d1f?style=flat-square" alt="licencia MIT"></a>
   <a href="#los-cinco-comandos"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="plugin de Claude Code"></a>
   <a href="#los-cinco-comandos"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="plugin de Codex"></a>
@@ -37,7 +37,7 @@
 </p>
 
 <p align="center">
-  <strong>el rol fuerte planifica y revisa · el rol barato ejecuta · checks reales por nodo · DONE solo con evidencia · panel en vivo</strong><br>
+  <strong>el rol fuerte solo revisa · el rol medio planifica · el rol barato ejecuta · flujo a la medida de la tarea · checks reales por nodo · DONE solo con evidencia · panel en vivo</strong><br>
   <sub>graph-eng planifica o ejecuta tareas complejas como grafos pequeños, con roles definidos por el host, checks confiables y evidencia por run. El paquete mantiene la identidad <code>graph-eng</code> y encuentra <code>skills/</code> en una ubicación portable.</sub>
 </p>
 
@@ -53,19 +53,19 @@
 
 ## En 30 segundos
 
-> Describes la tarea. Un modelo **fuerte** planifica y revisa, modelos **baratos** hacen el trabajo, y el supervisor corre **tests reales** en cada paso. La run solo termina como **DONE** cuando hay evidencia; si no, se detiene con un **motivo legible**.
+> Describes la tarea. Un modelo **medio** planifica, el modelo **fuerte** solo da la revisión final, modelos **baratos** hacen el trabajo, y el supervisor corre **tests reales** en cada paso. La run solo termina como **DONE** cuando hay evidencia; si no, se detiene con un **motivo legible**.
 >
 > La idea: tareas complejas sin pagar el precio del modelo fuerte por cada línea de trabajo. El modelo caro solo piensa; el barato hace el volumen. Mira [por qué dividir los modelos](#benchmark).
 
 | | |
 | --- | --- |
-| 🧠 **Planifica en fuerte** | El modelo fuerte del host arma el plan como grafo y revisa cada etapa. |
+| 🧠 **Revisa en fuerte** | Un modelo medio arma el plan como grafo; el fuerte solo sella el plan y el diseño. Las tareas pequeñas se saltan la revisión pesada. |
 | ⚙️ **Ejecuta en barato** | El modelo operativo del host, más barato, hace el trabajo de cada nodo. |
 | 🧪 **Comprueba con tests** | `node --test` sobre los archivos de cada nodo, y la suite completa al final. |
 | 🔁 **Corrige en el camino** | El feedback de los revisores vuelve por el grafo: rehacer un nodo, replanificar o parar. |
 | 🔒 **Sin falso DONE** | Sin tests aprobados, crítico de acuerdo y evidencia vigente, el DONE se niega. |
 
-Versión actual: **1.0.0** · mira el [CHANGELOG](CHANGELOG.md).
+Versión actual: **1.1.0** · mira el [CHANGELOG](CHANGELOG.md).
 
 ## Instalación
 
@@ -140,17 +140,43 @@ flowchart TD
 
 ### Quién hace qué
 
-El modelo de cada rol es fijo por host (Claude Code o Codex): fuerte para planificar y revisar, operativo para ejecutar. No hay flag para cambiarlo.
+El modelo de cada rol es fijo por host. No hay flag para cambiarlo. El modelo fuerte solo revisa: da el sello final al plan y al diseño. El medio piensa, el barato hace el volumen. Un host con solo dos modelos usa el fuerte en los roles medios.
 
 | Rol | Tipo | Qué hace |
 | --- | --- | --- |
-| Planner | 🧠 fuerte | Arma el plan como grafo, con criterios de terminado (`doneWhen`). |
-| Revisores (plan y diseño) | 🧠 fuerte | Aprueban, o lo devuelven con el motivo. |
-| Crítico | 🧠 fuerte | Contrasta cada criterio de terminado con la evidencia y decide. |
+| Investigadores | medio | Leen el código y, en Claude, la documentación actual en la web. Corren en paralelo. |
+| Notetaker | ⚙️ barato | Une las notas de los investigadores en un resumen y señala conflictos. |
+| Planner | medio | Arma el plan como grafo, con criterios de terminado (`doneWhen`). |
+| Revisor del plan | 🧠 fuerte | Aprueba, o lo devuelve con el motivo. |
+| Diseñador | medio | Escribe el diseño de los nodos que lo necesitan. |
+| Revisor del diseño | 🧠 fuerte | Aprueba el diseño, o lo devuelve. |
+| Crítico | medio | Contrasta cada criterio de terminado con la evidencia y decide. |
 | Ejecutor | ⚙️ barato | Hace el trabajo de un nodo, solo en los archivos que se le concedieron. |
 | Verificador | ⚙️ barato | Lee lo que hizo el ejecutor y los recibos de los tests. |
 | Synth | ⚙️ barato | Escribe el resumen final. |
 | Supervisor | 🧪 código | Corre los tests, sella la evidencia y niega el DONE sin prueba. No es un modelo. |
+
+Todo rol corre con esfuerzo `medium`.
+
+### Flujo adaptativo
+
+No toda tarea necesita el ciclo completo. Antes de planificar, el runner hace el triaje de la tarea y elige un tier:
+
+| Tier | Cuándo | Qué corre |
+| --- | --- | --- |
+| ⚡ `fast` | cambio pequeño y local, con check ejecutable | plan → implementación → verify → crítico |
+| ⚖️ `standard` | varios archivos, o dominio sensible (dinero, auth, datos de producción) | suma la revisión del plan por el modelo fuerte |
+| 🧭 `full` | tarea amplia o ambigua | suma investigación, diseño y la revisión del diseño por el modelo fuerte |
+
+Verify, los checks y el crítico final corren en todo tier. El motor solo sube el tier (nodo de diseño, nodo de riesgo alto, plan grande), nunca lo baja. La decisión y sus motivos van al journal de la run. `--adaptive off` fuerza el flujo completo.
+
+Clasificador opcional: con una clave de OpenRouter, un clasificador externo pequeño (Jev 1.13, de TypeSafe) ayuda en el triaje. Sin la clave, o ante cualquier falla, decide solo la heurística. Para activarlo, corre esto en tu terminal y pega la clave cuando la pida:
+
+```bash
+node bin/graph-run.mjs triage-config
+```
+
+La clave queda en `~/.graph-eng/config.json` con permiso 0600 y nunca llega a los agentes.
 
 ### Las cuatro decisiones
 
@@ -241,7 +267,7 @@ Correr las llamadas de ejecutor, verificador y synth en el modelo fuerte costar�
 
 ## Detalles de ejecución
 
-El esfuerzo acepta `low`, `medium` (por defecto) o `max`, en la forma separada (`--effort max`); `--effort` sobrescribe la configuración en `plan`, `clarify`, `tasks` e `implemente`. Los roles y modelos los fija el adaptador confiable de Claude o Codex. No hay flags públicas para modelos, roles, ancho ni límites internos.
+El esfuerzo acepta `low`, `medium` (por defecto) o `max`, en la forma separada (`--effort max`); `--effort` sobrescribe la configuración en `plan`, `clarify`, `tasks` e `implemente`. Los roles y modelos los fija el adaptador confiable de Claude o Codex. No hay flags públicas para modelos, roles, ancho ni límites internos. `--adaptive on|off` (por defecto `on`) activa o desactiva los tiers; ver [Flujo adaptativo](#flujo-adaptativo).
 
 El adaptador de ejecución de esta versión solo soporta el test runner nativo de Node, en repositorios con un `package.json` legible y `scripts.test` igual a exactamente `node --test`. Vitest, Jest, scripts con flags extra y repositorios sin ese contrato dan `BLOCK` en `implemente`; `plan` sigue funcionando. Cada nodo recibe una selección local derivada de los `inputs`, `outputs` y `files` que aprobó el supervisor. Un mapeo interno conocido corre los tests afectados; sin un mapeo completo, la cobertura se marca como limitada y solo corren el `node --check` aplicable y la validación del contrato y del grant. El gate final corre la suite completa con concurrencia 2, solo después de todo el pulido. Los checks usan `process.execPath`, argv explícito y spawn sin shell. Cada run escribe su selección y sus recibos en `.graph-runs/` dentro del repositorio.
 

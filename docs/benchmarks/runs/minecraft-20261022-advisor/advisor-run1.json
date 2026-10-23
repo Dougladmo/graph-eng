@@ -1,0 +1,173 @@
+{
+  "flow": "advisor",
+  "status": "done",
+  "plan": {
+    "goal": "Implementar o clone de Minecraft: motor puro em src/engine/ (todos os contratos da spec, com casos de borda) e interface React + three.js, de modo que npm test e npm run build passem e npm run dev abra o jogo completo. Hoje src/main.jsx é só um placeholder e os módulos do motor só lançam 'não implementado'.",
+    "steps": [
+      "Ler as assinaturas atuais de todos os arquivos em src/engine/ para manter nomes e exports. Em blocks.js, implementar a tabela de ids (constantes, getBlock, getItem, isSolid, isTransparent) e os ids de itens 100–103. Em noise.js, implementar hashSeed (32 bits sem sinal), createRng (mulberry32 ou similar) e createNoise2D (value ou gradient noise suave, em [-1,1], cont��nuo, com permutação vinda da seed).",
+      "world.js: chunkIndex, generateChunk e getSurfaceHeight. A altura deve ser uma função pura de (seed,x,z) clampada em [12,40], para não haver emenda entre chunks. Aplicar camadas, água, minérios por RNG por chunk (garantir ≥1 COAL_ORE com y≤40; IRON_ORE só com y≤24) e árvores com tronco local em 2..13 sobre GRASS. Depois createWorld (cache, modo flat, mapa de edições), getBlockAt (coordenadas negativas via floor/mod, y<0 BEDROCK, y≥64 AIR), setBlockAt (RangeError fora de 0..63; reverter ao valor gerado apaga a edição), serializeWorld (ordenado por x,y,z) e deserializeWorld (versão ≠ 1 lança Error).",
+      "mesher.js: buildChunkMesh com culling (vizinho AIR, ou transparente com id diferente), vizinhos lidos do mundo entre chunks, separação opaque/transparent, 4 vértices e 6 índices por face em sentido anti-horário visto de fora, normais e UVs no tile de um atlas. Exportar o helper do layout do atlas (tile por bloco e face: topo, lado e base) como dados puros, para o renderer reaproveitar.",
+      "raycast.js: DDA de Amanatides & Woo. Direção não normalizada; AIR e WATER não são alvo; face como normal; distance euclidiana; origem dentro de bloco sólido devolve face [0,0,0] e distance 0; null além de maxDistance. Depois mining.js (canHarvest, breakTime, dropsFor) e daynight.js (DAY_LENGTH, skyState com mod positivo, daylight contínuo em [0.15,1], isNight em (0.5,1)).",
+      "physics.js: constantes, createPlayer, collidesAt, canPlaceBlock e stepPlayer pura (clonar arrays). Subpassos de ≤0.05, colisão em Y, X, Z, snap exato nos pés, teto, sneak sem cair da borda, água (gravidade/4, queda ≤3, subida 3), voo, pulo de 1 bloco e não de 2. Depois inventory.js (addItem com leftover, removeFromSlot, selectSlot, scrollSelection, moveStack, selectedItem, todas puras) e crafting.js (craft para 2x2 e 3x3 com receitas deslocáveis e item extra invalidando, consumeIngredients puro).",
+      "Escrever testes extras próprios em um arquivo NOVO fora dos protegidos (ex.: test/engine.extra.test.js). Cobrir os casos de borda da spec: chunks negativos, emenda de altura entre chunks, árvores dentro do chunk, culling com vidro e água, raycast dentro de bloco, sneak na borda, pulo de 2 blocos, inventário e crafting. Rodar npm test até ficar tudo verde antes de começar a UI.",
+      "Camada de render em src/render/: atlas em canvas 16x16 por tile com NearestFilter (grama com 3 tiles, tronco com anéis, texturas de rachadura, ícones). Gerenciador de chunks (carrega em anel pela distância, descarrega fora, fila com orçamento de poucas malhas por frame, remesh de chunk e vizinhos ao editar). Materiais opaco, transparente (água semitransparente, alphaTest para folha e vidro). Céu, sol, lua, luzes e neblina guiados por skyState. Wireframe do bloco mirado e malha de rachadura. Controle do jogador com pointer lock, teclado, duplo W, F para voo e pitch ±89°, usando stepPlayer, raycast com alcance 5, mineração por breakTime, colocação com canPlaceBlock, botão do meio e câmera em EYE_HEIGHT.",
+      "Camada de UI em src/ui/ (componentes React): MainMenu (título, seed aleatória, Novo mundo, Continuar condicional ao save, slider 2–8 com padrão 4), HUD (mira, hotbar com ícones do atlas, quantidade e nome do item por 2 s, overlay azul na água), InventoryScreen (36 slots, pegar e soltar com moveStack, crafting 2x2), CraftingTable 3x3, PauseMenu (Continuar, Salvar, Sair) e DebugOverlay F3 (FPS, XYZ, chunk, direção, bloco mirado, seed, hora). Criar src/save.js com a chave mc-mvp-save (mundo serializado, posição e olhar, inventário, hora), autosave a cada 30 s e ao pausar, e restauração em Continuar.",
+      "Ligar tudo em src/main.jsx e em um componente App/Game. O App alterna entre menu e jogo. O Game monta o canvas three, o loop de animação e o estado compartilhado entre o loop e o React sem re-render por frame. Spawn no centro do mundo em getSurfaceHeight+1. Fazer cleanup completo ao sair para o menu (dispose de geometrias e listeners, saída do pointer lock) e ao desmontar, sem erro no console.",
+      "Verificar o resultado: rodar npm test e npm run build e corrigir o que falhar. Depois subir npm run dev e conferir o jogo de ponta a ponta, se houver como inspecionar o navegador. Caso contrário, revisar o código dos fluxos menu → jogo → salvar → continuar e relatar o que não foi possível testar."
+    ],
+    "doneWhen": [
+      "npm test passa, com os testes visíveis e os próprios do implementador.",
+      "npm run build termina sem erro.",
+      "Cada função do motor segue o contrato da spec, incluindo casos de borda: RangeError em ids desconhecidos e em y fora de 0..63, Error de versão ≠ 1 no deserialize, imutabilidade das funções puras e determinismo.",
+      "O motor em src/engine/ não importa three, react nem DOM e roda no Node. package.json, vite.config.js, index.html e test/engine.test.js continuam inalterados, sem dependência nova.",
+      "npm run dev abre o menu principal (seed aleatória, Novo mundo, Continuar só com save, slider de 2 a 8 com padrão 4), e o jogo entra em um mundo infinito com chunks carregados e descarregados em volta do jogador.",
+      "Funcionam: mover, pular, correr, sneak e voar (F); minerar com rachadura progressiva e drop no inventário; colocar e pegar bloco com o botão do meio; hotbar (teclas 1–9 e roda do mouse); inventário (E) com crafting 2x2; bancada com crafting 3x3; pausa (Esc) com Continuar, Salvar e Sair.",
+      "Funcionam: ciclo dia/noite com sol, lua, luz e neblina; água e vidro transparentes; overlay azul na água; HUD completo; overlay de debug F3.",
+      "O save e o Continuar restauram mundo, posição e olhar, inventário e hora, com autosave a cada 30 s e ao pausar. O console fica sem erros."
+    ],
+    "risks": [
+      "Há testes ocultos para casos de borda do motor: física com snap exato dos pés, sneak na borda, pulo de 1 bloco e não de 2, culling entre chunks, ordem de winding, serialização round-trip. Implementar literalmente a spec e escrever testes próprios.",
+      "A altura do terreno precisa ser função pura de (seed,x,z), clampada em [12,40]. Árvores, minérios e edições não podem alterar a altura nem vazar do chunk. Garantir ≥1 COAL_ORE por chunk mesmo com a restrição y≤40.",
+      "Desempenho (60 fps com distância 4): meshing por orçamento por frame, remesh só dos chunks afetados, dispose das geometrias e atlas único. Meshing no main thread pode travar sem fila.",
+      "Precisão de ponto flutuante na física e no raycast (pés exatamente no topo do bloco, bordas inteiras, direção com componentes zero no DDA). Usar epsilons e snaps cuidadosos.",
+      "Não dá para validar pointer lock e WebGL só pelo Node. É preciso revisar com atenção os ciclos de vida (listeners e cleanup ao voltar ao menu) para evitar erros no console e vazamentos.",
+      "Atlas e UVs devem ficar consistentes entre mesher (motor puro, sem canvas) e renderer. Definir o layout do atlas como dados puros no motor e usar a mesma fonte nos dois lados."
+    ]
+  },
+  "review": {
+    "verdict": "REVISE",
+    "notes": [
+      "The extra tests must not go in test/. The rules say not to touch the tests in test/, so even adding a new file there is risky. Also, `npm test` is a bare `node --test`, which picks up every `*.test.js` outside node_modules. Put the tests in `src/engine/__tests__/*.test.js` (or similar), check that `node --test` runs them, and check that nothing in the Vite bundle imports them. Fix the doneWhen item to say 'test/ unchanged' as a whole, not just test/engine.test.js.",
+      "Inventory clicks need a 'held stack on the cursor'. Clicking picks up and drops stacks, which is not the same as `moveStack(from,to)`, so keep a cursor stack in the UI state. The crafting result slot must: compute `craft(grid)`, add the result to the cursor or inventory (respecting maxStack and leftover), then apply `consumeIngredients`. When the inventory or crafting table closes (E/Esc), and before saving, the 2x2/3x3 grid and the cursor stack must go back through `addItem` so items are not lost.",
+      "Pause and pointer lock: the browser takes Esc and drops the lock without passing the keydown through reliably. Open the pause menu from the `pointerlockchange` event when the lock is lost and no screen (inventory or crafting) is open. Handle the rejected Promise from `requestPointerLock` (Chrome blocks re-locking for about 1 s after Esc) with a catch, so it doesn't log an error to the console. Also call `preventDefault` for F3, space, Ctrl and the mouse wheel during play, plus `contextmenu` and middle-click autoscroll.",
+      "Round-trip and seed: `serializeWorld` must keep the original seed (number or string) and the exact `flat` value, and `deserializeWorld` must rebuild with the same seed and type, so `serialize(deserialize(s)) === s` holds byte for byte. Make `setBlockAt` compare against the generated value, which means generating or reading the chunk before writing, so it can delete the edit when the block is reverted. `getSurfaceHeight` and the mesher must also take edits into account.",
+      "Remeshing: when a block on a chunk edge (local x/z = 0 or 15) is edited, remesh only the affected neighbor. When the chunk manager loads a new chunk, also remesh neighbors that are already meshed, or mark them dirty, because their border faces were culled using `getBlockAt` and may be stale. Prioritize the edited chunk ahead of the load queue so placing and breaking feel instant."
+    ]
+  },
+  "sessions": [
+    {
+      "round": 1,
+      "status": "DONE",
+      "summary": "`npm test` passa (22 testes, 0 falhas) e `npm run build` termina sem erro. Não abri o jogo no navegador: o shell só permite `npm test` e `npm run build`. Pointer lock, WebGL, desempenho e o console do navegador ficaram sem verificação; a UI foi revisada só lendo o código.\n\n**Motor (`src/engine/`):** implementei todos os módulos pelo contrato, com os casos de borda. Também criei `src/engine/atlas.js`, com o layout do atlas como dados puros, usado pelo mesher e pelo renderer.\n- A altura do terreno é uma função pura de (seed, x, z), limitada a [12, 40].\n- `setBlockAt` compara com o valor gerado, então reverter um bloco apaga a edição.\n- `serializeWorld` guarda a seed e o `flat` exatos, e o round-trip bate byte a byte.\n\n**Testes extras:** estão em `src/engine/__tests__/engine.extra.test.js`. `test/` e `package.json` ficaram intactos. Cobrem culling, winding, raycast, física (pulo de 1 bloco, sneak na borda), inventário, crafting e dia/noite.\n\n**Render, jogo e UI:**\n- **Render (`src/render/`):** atlas em canvas, rachaduras, ícones, gerenciador de chunks com orçamento por frame, e céu com sol, lua, estrelas, luzes e neblina.\n- **Jogo (`src/game/Game.js`):** loop, controles, mineração, colocação, bancada, botão do meio, pausa pelo `pointerlockchange`, salvamento e autosave de 30 s.\n- **UI (`src/ui/`, `src/App.jsx`, `src/save.js`):** menu principal, HUD, inventário 2x2, bancada 3x3, pausa e F3. O inventário guarda o cursor e a grade localmente e devolve tudo ao inventário ao fechar.\n\n**Desvio do plano:** não remalho os vizinhos já malhados quando um chunk novo carrega. O mesher lê os vizinhos do mundo, que é gerado sob demanda, então as faces de borda já saem corretas.\n\nNão consultei o advisor.",
+      "sessionId": "0db72479-e2af-4d7b-9e96-343485cfb55c",
+      "advisorCalls": 0
+    }
+  ],
+  "gate": [
+    {
+      "round": 1,
+      "pass": true,
+      "results": [
+        {
+          "id": "test",
+          "command": "npm test",
+          "exitCode": 0,
+          "ms": 1454,
+          "outputTail": "\n> mc-mvp@0.0.0 test\n> node --test\n\nTAP version 13\n# Subtest: ruído contínuo\nok 1 - ruído contínuo\n  ---\n  duration_ms: 10.561334\n  type: 'test'\n  ...\n# Subtest: chunks: altura sem emenda, árvores e carvão dentro do chunk\nok 2 - chunks: altura sem emenda, árvores e carvão dentro do chunk\n  ---\n  duration_ms: 33.347334\n  type: 'test'\n  ...\n# Subtest: mundo: reverter edição apaga e round-trip é exato\nok 3 - mundo: reverter edição apaga e round-trip é exato\n  ---\n  duration_ms: 11.921333\n  type: 'test'\n  ...\n# Subtest: malha: culling vidro/água/pedra e winding\nok 4 - malha: culling vidro/água/pedra e winding\n  ---\n  duration_ms: 20.457667\n  type: 'test'\n  ...\n# Subtest: malha: vizinho em outro chunk e água\nok 5 - malha: vizinho em outro chunk e água\n  ---\n  duration_ms: 4.886833\n  type: 'test'\n  ...\n# Subtest: raycast: dentro de bloco, distância, água ignorada\nok 6 - raycast: dentro de bloco, distância, água ignorada\n  ---\n  duration_ms: 1.369458\n  type: 'test'\n  ...\n# Subtest: física: pulo de 1 bloco sim, de 2 não; sneak na borda\nok 7 - física: pulo de 1 bloco sim, de 2 não; sneak na borda\n  ---\n  duration_ms: 10.323334\n  type: 'test'\n  ...\n# Subtest: física: pura, passos longos e água/voo\nok 8 - física: pura, passos longos e água/voo\n  ---\n  duration_ms: 1.146083\n  type: 'test'\n  ...\n# Subtest: inventário\nok 9 - inventário\n  ---\n  duration_ms: 2.684958\n  type: 'test'\n  ...\n# Subtest: crafting\nok 10 - crafting\n  ---\n  duration_ms: 1.610583\n  type: 'test'\n  ...\n# Subtest: mineração e dia\nok 11 - mineração e dia\n  ---\n  duration_ms: 0.743208\n  type: 'test'\n  ...\n# Subtest: blocos: tabela básica\nok 12 - blocos: tabela básica\n  ---\n  duration_ms: 5.80575\n  type: 'test'\n  ...\n# Subtest: ruído: determinístico e no intervalo\nok 13 - ruído: determinístico e no intervalo\n  ---\n  duration_ms: 1.804208\n  type: 'test'\n  ...\n# Subtest: mundo: chunk gerado tem bedrock e é determinístico\nok 14 - mundo: chunk gerado tem bedrock e é determinístico\n  ---\n  duration_ms: 11.922375\n  type: 'test'\n  ...\n# Subtest: mundo: editar e salvar\nok 15 - mundo: editar e salvar\n  ---\n  duration_ms: 2.936167\n  type: 'test'\n  ...\n# Subtest: malha: um bloco sozinho tem 6 faces\nok 16 - malha: um bloco sozinho tem 6 faces\n  ---\n  duration_ms: 20.504708\n  type: 'test'\n  ...\n# Subtest: raycast: acerta o bloco à frente\nok 17 - raycast: acerta o bloco à frente\n  ---\n  duration_ms: 0.859125\n  type: 'test'\n  ...\n# Subtest: física: cai e para no chão\nok 18 - física: cai e para no chão\n  ---\n  duration_ms: 7.430458\n  type: 'test'\n  ...\n# Subtest: inventário: empilha até 64\nok 19 - inventário: empilha até 64\n  ---\n  duration_ms: 1.483667\n  type: 'test'\n  ...\n# Subtest: crafting: tronco vira 4 tábuas\nok 20 - crafting: tronco vira 4 tábuas\n  ---\n  duration_ms: 15.012375\n  type: 'test'\n  ...\n# Subtest: mineração: pedra na mão não dá drop\nok 21 - mineração: pedra na mão não dá drop\n  ---\n  duration_ms: 5.122125\n  type: 'test'\n  ...\n# Subtest: dia e noite: meio-dia é claro\nok 22 - dia e noite: meio-dia é claro\n  ---\n  duration_ms: 11.065416\n  type: 'test'\n  ...\n1..22\n# tests 22\n# suites 0\n# pass 22\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 830.116584\n"
+        },
+        {
+          "id": "build",
+          "command": "npm run build",
+          "exitCode": 0,
+          "ms": 1487,
+          "outputTail": "\n> mc-mvp@0.0.0 build\n> vite build\n\nvite v8.3.5 building client environment for production...\ntransforming...\n✓ 42 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.39 kB │ gzip:   0.27 kB\ndist/assets/index-DsIpYN5d.css    3.26 kB │ gzip:   1.16 kB\ndist/assets/index-CPI1yIDb.js   716.58 kB │ gzip: 192.61 kB\n\n[plugin builtin:vite-reporter] \n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n✓ built in 625ms\n"
+        }
+      ]
+    }
+  ],
+  "advisorCalls": 0,
+  "calls": [
+    {
+      "role": "planner",
+      "ms": 51638,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 10,
+          "outputTokens": 7411,
+          "cacheReadInputTokens": 62979,
+          "cacheCreationInputTokens": 22191,
+          "webSearchRequests": 0,
+          "costUSD": 0.1691919,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 13,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "f9a962e3-f985-4893-84ed-fb71964a0b59",
+      "permissionDenials": 0
+    },
+    {
+      "role": "planReviewer",
+      "ms": 39949,
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 4,
+          "outputTokens": 2146,
+          "cacheReadInputTokens": 17316,
+          "cacheCreationInputTokens": 18554,
+          "webSearchRequests": 0,
+          "costUSD": 0.19483120000000004,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 1052,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "b744f66d-b1f4-49c7-b5c3-e8ed782148d3",
+      "permissionDenials": 0
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 567589,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 42,
+          "outputTokens": 82596,
+          "cacheReadInputTokens": 1323041,
+          "cacheCreationInputTokens": 117117,
+          "webSearchRequests": 0,
+          "costUSD": 1.4268161,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 25557,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "0db72479-e2af-4d7b-9e96-343485cfb55c",
+      "permissionDenials": 1
+    }
+  ],
+  "engineMs": 662191,
+  "cost": {
+    "costUSD": 1.7908392,
+    "input": 0.00011187472284520622,
+    "cacheWrite": 0.6601327797717298,
+    "cacheRead": 0.26110322852810863,
+    "output": 0.8694913169773164,
+    "tokens": {
+      "input": 56,
+      "cacheWrite": 157862,
+      "cacheRead": 1403336,
+      "output": 92153
+    },
+    "byModel": {
+      "claude-sonnet-5-5": 1.5960079999999999,
+      "claude-opus-5-5": 0.19483120000000004
+    },
+    "byRole": {
+      "planner": 0.1691919,
+      "planReviewer": 0.19483120000000004,
+      "advisedExecutor": 1.4268161
+    }
+  },
+  "runId": "grapheng-20261022130658-ac6b19ba",
+  "runDir": "/var/folders/07/d6zcjgg913j4y41bqgrd_6bh0000gn/T/graph-eng-benchmarks/minecraft-advisor-20261022130641/workspace/.graph-runs/grapheng-20261022130658-ac6b19ba",
+  "wallMs": 662206
+}

@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process'
+import { childEnv } from './child-env.mjs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -8,19 +9,33 @@ import path from 'node:path'
 
 const MODEL_BY_ROLE = {
   claude: {
-    planner: 'opus', planReviewer: 'opus', designReviewer: 'opus', critic: 'opus',
-    executor: 'haiku', verifier: 'haiku', synth: 'haiku',
+    planner: 'sonnet', planReviewer: 'opus', designReviewer: 'opus', critic: 'sonnet',
+    researcher: 'sonnet', designer: 'sonnet', notetaker: 'haiku',
+    executor: 'haiku', verifier: 'haiku', synth: 'haiku', advisedExecutor: 'sonnet',
   },
   codex: {
     planner: 'gpt-6.1-sol', planReviewer: 'gpt-6.1-sol', designReviewer: 'gpt-6.1-sol', critic: 'gpt-6.1-sol',
-    executor: 'gpt-6-luna', verifier: 'gpt-6-luna', synth: 'gpt-6-luna',
+    researcher: 'gpt-6.1-sol', designer: 'gpt-6.1-sol', notetaker: 'gpt-6-luna',
+    executor: 'gpt-6-luna', verifier: 'gpt-6-luna', synth: 'gpt-6-luna', advisedExecutor: 'gpt-6-luna',
   },
 }
+// Fluxo advisor (--flow advisor): o executor faz a implementação inteira numa sessão e consulta o modelo forte quando
+// trava, na mesma sessão (--advisor do Claude Code, ferramenta de servidor que vê a transcrição inteira).
+const ADVISOR_BY_ROLE = { claude: { advisedExecutor: 'opus' } }
+// Modelos aceitos no executor contínuo (--executor do fluxo advisor). O Opus fica de fora: ele já é o advisor.
+const ADVISED_EXECUTOR_MODELS = new Set(['sonnet', 'haiku'])
+const WRITE_SHELL_ROLES = new Set(['executor', 'advisedExecutor'])
+// Comando de check liberado ao executor: texto exato, sem metacaractere de shell nem curinga de permissão.
+const ALLOW_COMMAND = /^[A-Za-z0-9_./@=+:,-]+( [A-Za-z0-9_./@=+:,-]+)*$/
+export const isAllowCommand = value => typeof value === 'string' && value.length <= 200 && ALLOW_COMMAND.test(value)
 const ROLE_ALIASES = {
   'plan-review': 'planReviewer', 'design-review': 'designReviewer',
   worker: 'executor', verify: 'verifier', repair: 'executor', polish: 'executor',
 }
-const READ_ONLY = new Set(['planner', 'planReviewer', 'designReviewer', 'verifier', 'critic', 'synth'])
+// Esforço de raciocínio por chamada (--effort do Claude Code). Fora desta lista a chamada é recusada; ausente = padrão do modelo.
+const REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+const WEB_TOOLS = 'WebSearch,WebFetch'
+const READ_ONLY = new Set(['planner', 'planReviewer', 'designReviewer', 'verifier', 'critic', 'synth', 'researcher', 'designer', 'notetaker'])
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 const MAX_TIMEOUT_MS = 60 * 60 * 1000
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024
@@ -225,8 +240,9 @@ function validateExperimentalPolicy(policy, host) {
  */
 // C14: onTransportPaths({ id, files, phase: 'created' | 'removed' }) recebe os nomes exatos (relativos à runDir) dos arquivos de transporte
 // do codex. 'created' roda antes de gravar o schema; 'removed' roda depois da limpeza, e o dono exige que os caminhos tenham sumido.
-export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, onTransportPaths = null, experimentalPolicy = null }) {
+export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, onTransportPaths = null, experimentalPolicy = null, advisedExecutorModel = null }) {
   if (!MODEL_BY_ROLE[host]) throw new TypeError(`Host desconhecido: ${host}`)
+  if (advisedExecutorModel !== null && (host !== 'claude' || !ADVISED_EXECUTOR_MODELS.has(advisedExecutorModel))) throw new TypeError('advisedExecutorModel aceita somente sonnet ou haiku, no host claude')
   if (experimentalPolicy) validateExperimentalPolicy(experimentalPolicy, host)
   if (!cwd || !runDir) throw new TypeError('cwd e runDir são obrigatórios')
   let eventSeq = 0
@@ -240,13 +256,15 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const role = roleFor(request.role)
     const model = experimentalPolicy
       ? (Object.hasOwn(experimentalPolicy.models, role) ? experimentalPolicy.models[role] : undefined)
-      : MODEL_BY_ROLE[host][role]
+      : role === 'advisedExecutor' && advisedExecutorModel ? advisedExecutorModel : MODEL_BY_ROLE[host][role]
     if (experimentalPolicy && !model) throw new HostError('EXPERIMENT_ROLE_UNMAPPED', `Papel fora do mapa experimental: ${request.role}`)
     if (!model) throw new HostError('UNKNOWN_ROLE', `Papel desconhecido: ${request.role}`)
     if (request.model && request.model !== model) throw new HostError('MODEL_MISMATCH', `Modelo do papel ${request.role} deve ser ${model}`)
     if (typeof request.prompt !== 'string' || !request.prompt.trim()) throw new HostError('INVALID_PROMPT', 'prompt deve ser texto não vazio')
     if (!request.schema || typeof request.schema !== 'object' || Array.isArray(request.schema)) throw new HostError('INVALID_SCHEMA', 'Cada solicitação exige JSON Schema')
     if (request.writeScope !== undefined) throw new HostError('UNSUPPORTED_WRITE_SCOPE', 'writeScope ainda não é aplicado pelo adaptador')
+    if (request.effort !== undefined && !REASONING_EFFORTS.has(request.effort)) throw new HostError('INVALID_EFFORT', `effort deve ser um de ${[...REASONING_EFFORTS].join(', ')}`)
+    if (request.allowCommands !== undefined && (!Array.isArray(request.allowCommands) || request.allowCommands.some(c => !isAllowCommand(c)))) throw new HostError('INVALID_ALLOW_COMMANDS', 'allowCommands deve ser lista de comandos exatos, sem metacaractere de shell')
     assertSchema(request.schema)
     const effectiveTimeout = request.timeoutMs ?? timeoutMs
     if (!Number.isFinite(effectiveTimeout) || effectiveTimeout <= 0 || effectiveTimeout > MAX_TIMEOUT_MS) throw new HostError('INVALID_TIMEOUT', `timeoutMs deve estar entre 1 e ${MAX_TIMEOUT_MS}`)
@@ -258,9 +276,14 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     // Isolado do ambiente do usuário (MCPs, skills, settings globais): sem isso cada turno carregava ~75k tokens.
     // dontAsk nega toda ferramenta sem regra de permissão: a escrita do executor precisa de --allowedTools,
     // e Edit(./**) (vale também para Write) a prende ao cwd do spawn.
+    // Só o researcher (Sonnet, só leitura) lê a web: docs atuais da biblioteca na versão instalada. Nenhum papel de escrita tem web.
+    const readTools = role === 'researcher' && readonly ? `Read,Glob,Grep,${WEB_TOOLS}` : 'Read,Glob,Grep'
+    // Laço de feedback do executor de escrita: Bash só nos comandos aprovados (o dontAsk nega qualquer outro comando).
+    const shell = WRITE_SHELL_ROLES.has(role) && !readonly ? (request.allowCommands || []) : []
+    const advisor = experimentalPolicy ? null : ADVISOR_BY_ROLE[host]?.[role] || null
     if (host === 'claude') return {
       role, model, readonly, schema: request.schema, wireSchema: strict,
-      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit(./**)', '--tools', readonly ? 'Read,Glob,Grep' : 'Read,Glob,Grep,Edit,Write'],
+      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : ['Read,Glob,Grep,Edit(./**)', ...shell.map(c => `Bash(${c})`)].join(','), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
     }
     const schemaFile = path.join(runDir, `.host-${id}.schema.json`)
     const outputFile = path.join(runDir, `.host-${id}.output.json`)
@@ -272,7 +295,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const readOnlyEnforcement = host === 'claude'
       ? 'Claude Code usa permission-mode dontAsk e limita as ferramentas a Read, Glob e Grep; não oferece ferramenta de escrita nem shell. Papéis de escrita só gravam dentro do cwd (Edit(./**)).'
       : readOnlyEnforced ? 'Codex CLI usa -s read-only para restringir gravações no sandbox do sistema de arquivos.' : null
-    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(MODEL_BY_ROLE[host]), structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex', agentWeb: false }
+    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(MODEL_BY_ROLE[host]), structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex', agentWeb: host === 'claude' && !experimentalPolicy }
   }
 
   async function spawnRequest(request) {
@@ -296,10 +319,11 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const injectedTransport = transport ?? null
     try {
       child = injectedTransport
-        ? injectedTransport.spawn(built.command, built.args, { cwd, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
+        ? injectedTransport.spawn(built.command, built.args, { cwd, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv() })
         : process.platform === 'win32'
-          ? nodeSpawn(built.command, built.args, { cwd, shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'] })
-          : nodeSpawn(process.execPath, [SUPERVISOR_PATH, String(effectiveTimeout)], { cwd, shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] })
+          ? nodeSpawn(built.command, built.args, { cwd, shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'], env: childEnv() })
+          // O supervisor herda este env filtrado e o repassa ao CLI do agente.
+          : nodeSpawn(process.execPath, [SUPERVISOR_PATH, String(effectiveTimeout)], { cwd, shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'], env: childEnv() })
     } catch (error) {
       await Promise.all([built.schemaFile, built.outputFile].filter(Boolean).map(file => rm(file, { force: true }).catch(() => {})))
       if (built.schemaFile && onTransportPaths) await onTransportPaths({ id, files: transportNames, phase: 'removed' }).catch(() => {})
@@ -501,6 +525,8 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
             handle.usage = envelope.modelUsage ?? envelope.usage ?? null
             // B3: negações de permissão do Claude ficam visíveis ao benchmark (calls.jsonl).
             handle.permissionDenials = Array.isArray(envelope.permission_denials) ? envelope.permission_denials : []
+            // Sessão do Claude Code: o fluxo advisor conta na transcrição quantas vezes o executor consultou o advisor.
+            handle.sessionId = typeof envelope.session_id === 'string' ? envelope.session_id : null
           } else {
             const rows = handle.stdout.split(/\r?\n/).filter(Boolean).map(row => JSON.parse(row))
     const failed = rows.find(row => row && typeof row === 'object' && (row.type === 'turn.failed' || row.type === 'error' || row.type === 'item.completed' && row.item?.type === 'error'))
@@ -521,7 +547,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
           error = failure instanceof HostError ? failure : new HostError('INVALID_OUTPUT', `${host}: saída estruturada inválida (${failure.message})`, { cause: failure })
         }
       }
-      await finish(error, { output, requestedModel: built.model, effectiveModel: handle.effectiveModel ?? null, usage: handle.usage ?? null, exitCode: actualExitCode, permissionDenials: handle.permissionDenials ?? [] })
+      await finish(error, { output, requestedModel: built.model, effectiveModel: handle.effectiveModel ?? null, usage: handle.usage ?? null, exitCode: actualExitCode, permissionDenials: handle.permissionDenials ?? [], sessionId: handle.sessionId ?? null })
     })
     child.stdin?.end(request.prompt)
     handle.timer = setTimeout(() => { if (!handle.settled) void terminate('timeout') }, effectiveTimeout)

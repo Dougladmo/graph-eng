@@ -1,0 +1,84 @@
+{
+  "id": "bench-claude-faturamento-20261021204352-5407",
+  "host": "claude",
+  "variant": "adaptive",
+  "scenario": "faturamento",
+  "simulated": false,
+  "attemptId": "11afd3e7-c733-47fc-bdcc-fb29e9cea08a",
+  "manifestSha256": "ad00c0703ef666eadf57f3b06fda58eb3e9cc9454bafc60f634cf0c669c0f128",
+  "policy": "produto atual (createHost sem política)",
+  "startedAt": "2026-10-21T20:43:52.569Z",
+  "endedAt": "2026-10-21T20:54:10.508Z",
+  "status": "PASS",
+  "attempted": true,
+  "block": null,
+  "reason": null,
+  "reportedStatus": "DONE",
+  "externalStatus": "PASS",
+  "falseDone": false,
+  "complete": true,
+  "summary": {
+    "total": 21,
+    "byRole": {
+      "planner": 3,
+      "researcher": 1,
+      "critic": 2,
+      "planReviewer": 2,
+      "designer": 1,
+      "designReviewer": 1,
+      "executor": 5,
+      "verifier": 5,
+      "synth": 1
+    },
+    "completed": 21,
+    "failed": 0,
+    "inflight": 0,
+    "complete": true,
+    "fields": {
+      "requestedModel": {
+        "value": [
+          "haiku",
+          "opus",
+          "sonnet"
+        ],
+        "coverage": "21/21"
+      },
+      "effectiveModel": {
+        "value": [
+          "claude-haiku-5-5",
+          "claude-opus-5-5",
+          "claude-sonnet-5-5"
+        ],
+        "coverage": "21/21"
+      },
+      "usage": {
+        "coverage": "21/21"
+      },
+      "inputTokens": {
+        "value": 1547974,
+        "coverage": "21/21"
+      },
+      "outputTokens": {
+        "value": 104951,
+        "coverage": "21/21"
+      },
+      "maxCallInputTokens": {
+        "value": 277478,
+        "coverage": "21/21"
+      },
+      "costUSD": {
+        "value": 0.9606424599999999,
+        "coverage": "21/21"
+      }
+    }
+  },
+  "workspace": "/var/folders/07/d6zcjgg913j4y41bqgrd_6bh0000gn/T/graph-eng-benchmarks/bench-claude-faturamento-20261021204352-5407/adaptive-11afd3e7/workspace",
+  "durationMs": {
+    "engine": 617525,
+    "evaluator": 327
+  },
+  "engineMs": 617525,
+  "evaluatorMs": 327,
+  "exception": null,
+  "metricErrors": []
+}

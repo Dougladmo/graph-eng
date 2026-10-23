@@ -1,0 +1,87 @@
+{
+  "id": "bench-claude-faturamento-20261021201806-6fac",
+  "host": "claude",
+  "variant": "adaptive",
+  "scenario": "faturamento",
+  "simulated": false,
+  "attemptId": "9c07eaad-2881-4179-861d-72ad436016bf",
+  "manifestSha256": "25281cb501b1e52a9b384339ff93fdc72f47c52d141ab0808a7bff6f85ae9654",
+  "policy": "produto atual (createHost sem política)",
+  "startedAt": "2026-10-21T20:18:06.684Z",
+  "endedAt": "2026-10-21T20:30:17.508Z",
+  "status": "BLOCK",
+  "attempted": true,
+  "block": {
+    "code": "engine_blocked"
+  },
+  "reason": "engine_blocked",
+  "reportedStatus": "BLOCKED",
+  "externalStatus": "PASS",
+  "falseDone": false,
+  "complete": false,
+  "summary": {
+    "total": 20,
+    "byRole": {
+      "planner": 3,
+      "researcher": 2,
+      "critic": 2,
+      "notetaker": 1,
+      "planReviewer": 2,
+      "designer": 1,
+      "designReviewer": 1,
+      "executor": 4,
+      "verifier": 3,
+      "synth": 1
+    },
+    "completed": 20,
+    "failed": 0,
+    "inflight": 0,
+    "complete": true,
+    "fields": {
+      "requestedModel": {
+        "value": [
+          "haiku",
+          "opus",
+          "sonnet"
+        ],
+        "coverage": "20/20"
+      },
+      "effectiveModel": {
+        "value": [
+          "claude-haiku-5-5",
+          "claude-opus-5-5",
+          "claude-sonnet-5-5"
+        ],
+        "coverage": "20/20"
+      },
+      "usage": {
+        "coverage": "20/20"
+      },
+      "inputTokens": {
+        "value": 1677376,
+        "coverage": "20/20"
+      },
+      "outputTokens": {
+        "value": 124818,
+        "coverage": "20/20"
+      },
+      "maxCallInputTokens": {
+        "value": 215444,
+        "coverage": "20/20"
+      },
+      "costUSD": {
+        "value": 1.52562693,
+        "coverage": "20/20"
+      }
+    }
+  },
+  "workspace": "/var/folders/07/d6zcjgg913j4y41bqgrd_6bh0000gn/T/graph-eng-benchmarks/bench-claude-faturamento-20261021201806-6fac/adaptive-9c07eaad/workspace",
+  "durationMs": {
+    "engine": 730245,
+    "evaluator": 375
+  },
+  "engineMs": 730245,
+  "evaluatorMs": 375,
+  "exception": null,
+  "metricErrors": []
+}

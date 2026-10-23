@@ -1,0 +1,18 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { parseFen, toFen } from '../src/fen.mjs'
+
+test('FEN ida e volta preserva os seis campos', () => {
+  for (const fen of [
+    'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    'r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1',
+    'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2',
+    '8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 17 42',
+  ]) assert.equal(toFen(parseFen(fen)), fen)
+})
+
+test('FEN inválida lança erro', () => {
+  for (const fen of ['', 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP w KQkq - 0 1', 'rnbqkbnr/pppppppp/9/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR x KQkq - 0 1']) {
+    assert.throws(() => parseFen(fen))
+  }
+})

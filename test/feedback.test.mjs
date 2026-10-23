@@ -31,7 +31,7 @@ test('plano com ciclo ou IDs que colidem após normalização é rejeitado antes
 
 test('resposta de plan-review sem feedback enum bloqueia em runtime de produção', async () => {
   const calls = []
-  const runtime = { host: 'codex', models: { planner: 'gpt-6.1-sol', planReviewer: 'gpt-6.1-sol', designReviewer: 'gpt-6.1-sol', executor: 'gpt-6-luna', verifier: 'gpt-6-luna', critic: 'gpt-6.1-sol', synth: 'gpt-6-luna' }, capabilities: { readOnlyEnforced: true } }
+  const runtime = { host: 'codex', models: { planner: 'gpt-6.1-sol', planReviewer: 'gpt-6.1-sol', designReviewer: 'gpt-6.1-sol', executor: 'gpt-6-luna', verifier: 'gpt-6-luna', critic: 'gpt-6.1-sol', synth: 'gpt-6-luna', researcher: 'gpt-6.1-sol', designer: 'gpt-6.1-sol', notetaker: 'gpt-6-luna' }, capabilities: { readOnlyEnforced: true } }
   const { result } = await runWorkflow({ ...BASE, plan: researchPlan }, async label => { calls.push(label); return { pass: true } }, { runtime })
   assert.equal(result.status, 'blocked')
   assert.equal(result.feedback.reason, 'plan_review_failed_or_invalid')
@@ -313,4 +313,87 @@ test('correção do plano recebe o doneWhen travado no prompt e no schema', asyn
   assert.equal(doneWhen.minItems, 2)
   assert.equal(doneWhen.maxItems, 2)
   assert.equal(reviews, 2, 'a ordem dos critérios não pode bloquear a correção antes da nova revisão')
+})
+
+// Regressão (benchmark real Claude chess 3474, 21/10/2026): o plan-review Opus pediu ajuste no N1 no texto do reason, mas listou
+// só N2 em affectedNodes. A correção seguiu o texto, mexeu no N1 e a run bloqueou com local_plan_correction_changed_structure.
+test('correção local pode mexer em nó citado no reason mesmo fora de affectedNodes', async () => {
+  const plan = structuredClone(researchPlan)
+  plan.nodes.push({ id: 'R2', title: 'Outra', kind: 'research', brief: 'pesquisar mais', deps: ['R1'], risk: 'low', acceptance: ['ok'] })
+  const fix = { ...approval('FIX_LOCAL'), reason: 'Ajustar o R2. Risco menor no R1: manter a validação leniente.', affectedNodes: ['R2'] }
+  const candidate = structuredClone(plan)
+  candidate.nodes[0].brief = 'pesquisar com validação leniente'
+  candidate.nodes[1].acceptance = ['ok', 'mais um']
+  let correctionPrompt = ''
+  const { result, calls } = await runWorkflow({ ...BASE, planOnly: true, plan }, async (label, prompt) => {
+    if (label === 'plan-review:r1') return { feedback: fix }
+    if (label === 'plan') { correctionPrompt = prompt; return candidate }
+    if (label === 'plan-review:r2') return { feedback: approval('APPROVE') }
+    return null
+  })
+  assert.notEqual(result.feedback?.reason, 'local_plan_correction_changed_structure')
+  assert.equal(result.planVersion, 2)
+  assert.deepEqual(calls.filter(label => !label.startsWith('#')), ['plan-review:r1', 'plan', 'plan-review:r2'])
+  assert.match(correctionPrompt, /Editable nodes: \["R1","R2"\]|Editable nodes: \["R2","R1"\]/)
+})
+
+test('correção local continua bloqueando mudança em nó que o feedback não cita', async () => {
+  const plan = structuredClone(researchPlan)
+  plan.nodes.push({ id: 'R2', title: 'Outra', kind: 'research', brief: 'pesquisar mais', deps: ['R1'], risk: 'low', acceptance: ['ok'] })
+  const fix = { ...approval('FIX_LOCAL'), reason: 'Ajustar o aceite do R2.', affectedNodes: ['R2'] }
+  const candidate = structuredClone(plan)
+  candidate.nodes[0].brief = 'mudança fora do escopo'
+  const { result } = await runWorkflow({ ...BASE, planOnly: true, plan }, async label => {
+    if (label === 'plan-review:r1') return { feedback: fix }
+    if (label === 'plan') return candidate
+    return { feedback: approval('APPROVE') }
+  })
+  assert.equal(result.feedback.reason, 'local_plan_correction_changed_structure')
+})
+
+// Regressão (benchmark Minecraft MVP, 21/10/2026): o plan-review Opus pediu FIX_LOCAL com "adicione deps:[N1] ao N2" e listou
+// N1, N2 e N3 em affectedNodes. A correção fez exatamente isso e a run bloqueou com local_plan_correction_changed_structure
+// antes de qualquer nó rodar, porque a correção local não podia mudar deps nem de nó citado.
+test('correção local pode mudar as deps de nó citado antes de ele rodar', async () => {
+  const plan = structuredClone(researchPlan)
+  plan.nodes.push({ id: 'R2', title: 'Outra', kind: 'research', brief: 'pesquisar mais', deps: [], risk: 'low', acceptance: ['ok'] })
+  const fix = { ...approval('FIX_LOCAL'), reason: 'O R2 usa o resultado do R1: adicione deps ["R1"] ao R2.', affectedNodes: ['R1', 'R2'] }
+  const candidate = structuredClone(plan)
+  candidate.nodes[1].deps = ['R1']
+  let correctionPrompt = ''
+  const { result, calls } = await runWorkflow({ ...BASE, planOnly: true, plan }, async (label, prompt) => {
+    if (label === 'plan-review:r1') return { feedback: fix }
+    if (label === 'plan') { correctionPrompt = prompt; return candidate }
+    if (label === 'plan-review:r2') return { feedback: approval('APPROVE') }
+    return null
+  })
+  assert.notEqual(result.feedback?.reason, 'local_plan_correction_changed_structure')
+  assert.equal(result.planVersion, 2)
+  assert.deepEqual(calls.filter(label => !label.startsWith('#')), ['plan-review:r1', 'plan', 'plan-review:r2'])
+  assert.match(correctionPrompt, /deps/)
+})
+
+test('correção local continua bloqueando mudança de deps em nó que o feedback não cita', async () => {
+  const plan = structuredClone(researchPlan)
+  plan.nodes.push({ id: 'R2', title: 'Outra', kind: 'research', brief: 'pesquisar mais', deps: [], risk: 'low', acceptance: ['ok'] })
+  plan.nodes.push({ id: 'R3', title: 'Mais', kind: 'research', brief: 'pesquisar ainda', deps: [], risk: 'low', acceptance: ['ok'] })
+  const fix = { ...approval('FIX_LOCAL'), reason: 'Ajustar o aceite do R2.', affectedNodes: ['R2'] }
+  const candidate = structuredClone(plan)
+  candidate.nodes[2].deps = ['R1']
+  const { result } = await runWorkflow({ ...BASE, planOnly: true, plan }, async label => {
+    if (label === 'plan-review:r1') return { feedback: fix }
+    if (label === 'plan') return candidate
+    return { feedback: approval('APPROVE') }
+  })
+  assert.equal(result.feedback.reason, 'local_plan_correction_changed_structure')
+})
+
+test('plan reviewer é avisado que doneWhen é travado e que affectedNodes lista todo nó a corrigir', async () => {
+  let reviewPrompt = ''
+  await runWorkflow({ ...BASE, planOnly: true, plan: researchPlan }, async (label, prompt) => {
+    if (label === 'plan-review:r1') { reviewPrompt = prompt; return { feedback: approval('APPROVE') } }
+    return null
+  })
+  assert.match(reviewPrompt, /doneWhen is locked/)
+  assert.match(reviewPrompt, /affectedNodes must list every node/)
 })

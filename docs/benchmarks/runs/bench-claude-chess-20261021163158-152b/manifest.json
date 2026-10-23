@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "id": "bench-claude-chess-20261021163158-152b",
+  "host": "claude",
+  "scenario": "chess",
+  "createdAt": "2026-10-21T16:31:58.191Z",
+  "fixtureDir": "/Volumes/DouglasNvme/Documents/GitHub/graph-eng/test/fixtures/benchmark-chess",
+  "fixture": {
+    "workspace": {
+      "acceptance.md": "6ff448b6d40153b0e4cd7a206aef0cdc96779f81303abf26322005434e21c9b4",
+      "package.json": "4b1edc7144ffa81b3aa9cb4696053cf7eeea3ca1bef327082c4ff32d7c37394c",
+      "src/fen.mjs": "0330a755d908bdbd7d7d8881348ba8b8f0496c135f125ad541349a13cd7070d9",
+      "src/game.mjs": "005ab736ab9fc2ad2843e8c160c3c35b2420b8b604620dbe7e469e229dc72356",
+      "src/movegen.mjs": "d06298d99b4fe6782c217be2d2ea4f3202fc71a3860d96468cf17cadf6705d25",
+      "src/perft.mjs": "5e52f4e2928a745e338e07397c2c67c437b2ca4c11d2c404614645b509537267",
+      "task.md": "526a91d69c49853c286e1662082c840431a913b528da3396a87afd8fa7007a81"
+    },
+    "acceptance": {
+      "fen.acceptance.mjs.txt": "89b1a5bf3fb76d02cd6d6d7e6433e90b14e2940850e74a97db399e29432f433f",
+      "game.acceptance.mjs.txt": "22f03c1a96bcb9610e01f66fa82db7ef900aa5f6a2cbe4b25e07a824470b8fb8",
+      "perft.acceptance.mjs.txt": "51bdb31b513214df1f5a8844d03f2f1f494667799b20e83b59e814b4b9b7ee58"
+    },
+    "reference": {
+      "src/fen.mjs.txt": "b08bff4578e34f46983224b35fba8ce6a5a64b256cc0d725e1fa653d9edbde4b",
+      "src/game.mjs.txt": "cabd1b0f212b9a2837acb8a41304f6aee5e5db7746dbe17306f562e1b8a53b85",
+      "src/movegen.mjs.txt": "a9b4bf50952b3c0547df4f8560af98496f321b49de7f66a4ccc4e13468127837",
+      "src/perft.mjs.txt": "bbc52f02e95577ac194eed568c1a8e7e52ec4dd012be8e04dd52f4d90714dae1"
+    },
+    "contractV2": {}
+  },
+  "acceptance": {
+    "expectedPass": 15
+  },
+  "baseline": {
+    "commit": "91bf1dc",
+    "path": "workflows/graph-eng.js",
+    "bytes": 77172,
+    "sha256": "099335e3cf21fa05aea179d75f6cc01deceba81c142e1fceeefcc7f32b0604f2",
+    "file": "baseline/graph-eng-91bf1dc.js"
+  },
+  "bridge": {
+    "file": "bin/graph-benchmark.mjs",
+    "sha256": "c1d8b5701e1537665a8841a4012e901090c20f75e2cafebc6329954eebd4123b"
+  },
+  "transport": {
+    "file": "bin/hosts.mjs",
+    "sha256": "02c13e93bc704f5071c2f52a243d7a43b6b93836787484490e86b2c60af27079"
+  },
+  "compiler": {
+    "file": "bin/workflow-source.mjs",
+    "sha256": "a4a9802d62bd72815fb35237e0631696e3e2111debed7b85cdc6a6606177eac3"
+  },
+  "engine": {
+    "adaptiveTreeSha256": "96ba049cf08ed0d77d6d1596c3a4550c4b340c3994deeda14976d652013e4a15",
+    "workflowFile": "workflows/graph-eng.js",
+    "workflowSha256": "cf96c095ead47f7b010b7b070d711bdf520966df089ed43336587b3dc3788fab"
+  },
+  "packageFile": "package.json",
+  "packageSha256": "a6f01cebe68380a453ca47e4c4f12e5f4fc33027061e51a9216e7bbcc3c5ef54",
+  "policy": {
+    "host": "claude",
+    "name": "lógica v1 com política Opus/Haiku normalizada",
+    "models": {
+      "planner": "opus",
+      "planReviewer": "opus",
+      "designReviewer": "opus",
+      "critic": "opus",
+      "executor": "haiku",
+      "verifier": "haiku",
+      "synth": "haiku"
+    },
+    "readOnly": {
+      "planner": false,
+      "planReviewer": true,
+      "designReviewer": true,
+      "critic": true,
+      "executor": false,
+      "verifier": true,
+      "synth": false
+    }
+  },
+  "policySha256": "599c18289c75c1f1f31f94b472070f6d60be3199de3cd01e904570d7dbac120d",
+  "labelMap": {
+    "plan": {
+      "logicalRole": "planner",
+      "transportRole": "planner",
+      "grant": "artifacts"
+    },
+    "design-review": {
+      "logicalRole": "designReviewer",
+      "transportRole": "designReviewer",
+      "grant": "none"
+    },
+    "critic": {
+      "logicalRole": "critic",
+      "transportRole": "critic",
+      "grant": "none"
+    },
+    "judge": {
+      "logicalRole": "judge",
+      "transportRole": "planReviewer",
+      "grant": "none"
+    },
+    "work": {
+      "logicalRole": "executor",
+      "transportRole": "executor",
+      "grant": "by-node-kind"
+    },
+    "repair": {
+      "logicalRole": "executor",
+      "transportRole": "executor",
+      "grant": "by-node-kind"
+    },
+    "polish": {
+      "logicalRole": "executor",
+      "transportRole": "executor",
+      "grant": "product"
+    },
+    "design-repair": {
+      "logicalRole": "executor",
+      "transportRole": "executor",
+      "grant": "artifacts"
+    },
+    "draft-a": {
+      "logicalRole": "executor",
+      "transportRole": "executor",
+      "grant": "artifacts"
+    },
+    "draft-b": {
+      "logicalRole": "executor",
+      "transportRole": "executor",
+      "grant": "artifacts"
+    },
+    "verify": {
+      "logicalRole": "verifier",
+      "transportRole": "verifier",
+      "grant": "none"
+    },
+    "escalate": {
+      "logicalRole": "verifier",
+      "transportRole": "verifier",
+      "grant": "none"
+    },
+    "synth": {
+      "logicalRole": "synth",
+      "transportRole": "synth",
+      "grant": "artifacts"
+    }
+  },
+  "labelMapSha256": "40c20b04192f8cc724953f122c2e7ed6bddb26738a5a5dbb1fe6d17c3afe36a1",
+  "checks": [
+    "node --test"
+  ],
+  "effort": "medium",
+  "economy": "balanced",
+  "ceiling": 24,
+  "maxCalls": 60,
+  "maxWallMs": 5400000,
+  "nodeVersion": "v22.23.2",
+  "cli": {
+    "codex": "not-probed",
+    "claude": "not-probed"
+  }
+}
