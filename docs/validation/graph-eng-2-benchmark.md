@@ -407,6 +407,35 @@ Custo por tipo de token, nos preços de cada modelo (o total bate com o `costUSD
 
 **Limites.** É n=1, numa tarefa de spec fechada e bem testada. Ainda não houve uma run em que o executor travasse, gastasse o advisor ou precisasse de uma 2ª sessão do gate. O teto de 3 consultas é só instrução no prompt, porque o advisor é ferramenta do servidor e hook não o vê. A contagem sai da transcrição da sessão. O executor teve 1 negação de permissão, sem efeito no resultado. O "maior contexto" ficou "—" porque o CLI não expõe o pico por turno.
 
+**Fluxo advisor com Haiku no executor (`--flow advisor --executor haiku`, 23/10).** Mesma tarefa, mesmo planner (Sonnet) e mesma revisão do plano (Opus). Só o executor contínuo trocou de Sonnet para Haiku 5.5, ainda com `--advisor opus`. A hipótese era sair mais rápido e mais barato com a mesma qualidade. Evidência em `docs/benchmarks/runs/minecraft-20261023-advisor-haiku/`.
+
+| papel | modelo | custo | tempo |
+|---|---|---|---|
+| planner | Sonnet | US$ 0,11 | 28 s |
+| revisão do plano (`REVISE`, 5 notas) | Opus | US$ 0,19 | 32 s |
+| executor (1 sessão, DONE) | Haiku | US$ 0,82 | 1160 s |
+| advisor dentro do executor (1 consulta) | Opus | US$ 1,21 | — |
+| gate (`npm test` e `npm run build`) | — | — | 2 s |
+| **total** | | **US$ 2,33** | **1222 s** |
+
+| tipo | tokens | custo |
+|---|---|---|
+| entrada sem cache | 133k | US$ 0,53 |
+| escrita de cache | 285k | US$ 0,40 |
+| leitura de cache | 6,71M | US$ 0,26 |
+| saída | 230k | US$ 1,13 |
+
+**O que entregou:** 30 arquivos e 2.638 linhas em `src/`. O gate passou de primeira, e o aceite oculto deu 54/55. Falhou `physics: velocidade terminal e dt grande não atravessa`: com `dt` de 5 s, o jogador para em y=1, mas `onGround` fica `false`. O smoke visual mostrou o menu, o mundo com árvores, a hotbar e o F3 (60 FPS), sem erro no console. O executor deixou um `src/engine/tmp-debug.test.js` que não conseguiu apagar (`rm` negado) e teve 4 negações de permissão.
+
+**Leitura.**
+
+1. **A hipótese não se confirmou.** Com Haiku, a run saiu 30% mais cara (US$ 2,33 contra US$ 1,79) e 85% mais lenta (1222 s contra 662 s) que com Sonnet, e perdeu 1 teste oculto (54/55 contra 55/55).
+2. **O Haiku em si foi barato (US$ 0,82), mas chamou o advisor 1 vez, e essa consulta de Opus custou US$ 1,21**, mais que o Haiku inteiro. Com Sonnet, o advisor não foi chamado.
+3. **A sessão foi mais longa:** 6,7M tokens de leitura de cache contra 1,4M, e 230k de saída contra 92k. O Haiku precisou de mais turnos para chegar ao mesmo ponto.
+4. **Mesmo assim, ficou abaixo do agente único** (US$ 2,33 contra US$ 5,97, 1222 s contra 1375 s), com o jogo na tela.
+
+**Limites.** n=1 de cada lado. Uma consulta do advisor a mais ou a menos muda o custo em mais de US$ 1, então a diferença de custo pode ser variância. A diferença de tempo e de tokens é grande demais para ser só isso.
+
 **Bugs achados nas runs e corrigidos** (cada um com teste de regressão):
 
 1. **Xadrez:** no estágio `plan` enxuto, o planner esboçou nós de implementação e a run bloqueou com `plan_stage_non_research_node`. Os esboços agora viram achados para o estágio `tasks`.
@@ -450,6 +479,7 @@ Evidência em `docs/benchmarks/runs/minecraft-20261021/`.
 | graph-eng | 4 | BLOCK `local_repair_budget_exhausted` no estágio `plan` | — | — | não | 9 | US$ 1,02 | 261 s | 82k |
 | graph-eng | 5 | BLOCK `provenance_unsealed_window:R3`, reparo sem progresso | 55/55 | 11/11 | não | 21 | US$ 2,23 | 2305 s | 1013k |
 | graph-eng `--flow advisor` (22/10) | 1 | DONE, gate verde de primeira | 55/55 | 11/11 | sim | 3 (0 advisor) | US$ 1,79 | 662 s | — |
+| graph-eng `--flow advisor --executor haiku` (23/10) | 1 | DONE, gate verde de primeira | 54/55 | 11/11 | sim | 3 (1 advisor) | US$ 2,33 | 1222 s | — |
 
 **O que cada variante entregou.**
 
