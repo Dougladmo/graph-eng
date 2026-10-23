@@ -698,6 +698,20 @@ test('advisedExecutorModel troca só o modelo do executor contínuo e mantém o 
   assert.throws(() => createHost({ host: 'codex', cwd: runDir, runDir, advisedExecutorModel: 'haiku' }), /advisedExecutorModel/)
 })
 
+test('executorModel por pedido troca o modelo só do advisedExecutor, entre sonnet e haiku', async t => {
+  const runDir = await tempRun(t)
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
+  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
+  for (const model of ['haiku', 'sonnet']) {
+    await host.wait(await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: model }))
+    const args = fake.calls.at(-1).args
+    assert.equal(args[args.indexOf('--model') + 1], model)
+    assert.equal(args[args.indexOf('--advisor') + 1], 'opus')
+  }
+  await assert.rejects(host.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: 'opus' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
+  await assert.rejects(host.spawn({ role: 'executor', prompt: 'x', schema, executorModel: 'haiku' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
+})
+
 test('executor de escrita ganha Bash só nos comandos aprovados; leitura e papéis de revisão seguem sem shell', async t => {
   const runDir = await tempRun(t)
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })

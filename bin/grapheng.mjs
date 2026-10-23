@@ -19,6 +19,8 @@ const ADAPTIVE = new Set(['on', 'off'])
 const FLOWS = new Set(['graph', 'advisor'])
 // --executor: modelo do executor contínuo do fluxo advisor. Plano e revisão não mudam.
 const EXECUTORS = new Set(['sonnet', 'haiku'])
+// --haiku-max: o planner marca a complexidade de cada passo e os passos até esse nível vão para o Haiku.
+const HAIKU_MAX = new Set(['low', 'medium'])
 const COMMANDS = ['plan', 'clarify', 'tasks', 'implemente', 'init']
 const TASK_FREE_COMMANDS = new Set(['clarify', 'tasks'])
 // Tabela do brief (I1): cada comando vira exatamente um runGraph com este pipeline.
@@ -41,6 +43,7 @@ export function parseGrapheng(argv) {
   let adaptive
   let flow
   let executor
+  let haikuMax
   const taskTokens = []
   let literal = false
   for (let i = 0; i < tail.length; i++) {
@@ -84,6 +87,14 @@ export function parseGrapheng(argv) {
       executor = value
       continue
     }
+    if (!literal && token.startsWith('--haiku-max=')) throw new Error(`--haiku-max=${token.slice('--haiku-max='.length)} não é aceito; use --haiku-max ${token.slice('--haiku-max='.length)}`)
+    if (!literal && token === '--haiku-max') {
+      if (haikuMax !== undefined) throw new Error('--haiku-max repetido')
+      const value = tail[++i]
+      if (!HAIKU_MAX.has(value)) throw new Error('--haiku-max aceita somente low ou medium')
+      haikuMax = value
+      continue
+    }
     if (!literal && token.startsWith('-')) {
       const flag = token.split('=')[0]
       if (REMOVED.has(flag)) throw new Error(`${flag}: opção removida`)
@@ -94,6 +105,8 @@ export function parseGrapheng(argv) {
   }
   if (flow === 'advisor' && command !== 'implemente') throw new Error('--flow advisor só vale com implemente')
   if (executor !== undefined && flow !== 'advisor') throw new Error('--executor só vale com --flow advisor')
+  if (haikuMax !== undefined && flow !== 'advisor') throw new Error('--haiku-max só vale com --flow advisor')
+  if (haikuMax !== undefined && executor !== undefined) throw new Error('--haiku-max não combina com --executor')
   if (command === 'init') {
     if (taskTokens.length || effort !== undefined || adaptive !== undefined) throw new Error('init não recebe tarefa, esforço nem --adaptive')
     return { command }
@@ -106,7 +119,7 @@ export function parseGrapheng(argv) {
   if (taskTokens.length && !task.trim()) throw new Error('tarefa vazia')
   if (command === 'plan' && !task) throw new Error('plan exige uma tarefa')
   if (flow === 'advisor' && !task) throw new Error('--flow advisor exige a tarefa')
-  return { command, ...(task ? { task } : {}), ...(effort ? { effort } : {}), ...(adaptive ? { adaptive } : {}), ...(flow === 'advisor' ? { flow } : {}), ...(executor ? { executor } : {}) }
+  return { command, ...(task ? { task } : {}), ...(effort ? { effort } : {}), ...(adaptive ? { adaptive } : {}), ...(flow === 'advisor' ? { flow } : {}), ...(executor ? { executor } : {}), ...(haikuMax ? { haikuMax } : {}) }
 }
 
 // Valida a forma das respostas de clarify. Não compara questionSetId com o slot: isso só entra no passo R.
@@ -215,7 +228,7 @@ export async function executeGrapheng({ invocation, clarification, cwd = process
   if (parsed.flow === 'advisor') {
     const runDir = path.resolve(cwd, args.runDir)
     const flowHost = hostFactory({ host: trustedHost, cwd, runDir, runId, ...(parsed.executor ? { advisedExecutorModel: parsed.executor } : {}) })
-    const result = await advisorFlowImpl({ host: flowHost, hostName: trustedHost, cwd, task: parsed.task, runDir })
+    const result = await advisorFlowImpl({ host: flowHost, hostName: trustedHost, cwd, task: parsed.task, runDir, ...(parsed.haikuMax ? { haikuMax: parsed.haikuMax } : {}) })
     return { ...result, runId, runDir }
   }
   if (parsed.command === 'implemente') {
