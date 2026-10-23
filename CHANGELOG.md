@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-10-23
+
+### Changed
+
+- **On Claude, the advisor flow now routes by complexity by default (`--haiku-max low`).** Haiku takes the steps the planner marks `low`; everything else stays on Sonnet. `--haiku-max off` or `--executor sonnet|haiku` restore a single implementer session. Codex does not route.
 
 ### Added
 
-- **`--haiku-max low|medium` in the advisor flow.** The planner marks each step `low`, `medium` or `high`; steps up to the given level go to Haiku and the rest stay on Sonnet. Consecutive steps on the same model share one session, all sessions keep the Opus advisor and share its budget of 3 calls, and a gate repair runs as one full Sonnet session.
+- **`--haiku-max low|medium|off` in the advisor flow.** The planner marks each step `low`, `medium` or `high`; steps up to the given level go to Haiku and the rest stay on Sonnet. Consecutive steps on the same model share one session, all sessions keep the Opus advisor and share its budget of 3 calls, and a gate repair runs as one full Sonnet session.
   - Minecraft MVP benchmark (23/10): 55/55 and the game on screen in both runs; `medium` cost US$ 1.66 in 752 s, `low` US$ 1.59 in 617 s.
 
 ## 1.1.0 — 2026-10-23

@@ -1,6 +1,6 @@
 {
   "name": "graph-eng",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Plan or implement complex tasks as small agent graphs, with real checks and local evidence.",
   "interface": {
     "displayName": "Graph Eng",

@@ -20,7 +20,9 @@ const FLOWS = new Set(['graph', 'advisor'])
 // --executor: modelo do executor contínuo do fluxo advisor. Plano e revisão não mudam.
 const EXECUTORS = new Set(['sonnet', 'haiku'])
 // --haiku-max: o planner marca a complexidade de cada passo e os passos até esse nível vão para o Haiku.
-const HAIKU_MAX = new Set(['low', 'medium'])
+// Padrão no claude: low (benchmark Minecraft 23/10: 55/55 por US$ 1,59). off ou --executor desligam o roteamento.
+const HAIKU_MAX = new Set(['low', 'medium', 'off'])
+const DEFAULT_HAIKU_MAX = 'low'
 const COMMANDS = ['plan', 'clarify', 'tasks', 'implemente', 'init']
 const TASK_FREE_COMMANDS = new Set(['clarify', 'tasks'])
 // Tabela do brief (I1): cada comando vira exatamente um runGraph com este pipeline.
@@ -91,7 +93,7 @@ export function parseGrapheng(argv) {
     if (!literal && token === '--haiku-max') {
       if (haikuMax !== undefined) throw new Error('--haiku-max repetido')
       const value = tail[++i]
-      if (!HAIKU_MAX.has(value)) throw new Error('--haiku-max aceita somente low ou medium')
+      if (!HAIKU_MAX.has(value)) throw new Error('--haiku-max aceita somente low, medium ou off')
       haikuMax = value
       continue
     }
@@ -227,8 +229,10 @@ export async function executeGrapheng({ invocation, clarification, cwd = process
   if (parsed.command === 'clarify' && clarification !== undefined) args.clarification = clarification
   if (parsed.flow === 'advisor') {
     const runDir = path.resolve(cwd, args.runDir)
+    const haikuMax = parsed.haikuMax === 'off' || parsed.executor ? null : parsed.haikuMax ?? (trustedHost === 'claude' ? DEFAULT_HAIKU_MAX : null)
+    if (haikuMax && trustedHost !== 'claude') throw new Error('--haiku-max vale só no host claude')
     const flowHost = hostFactory({ host: trustedHost, cwd, runDir, runId, ...(parsed.executor ? { advisedExecutorModel: parsed.executor } : {}) })
-    const result = await advisorFlowImpl({ host: flowHost, hostName: trustedHost, cwd, task: parsed.task, runDir, ...(parsed.haikuMax ? { haikuMax: parsed.haikuMax } : {}) })
+    const result = await advisorFlowImpl({ host: flowHost, hostName: trustedHost, cwd, task: parsed.task, runDir, ...(haikuMax ? { haikuMax } : {}) })
     return { ...result, runId, runDir }
   }
   if (parsed.command === 'implemente') {

@@ -223,7 +223,7 @@ test('fluxo advisor roteado: gate reprovado vai para uma sessão de reparo intei
 test('--haiku-max só vale com --flow advisor, aceita low ou medium e não combina com --executor', async t => {
   assert.deepEqual(parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--haiku-max', 'low']), { command: 'implemente', task: 'faça', flow: 'advisor', haikuMax: 'low' })
   assert.throws(() => parseGrapheng(['implemente', 'faça', '--haiku-max', 'low']), /só vale com --flow advisor/)
-  assert.throws(() => parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--haiku-max', 'high']), /low ou medium/)
+  assert.throws(() => parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--haiku-max', 'high']), /low, medium ou off/)
   assert.throws(() => parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--haiku-max', 'low', '--executor', 'haiku']), /não combina/)
   const cwd = await tempDir(t)
   const seen = []
@@ -234,4 +234,27 @@ test('--haiku-max só vale com --flow advisor, aceita low ou medium e não combi
     advisorFlowImpl: async options => { seen.push(options); return { flow: 'advisor', status: 'done' } },
   })
   assert.equal(seen[0].haikuMax, 'medium')
+})
+
+// v1.2.0: no host claude o fluxo advisor roteia por padrão com o Haiku só nos passos low (benchmark 23/10: 55/55, US$ 1,59).
+test('fluxo advisor no claude usa --haiku-max low por padrão; --executor e --haiku-max off desligam o roteamento; codex não roteia', async t => {
+  const cwd = await tempDir(t)
+  const run = async (invocation, host = 'claude') => {
+    const seen = []
+    await executeGrapheng({
+      invocation, cwd, host,
+      configImpl: async () => ({ effort: 'medium', effortSource: 'default' }),
+      hostFactory: options => ({ options }),
+      advisorFlowImpl: async options => { seen.push(options); return { flow: 'advisor', status: 'done' } },
+    })
+    return seen[0]
+  }
+  assert.equal((await run(['implemente', 'x', '--flow', 'advisor'])).haikuMax, 'low')
+  assert.equal((await run(['implemente', 'x', '--flow', 'advisor', '--haiku-max', 'medium'])).haikuMax, 'medium')
+  assert.equal((await run(['implemente', 'x', '--flow', 'advisor', '--haiku-max', 'off'])).haikuMax, undefined)
+  const sonnetOnly = await run(['implemente', 'x', '--flow', 'advisor', '--executor', 'sonnet'])
+  assert.equal(sonnetOnly.haikuMax, undefined)
+  assert.equal(sonnetOnly.host.options.advisedExecutorModel, 'sonnet')
+  assert.equal((await run(['implemente', 'x', '--flow', 'advisor'], 'codex')).haikuMax, undefined)
+  await assert.rejects(run(['implemente', 'x', '--flow', 'advisor', '--haiku-max', 'low'], 'codex'), /vale só no host claude/)
 })
