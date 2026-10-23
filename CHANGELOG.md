@@ -1,9 +1,17 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-10-23
 
 ### Added
 
+- **Advisor flow (`grapheng implemente <task> --flow advisor`).** A short alternative to the graph for tasks a single implementer can carry:
+  - 1 planner (Sonnet, read-only) and 1 plan review (Opus, read-only). A `REVISE` does not open another round: its notes go straight to the implementer.
+  - 1 continuous implementer session (Sonnet, with `--advisor opus`) writes all the code with the whole context. Its Bash runs only `npm test` and `npm run build`, and it may consult the Opus advisor at most 3 times.
+  - The supervisor's external gate (`npm test` and `npm run build`) ends the run. If it fails, the implementer gets one more session with the failure output, up to 2 sessions.
+  - Cost is split into input, cache write, cache read and output, and advisor calls are counted from the session transcript.
+  - Minecraft MVP benchmark (22/10): 55/55 hidden tests and the game on screen, for US$ 1.79 in 662 s, against US$ 5.97 and 1375 s for the single Opus agent.
+- **`--executor haiku` in the advisor flow.** Swaps only the implementer model; planner and plan review stay the same, and Opus stays the advisor. Accepts `sonnet` (default) or `haiku`, on the Claude host only.
+  - Minecraft MVP benchmark (23/10): 54/55 and the game on screen, but US$ 2.33 in 1222 s. Haiku called the advisor once (US$ 1.21 of Opus) and needed far more turns, so Sonnet stays the default.
 - **Adaptive flow (tiers).** The runner triages each task before planning and picks `fast`, `standard` or `full`. Simple tasks no longer go through every review:
   - `fast`: the planner reads the code itself, with no research nodes, no design and a synthetic plan review. Implement, checks, verify, the final critic and synth always run.
   - `standard`: adds the real plan review on Opus.
@@ -48,6 +56,7 @@
 - **A node the verifier rejected now says why in the block reason.** A failed node returned without a note, so the next node hit `provenance_unsealed_window:<id> (causa: sem nota registrada)`. The note now lists the verifier's issues and why repair stopped: no progress, no budget slots, or the run's local repairs used up (2/2).
 - **A run blocked by the final critic now carries the reason.** The final result had no top-level `feedback`, so `run.finished` recorded `feedback: null` and the benchmark only saw `engine_blocked`.
 - **Design and research nodes keep receiving the worker's memory** after moving to the new `designer` and `researcher` roles.
+- **Benchmark tests no longer fail inside `.claude/worktrees/`.** Their workspaces were created inside the repository, so in a worktree under `.claude` the `CWD_PROTECTED_PATH` guard refused the writer role before the spawn. They now live in the system temp directory.
 - **Agents and trusted checks no longer inherit graph-eng secrets.** Child processes used to inherit the whole environment. They now get it without `OPENROUTER_API_KEY` and without `GRAPH_ENG_*`.
 
 - **A local plan correction no longer blocks when the reviewer names a node it left out of `affectedNodes`.** The correction may now change every node the reason names, and its prompt lists those nodes. The plan reviewer is also told that `doneWhen` is locked and that `affectedNodes` must list every node it asks to change.

@@ -10,7 +10,7 @@ const json = async name => JSON.parse(await readFile(path.join(root, name), 'utf
 test('manifests preservam identidade e versão semver sincronizadas', async () => {
   const [portable, codex, claude] = await Promise.all([json('plugin.json'), json('.codex-plugin/plugin.json'), json('.claude-plugin/plugin.json')])
   assert.deepEqual([portable.name, codex.name, claude.name], ['graph-eng', 'graph-eng', 'graph-eng'])
-  assert.equal(portable.version, '1.0.0')
+  assert.equal(portable.version, '1.1.0')
   assert.equal(codex.version, portable.version)
   assert.equal(claude.version, portable.version)
   assert.match(portable.version, /^\d+\.\d+\.\d+$/)
