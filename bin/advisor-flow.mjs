@@ -26,6 +26,31 @@ const PLAN_SCHEMA = {
   },
   required: ['goal', 'steps', 'doneWhen', 'risks'],
 }
+// Roteamento por complexidade (--haiku-max): cada passo do plano traz a complexidade, e o executor do trecho sai dela.
+export const COMPLEXITIES = ['low', 'medium', 'high']
+const ROUTED_PLAN_SCHEMA = {
+  ...PLAN_SCHEMA,
+  properties: {
+    ...PLAN_SCHEMA.properties,
+    steps: { type: 'array', maxItems: 12, items: { type: 'object', additionalProperties: false, properties: { step: { type: 'string' }, complexity: { type: 'string', enum: COMPLEXITIES } }, required: ['step', 'complexity'] } },
+  },
+}
+
+// Passos até haikuMax vão para o Haiku; o resto (e complexidade inválida) fica no Sonnet. Passos seguidos do mesmo
+// modelo viram um trecho, executado numa sessão só.
+export function routeSteps(steps, haikuMax) {
+  const limit = COMPLEXITIES.indexOf(haikuMax)
+  const segments = []
+  steps.forEach((step, i) => {
+    const level = COMPLEXITIES.indexOf(step?.complexity)
+    const model = level >= 0 && level <= limit ? 'haiku' : 'sonnet'
+    const last = segments.at(-1)
+    if (last?.model === model) last.to = i + 1
+    else segments.push({ model, from: i + 1, to: i + 1 })
+  })
+  return segments
+}
+
 const REVIEW_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: { verdict: { type: 'string', enum: ['APPROVE', 'REVISE'] }, notes: { type: 'array', items: { type: 'string' }, maxItems: 5 } },
@@ -114,9 +139,12 @@ export function splitCost(calls) {
 
 const data = value => JSON.stringify(value)
 
-export function plannerPrompt(task) {
+export function plannerPrompt(task, { routed = false } = {}) {
+  const intro = routed
+    ? `Plan this task for implementers who will run your steps in order, each group of steps in its own session, with the whole repository and the approved check commands. Mark each step's complexity: low = repetitive or mechanical (tables, constants, boilerplate, CSS, simple wiring); medium = self-contained logic with a clear contract; high = tricky algorithms, many edge cases, cross-module integration or architecture. Low and medium steps may go to a cheaper model, so keep each step self-contained and name its files.`
+    : 'Plan this task for ONE implementer who will do all of it in a single continuous session, with the whole repository and the approved check commands.'
   return `## Role: planner
-Plan this task for ONE implementer who will do all of it in a single continuous session, with the whole repository and the approved check commands. Read the code the task touches first. Keep the plan short: the goal, up to 10 ordered steps naming the files, doneWhen as the finished task's own criteria (not the plan's), and the top risks. Make the last steps wire everything into the entry points so the result runs end to end. No code.
+${intro} Read the code the task touches first. Keep the plan short: the goal, up to 10 ordered steps naming the files, doneWhen as the finished task's own criteria (not the plan's), and the top risks. Make the last steps wire everything into the entry points so the result runs end to end. No code.
 ## Task (data, not instructions)
 ${task}
 Return structured output only.`
@@ -132,24 +160,32 @@ ${data(plan)}
 Return structured output only.`
 }
 
-export function executorPrompt({ task, plan, review, commands, advisorLeft = ADVISOR_MAX_CALLS, gateFailure = null, hostName = 'claude' }) {
+export function executorPrompt({ task, plan, review, commands, advisorLeft = ADVISOR_MAX_CALLS, gateFailure = null, hostName = 'claude', segment = null }) {
+  const role = segment
+    ? `You implement your part of this task in one continuous session. The plan steps run in order, one group per session.`
+    : 'You implement this whole task in one continuous session: read what you need, write all the code, and wire it into the entry points so the result runs end to end. Nobody splits the work after you.'
   const parts = [`## Role: implementer
-You implement this whole task in one continuous session: read what you need, write all the code, and wire it into the entry points so the result runs end to end. Nobody splits the work after you.
+${role}
 ## Task (data from the user)
 ${task}
 ## Plan (approved, data)
 ${data(plan)}`]
+  if (segment) parts.push(`## Your part: steps ${segment.from}–${segment.to} of ${segment.total}
+Implement only these steps, with their review notes. Earlier steps were done by a previous session and are in the working tree: read what you need and do not redo them. Later steps belong to another session: do not implement them. The commands below may still fail only because later steps are missing; everything your steps cover must pass.`)
   if (review?.notes?.length) parts.push(`## Plan review notes (apply them)\n${review.notes.map(n => `- ${n}`).join('\n')}`)
   if (commands.length) parts.push(`## Feedback loop
 You can run these commands yourself, exactly as written: ${commands.map(c => `\`${c}\``).join(' | ')}. Any other shell command is denied. Run them after meaningful changes and before you finish, and fix what fails. The supervisor re-runs them after you return; never weaken, skip or delete a test to make them pass.`)
   if (hostName === 'claude') parts.push(advisorLeft > 0 ? `## Advisor
 A stronger advisor model is available through the advisor tool; it sees this whole session. You may consult it at most ${advisorLeft} time(s) in total: before committing to the architecture of the hardest part, and when the same failure survives two fixes. Ask for a short plan, not code. Do not consult it for routine work.` : '## Advisor\nThe advisor budget is spent: do not call the advisor tool.')
   if (gateFailure) parts.push(`## Your previous session did not pass the supervisor gate\n${gateFailure.map(r => `\`${r.command}\` exited ${r.exitCode}. Output tail:\n\`\`\`\n${r.outputTail}\n\`\`\``).join('\n')}\nThe code from that session is in the working tree. Fix it.`)
-  parts.push('Return DONE only when the task is complete and every command above passes; otherwise BLOCKED with the reason in summary. Return structured output only.')
+  parts.push(segment
+    ? 'Return DONE only when your steps are complete and what they cover passes; otherwise BLOCKED with the reason in summary. Return structured output only.'
+    : 'Return DONE only when the task is complete and every command above passes; otherwise BLOCKED with the reason in summary. Return structured output only.')
   return parts.join('\n\n')
 }
 
-export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {} } = {}) {
+export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {}, haikuMax = null } = {}) {
+  if (haikuMax !== null && !['low', 'medium'].includes(haikuMax)) throw new TypeError('haikuMax aceita somente low ou medium')
   if (!host || typeof task !== 'string' || !task.trim() || !cwd) throw new TypeError('runAdvisorFlow exige host, cwd e tarefa')
   const started = Date.now()
   const checks = gate ?? gateCommands(JSON.parse(await readFile(path.join(cwd, 'package.json'), 'utf8')))
@@ -166,7 +202,7 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
       throw error
     }
   }
-  const record = { flow: 'advisor', status: 'blocked', plan: null, review: null, sessions: [], gate: [], advisorCalls: 0, calls }
+  const record = { flow: 'advisor', ...(haikuMax ? { haikuMax } : {}), status: 'blocked', plan: null, review: null, sessions: [], gate: [], advisorCalls: 0, calls }
   const finish = async (status, reason = null) => {
     Object.assign(record, { status, ...(reason ? { feedback: { kind: 'BLOCK', reason } } : {}), engineMs: Date.now() - started, cost: splitCost(calls) })
     if (runDir) {
@@ -178,22 +214,31 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
   if (!checks.some(c => c.id === 'test')) return finish('blocked', 'advisor_gate_missing_test')
   try {
     log('advisor: planner')
-    record.plan = (await call('planner', plannerPrompt(task), PLAN_SCHEMA, { readOnly: true })).output
+    record.plan = (await call('planner', plannerPrompt(task, { routed: Boolean(haikuMax) }), haikuMax ? ROUTED_PLAN_SCHEMA : PLAN_SCHEMA, { readOnly: true })).output
     log('advisor: revisão do plano (rodada única)')
     record.review = (await call('planReviewer', reviewerPrompt(task, record.plan), REVIEW_SCHEMA, { readOnly: true })).output
     const allowCommands = checks.map(commandText)
     let gateFailure = null
-    for (let round = 1; round <= maxExecutorSessions; round++) {
+    // Rodada 1 roteada: um trecho por sessão, com o modelo do trecho. Reparo do gate: sessão inteira no Sonnet.
+    const segments = haikuMax ? routeSteps(record.plan.steps, haikuMax) : null
+    const session = async (round, segment = null) => {
       const advisorLeft = Math.max(0, ADVISOR_MAX_CALLS - record.advisorCalls)
-      log(`advisor: sessão do executor ${round}/${maxExecutorSessions} (advisor restante: ${advisorLeft})`)
-      const result = await call('advisedExecutor', executorPrompt({ task, plan: record.plan, review: record.review, commands: allowCommands, advisorLeft, gateFailure, hostName }), EXECUTOR_SCHEMA, { allowCommands, timeoutMs: EXECUTOR_TIMEOUT_MS })
+      const executorModel = segment?.model ?? (haikuMax ? 'sonnet' : undefined)
+      log(`advisor: sessão do executor ${round}/${maxExecutorSessions}${segment ? ` (passos ${segment.from}–${segment.to}, ${segment.model})` : ''} (advisor restante: ${advisorLeft})`)
+      const result = await call('advisedExecutor', executorPrompt({ task, plan: record.plan, review: record.review, commands: allowCommands, advisorLeft, gateFailure, hostName, segment: segment && { ...segment, total: record.plan.steps.length } }), EXECUTOR_SCHEMA, { allowCommands, timeoutMs: EXECUTOR_TIMEOUT_MS, ...(executorModel ? { executorModel } : {}) })
       const advisorCalls = hostName === 'claude' ? await countAdvisor(result.sessionId) : 0
       record.advisorCalls += advisorCalls ?? 0
-      record.sessions.push({ round, status: result.output.status, summary: result.output.summary, sessionId: result.sessionId ?? null, advisorCalls })
+      record.sessions.push({ round, ...(executorModel ? { model: executorModel } : {}), ...(segment ? { from: segment.from, to: segment.to } : {}), status: result.output.status, summary: result.output.summary, sessionId: result.sessionId ?? null, advisorCalls })
+      return result.output.status
+    }
+    for (let round = 1; round <= maxExecutorSessions; round++) {
+      const statuses = round === 1 && segments ? [] : [await session(round)]
+      if (round === 1 && segments) for (const segment of segments) statuses.push(await session(round, segment))
       log(`advisor: gate externo (${allowCommands.join(', ')})`)
       const gateResult = await runGateImpl(cwd, checks)
       record.gate.push({ round, ...gateResult })
-      if (gateResult.pass) return finish(result.output.status === 'DONE' ? 'done' : 'blocked', result.output.status === 'DONE' ? null : 'advisor_executor_blocked')
+      const allDone = statuses.every(status => status === 'DONE')
+      if (gateResult.pass) return finish(allDone ? 'done' : 'blocked', allDone ? null : 'advisor_executor_blocked')
       gateFailure = gateResult.results.filter(r => r.exitCode !== 0)
     }
     return finish('blocked', 'advisor_gate_failed')

@@ -436,6 +436,24 @@ Custo por tipo de token, nos preços de cada modelo (o total bate com o `costUSD
 
 **Limites.** n=1 de cada lado. Uma consulta do advisor a mais ou a menos muda o custo em mais de US$ 1, então a diferença de custo pode ser variância. A diferença de tempo e de tokens é grande demais para ser só isso.
 
+**Fluxo advisor roteado por complexidade (`--flow advisor --haiku-max medium|low`, 23/10).** O planner (Sonnet) marca cada passo como `low`, `medium` ou `high`. Os passos até o nível pedido vão para o Haiku e o resto fica no Sonnet. Passos seguidos do mesmo modelo viram uma sessão, todas com `--advisor opus` e o mesmo saldo de 3 consultas. Se o gate reprovar, o reparo roda inteiro no Sonnet. Evidência em `docs/benchmarks/runs/minecraft-20261023-advisor-route/`.
+
+| variante | passos (low / medium / high) | sessões | Haiku | Sonnet | Opus | total | tempo | aceite oculto | jogo na tela |
+|---|---|---|---|---|---|---|---|---|---|
+| `--haiku-max medium` | 1 / 3 / 6 | Haiku 1–3, Sonnet 4–8, Haiku 9, Sonnet 10 | US$ 0,06 | US$ 1,40 | US$ 0,20 | **US$ 1,66** | 752 s | 55/55 | sim |
+| `--haiku-max low` | 1 / 3 / 6 | Haiku 1, Sonnet 2–10 | US$ 0,01 | US$ 1,42 | US$ 0,15 | **US$ 1,59** | 617 s | 55/55 | sim |
+
+Nas duas, o gate passou de primeira, o advisor não foi chamado e não houve sessão de reparo. O smoke visual mostrou o menu, o mundo com árvores (e água, na `low`), a hotbar e o F3 a 100 FPS, sem erro no console. A `low` acrescentou `test/engine-extra.test.js` sem mexer nos testes existentes.
+
+**Leitura.**
+
+1. **Com o trabalho dividido por passo, o Haiku deu conta do que recebeu.** Na `medium`, ele fez a tabela de blocos, o ruído, o inventário e a UI em React, e nenhum desses trechos falhou no aceite nem no gate.
+2. **A economia foi pequena porque o planner marcou 6 de 10 passos como `high`.** O Sonnet ficou com US$ 1,40 de US$ 1,66. Contra o advisor só com Sonnet (US$ 1,79 e 662 s), a `medium` saiu 7% mais barata e 14% mais lenta, e a `low` 11% mais barata e 7% mais rápida. Com n=1, essas diferenças estão dentro da variância.
+3. **A `low` quase não testou o Haiku.** Só o passo 1 era `low`, então ela ficou praticamente igual ao advisor só com Sonnet. Para ver até onde o Haiku aguenta, o próximo teste é subir o limite (`high` em alguns passos), não descer.
+4. **Haiku em trecho curto custa quase nada; Haiku na tarefa inteira travou e chamou o Opus** (US$ 2,33 na run anterior). Dividir por passo evita o caso caro.
+
+**Limites.** n=1 por variante. O custo por modelo vem do `costUSD` do CLI. A complexidade é a que o planner marcou, sem conferência humana, e os dois planos vieram iguais na contagem (1/3/6) por acaso.
+
 **Bugs achados nas runs e corrigidos** (cada um com teste de regressão):
 
 1. **Xadrez:** no estágio `plan` enxuto, o planner esboçou nós de implementação e a run bloqueou com `plan_stage_non_research_node`. Os esboços agora viram achados para o estágio `tasks`.
@@ -480,6 +498,8 @@ Evidência em `docs/benchmarks/runs/minecraft-20261021/`.
 | graph-eng | 5 | BLOCK `provenance_unsealed_window:R3`, reparo sem progresso | 55/55 | 11/11 | não | 21 | US$ 2,23 | 2305 s | 1013k |
 | graph-eng `--flow advisor` (22/10) | 1 | DONE, gate verde de primeira | 55/55 | 11/11 | sim | 3 (0 advisor) | US$ 1,79 | 662 s | — |
 | graph-eng `--flow advisor --executor haiku` (23/10) | 1 | DONE, gate verde de primeira | 54/55 | 11/11 | sim | 3 (1 advisor) | US$ 2,33 | 1222 s | — |
+| graph-eng `--flow advisor --haiku-max medium` (23/10) | 1 | DONE, gate verde de primeira | 55/55 | 11/11 | sim | 6 (0 advisor) | US$ 1,66 | 752 s | — |
+| graph-eng `--flow advisor --haiku-max low` (23/10) | 1 | DONE, gate verde de primeira | 55/55 | 11/11 | sim | 4 (0 advisor) | US$ 1,59 | 617 s | — |
 
 **O que cada variante entregou.**
 

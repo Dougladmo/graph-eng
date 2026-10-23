@@ -256,7 +256,9 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const role = roleFor(request.role)
     const model = experimentalPolicy
       ? (Object.hasOwn(experimentalPolicy.models, role) ? experimentalPolicy.models[role] : undefined)
-      : role === 'advisedExecutor' && advisedExecutorModel ? advisedExecutorModel : MODEL_BY_ROLE[host][role]
+      : role === 'advisedExecutor' ? request.executorModel ?? advisedExecutorModel ?? MODEL_BY_ROLE[host][role] : MODEL_BY_ROLE[host][role]
+    // Fluxo advisor roteado: cada trecho do plano escolhe o modelo do executor contínuo (sonnet ou haiku).
+    if (request.executorModel !== undefined && (role !== 'advisedExecutor' || host !== 'claude' || experimentalPolicy || !ADVISED_EXECUTOR_MODELS.has(request.executorModel))) throw new HostError('INVALID_EXECUTOR_MODEL', 'executorModel vale só no advisedExecutor do claude, com sonnet ou haiku')
     if (experimentalPolicy && !model) throw new HostError('EXPERIMENT_ROLE_UNMAPPED', `Papel fora do mapa experimental: ${request.role}`)
     if (!model) throw new HostError('UNKNOWN_ROLE', `Papel desconhecido: ${request.role}`)
     if (request.model && request.model !== model) throw new HostError('MODEL_MISMATCH', `Modelo do papel ${request.role} deve ser ${model}`)

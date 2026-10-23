@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="stars"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="version 1.1.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.2.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="version 1.2.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat-square" alt="MIT license"></a>
   <a href="#the-five-commands"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="Claude Code plugin"></a>
   <a href="#the-five-commands"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="Codex plugin"></a>
@@ -65,7 +65,7 @@
 | 🔁 **Fixes along the way** | Reviewer feedback flows back through the graph: redo a node, replan, or stop. |
 | 🔒 **No false DONE** | Without passing tests, an approving critic and current evidence, DONE is denied. |
 
-Current version: **1.1.0** · see the [CHANGELOG](CHANGELOG.md).
+Current version: **1.2.0** · see the [CHANGELOG](CHANGELOG.md).
 
 ## Installation
 
