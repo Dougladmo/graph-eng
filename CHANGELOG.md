@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.0 — 2026-10-24
+
+O advisor passa a ser o graph-eng. O motor de grafo saiu: no benchmark Minecraft ele levou 5 tentativas, gastou US$ 7,58 e nunca entregou o jogo, enquanto o advisor fechou 55/55 por US$ 1,59.
+
+### Changed
+
+- **The advisor flow is the only flow.** `implemente <task>` plans (mid model), reviews the plan once (strong model), executes in one continuous session with the strong model as advisor, and only ends `done` when the supervisor's `npm test` and `npm run build` pass. On Claude, steps marked `low` go to the cheap model by default (`--haiku-max low`).
+- **`plan <task>` now runs the advisor planner and plan review only.** It shows each step's complexity and routing, ends with `planned`, and saves the plan in `.graph-runs/advisor-plan.json`.
+- **`implemente` with no task runs the saved plan**, reusing its plan, review and routing. Without a saved plan it blocks with `advisor_plan_missing`; a plan from another host blocks with `advisor_plan_host_mismatch`.
+- **`--effort low|medium|max` (default `medium`) is a per-run flag** applied to every call. The effort config file is gone.
+- The invocation envelope only accepts `host` and `argv`.
+- READMEs rewritten around the advisor flow, with a short first-steps prompt and the Minecraft benchmark only.
+
+### Removed
+
+- The graph engine (`bin/graph-run.mjs` and its modules), the adaptive triage and its classifier, run memory, the benchmark runner and the old benchmark evidence.
+- The `clarify`, `tasks` and `init` commands, and the `/grapheng` workflow (`workflows/graph-eng.js`).
+- `--adaptive` and `--flow`. Passing them, or a removed command, now fails with a message pointing to `plan` and `implemente`.
+- The local panel (`bin/ui-server.mjs`, `bin/ui/`) and its Tailwind dev dependencies.
+
 ## 1.2.0 — 2026-10-23
 
 ### Changed

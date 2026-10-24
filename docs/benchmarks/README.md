@@ -1,40 +1,35 @@
 # Benchmarks do graph-eng
 
-Evidência versionada das runs reais do benchmark (`bin/graph-benchmark.mjs`). A pasta `.graph-runs/` é ignorada pelo git, então tudo o que precisa ficar no repositório é copiado para cá.
+Evidência versionada das runs reais do benchmark Minecraft MVP. A pasta `.graph-runs/` é ignorada pelo git, então o que precisa ficar no repositório é copiado para cá.
 
-- [`RESULTADOS.md`](RESULTADOS.md): tabela de todas as runs arquivadas, gerada pelo comando `archive`. Não edite à mão.
-- `runs/<id>/`: cópia da evidência de cada run (manifesto, `run.json`, `calls.jsonl` e avaliações externas de cada variante, relatório).
-- [`pesquisa-jogos-e-3d.md`](pesquisa-jogos-e-3d.md): catálogo de cases (jogos, 3D, multiagente) para as próximas rodadas.
-- Leitura e histórico das rodadas: [`docs/validation/graph-eng-2-benchmark.md`](../validation/graph-eng-2-benchmark.md).
+## O cenário
 
-## Rodar e arquivar uma run
+Um clone jogável do Minecraft em React e three.js, a partir do esqueleto em [`test/fixtures/benchmark-minecraft/`](../../test/fixtures/benchmark-minecraft/). Os agentes recebem só `workspace/` (com `task.md`, que é o prompt). A nota vem de:
 
-Cada run real gasta dinheiro da conta do Claude ou do Codex: peça autorização antes.
+1. 55 testes de aceite ocultos (`acceptance/`), que os agentes nunca veem.
+2. `npm run build` no repositório entregue.
+3. Smoke visual no navegador: criar mundo, andar, minerar, colocar bloco, abrir inventário, F3 e pausar.
 
-```bash
-node bin/graph-benchmark.mjs prepare --host claude --scenario chess --out .graph-runs/benchmarks
-```
+Como montar e dar a nota está em [`acceptance.md`](../../test/fixtures/benchmark-minecraft/acceptance.md).
 
-```bash
-node bin/graph-benchmark.mjs run --manifest .graph-runs/benchmarks/<id>/manifest.json --variant single-agent
-```
+## Resultados
 
-```bash
-node bin/graph-benchmark.mjs run --manifest .graph-runs/benchmarks/<id>/manifest.json --variant adaptive
-```
+| Variante | Pasta | Testes ocultos | Custo | Tempo |
+| --- | --- | --- | --- | --- |
+| Agente único no modelo forte, sem graph-eng | [`runs/minecraft-20261021/`](runs/minecraft-20261021/) | 55/55 | US$ 5,97 | 1375 s |
+| Advisor, `--executor sonnet` | [`runs/minecraft-20261022-advisor/`](runs/minecraft-20261022-advisor/) | 55/55 | US$ 1,79 | 662 s |
+| Advisor, `--executor haiku` | [`runs/minecraft-20261023-advisor-haiku/`](runs/minecraft-20261023-advisor-haiku/) | 54/55 | US$ 2,33 | 1222 s |
+| Advisor, `--haiku-max medium` | [`runs/minecraft-20261023-advisor-route/`](runs/minecraft-20261023-advisor-route/) | 55/55 | US$ 1,66 | 752 s |
+| Advisor, `--haiku-max low` (padrão) | [`runs/minecraft-20261023-advisor-route/`](runs/minecraft-20261023-advisor-route/) | 55/55 | US$ 1,59 | 617 s |
 
-```bash
-node bin/graph-benchmark.mjs eval --manifest .graph-runs/benchmarks/<id>/manifest.json
-```
+Cada pasta tem o JSON da run (no advisor: plano, revisão, roteamento, sessões, gate, chamadas e custo por modelo e por papel) e o `*-acceptance.tap` com a saída dos testes ocultos.
 
-```bash
-node bin/graph-benchmark.mjs report --manifest .graph-runs/benchmarks/<id>/manifest.json
-```
+## Rodar de novo
+
+Cada run real gasta dinheiro da conta do Claude: peça autorização antes.
 
 ```bash
-node bin/graph-benchmark.mjs archive --manifest .graph-runs/benchmarks/<id>/manifest.json
+bash test/fixtures/benchmark-minecraft/setup.sh /tmp/minecraft-bench
 ```
 
-`archive` copia a evidência para `runs/<id>/` e regera o `RESULTADOS.md`. Ele não copia o workspace da tentativa nem o baseline v1 (77 KB, recuperável por `git show 91bf1dc:workflows/graph-eng.js`).
-
-Cenários: `happy` (3 funções), `faturamento` (9 módulos, contrato espalhado), `chess` (gerador de lances de xadrez, perft). Variantes: `v1-normalized`, `adaptive`, `single-agent`.
+Depois, dentro de `/tmp/minecraft-bench`, rode `/graph-eng:implemente` com o conteúdo de `task.md` como tarefa e dê a nota como descrito em `acceptance.md`.

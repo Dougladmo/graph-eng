@@ -1,6 +1,0 @@
-{
-  "agentType": "workflow-subagent",
-  "description": "plan",
-  "workflowPhase": "Plan",
-  "model": "sonnet"
-}

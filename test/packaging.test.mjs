@@ -10,7 +10,7 @@ const json = async name => JSON.parse(await readFile(path.join(root, name), 'utf
 test('manifests preservam identidade e versão semver sincronizadas', async () => {
   const [portable, codex, claude] = await Promise.all([json('plugin.json'), json('.codex-plugin/plugin.json'), json('.claude-plugin/plugin.json')])
   assert.deepEqual([portable.name, codex.name, claude.name], ['graph-eng', 'graph-eng', 'graph-eng'])
-  assert.equal(portable.version, '1.2.0')
+  assert.equal(portable.version, '1.3.0')
   assert.equal(codex.version, portable.version)
   assert.equal(claude.version, portable.version)
   assert.match(portable.version, /^\d+\.\d+\.\d+$/)
@@ -21,46 +21,42 @@ test('manifests preservam identidade e versão semver sincronizadas', async () =
   for (const forbidden of ['skills', 'mcpServers', 'apps', 'interface']) assert.equal(Object.hasOwn(portable, forbidden), false)
 })
 
-test('skill portátil tem nome correspondente à pasta e assets relativos contidos', async () => {
+test('skill portátil tem nome correspondente à pasta e descreve só o fluxo advisor', async () => {
   const skill = await readFile(path.join(root, 'skills/grapheng/SKILL.md'), 'utf8')
   assert.match(skill, /^---\s*\nname: grapheng\n/)
   assert.match(skill, /\/graph-eng:grapheng/)
   assert.match(skill, /use o nome da skill que o cliente mostra \(ex\.: `graph-eng:grapheng`\)/)
   assert.doesNotMatch(skill, /Codex `\$grapheng/)
-  for (const command of ['plan', 'implemente', 'init', 'clarify', 'tasks']) assert.match(skill, new RegExp(`\`${command}`))
-  // Os 5 comandos estão ligados: o SKILL não pode mais anunciar estágio pendente.
-  assert.doesNotMatch(skill, /em implementação|stage_unsupported/)
-  assert.match(skill, /feature corrente/)
-  assert.match(skill, /needs_clarification/)
-  assert.match(skill, /tasks_plan_mismatch/)
-  await access(path.join(root, 'skills/grapheng/DESIGN.md'))
+  for (const command of ['plan', 'implemente']) assert.match(skill, new RegExp(`\`${command}`))
+  for (const flag of ['--effort low|medium|max', '--haiku-max low|medium|off', 'advisor-plan.json', 'advisor_plan_missing', 'advisor_gate_missing_test']) assert.ok(skill.includes(flag), flag)
+  // O motor de grafo saiu na 1.3.0: nada de clarify, tasks, init, painel ou --adaptive.
+  assert.doesNotMatch(skill, /`(clarify|tasks|init)`|--adaptive|--flow|painel|DESIGN\.md|needs_clarification/)
+  await assert.rejects(access(path.join(root, 'skills/grapheng/DESIGN.md')))
   const names = await readdir(path.join(root, 'skills'))
   assert.deepEqual(names, ['grapheng'])
-  const commands = await readdir(path.join(root, 'commands'))
-  assert.equal(commands.includes('painel.md'), false)
 })
 
-test('commands de Claude são exatamente clarify, implemente, init, plan e tasks, com envelope e argv[0] corretos', async () => {
+test('commands de Claude são exatamente implemente e plan, com envelope, argv[0] e flags do advisor', async () => {
   const commands = (await readdir(path.join(root, 'commands'))).sort()
-  assert.deepEqual(commands, ['clarify.md', 'implemente.md', 'init.md', 'plan.md', 'tasks.md'])
+  assert.deepEqual(commands, ['implemente.md', 'plan.md'])
   for (const file of commands) {
     const name = path.basename(file, '.md')
     const text = await readFile(path.join(root, 'commands', file), 'utf8')
     assert.match(text, /^---\s*\ndescription: .+\n/, file)
-    assert.match(text, /^argument-hint: /m, file)
+    assert.match(text, /^argument-hint: .*\[--effort low\|medium\|max\] \[--haiku-max low\|medium\|off\] \[--executor sonnet\|haiku\]/m, file)
     assert.match(text, /--invocation/, file)
     assert.match(text, /\$\{CLAUDE_PLUGIN_ROOT\}/, file)
     assert.match(text, new RegExp(`"argv"\\s*:\\s*\\["${name}"`), file)
+    assert.doesNotMatch(text, /--adaptive|clarify|tasks/, file)
   }
 })
 
 test('commands, SKILL e README não citam full, ceiling, economy, --model nem nomes de modelo', async () => {
-  for (const file of ['commands/plan.md', 'commands/implemente.md', 'commands/init.md', 'skills/grapheng/SKILL.md', 'README.md', 'README.pt-BR.md', 'README.es.md']) {
-    // O tier `full` do fluxo adaptativo é citado só entre crases; o antigo comando full continua proibido.
-    // As flags do fluxo advisor (--haiku-max, --executor sonnet|haiku) são citadas só entre crases; a prosa usa forte/médio/barato.
+  for (const file of ['commands/plan.md', 'commands/implemente.md', 'skills/grapheng/SKILL.md', 'README.md', 'README.pt-BR.md', 'README.es.md']) {
+    // As flags do advisor (--haiku-max, --executor sonnet|haiku) e os valores entre crases são a única
+    // menção permitida a modelo; a prosa usa forte/médio/barato.
     const text = (await readFile(path.join(root, file), 'utf8'))
-      .replaceAll('`full`', '`tier`')
-      .replace(/`(--haiku-max|--executor)( \w+)?`|`(sonnet|haiku)`/g, '`flag`')
+      .replace(/--executor (sonnet\|haiku|sonnet|haiku)|--haiku-max|--executor|`(sonnet|haiku)`/g, 'flag')
     assert.doesNotMatch(text, /\b(full|ceiling|economy)\b|--model\b|\b(opus|sonnet|haiku)\b|gpt-/i, file)
   }
 })

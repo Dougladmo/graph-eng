@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "graph-eng",
-  "description": "Lean graph engineering for Claude Code and Codex.",
+  "description": "Advisor-flow engineering for Claude Code and Codex.",
   "owner": {
     "name": "Douglas Oliveira",
     "url": "https://github.com/Dougladmo"
@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "graph-eng",
-      "description": "Runs a complex task as a small graph of agents: a strong model plans and reviews, a cheap model executes, and the run only ends DONE with evidence.",
+      "description": "Plan or implement a task with an advisor: a mid model plans, the strong model reviews and advises, a cheap model does the simple steps, and the run only ends DONE when npm test and build pass.",
       "source": "./",
       "category": "productivity"
     }

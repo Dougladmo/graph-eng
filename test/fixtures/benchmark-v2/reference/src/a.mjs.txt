@@ -1,3 +1,0 @@
-export function normalizarRegistro(texto) {
-  return String(texto).trim()
-}

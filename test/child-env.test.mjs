@@ -37,7 +37,7 @@ test('spawn do agente não repassa a chave do OpenRouter ao processo filho', asy
   process.env.GRAPH_ENG_TRIAGE_CLASSIFIER = 'on'
   t.after(() => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn }, killProcess: () => {} })
-  await host.wait(await host.spawn({ role: 'executor', prompt: 'x', schema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] } }))
+  await host.wait(await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] } }))
   assert.ok(seen[0].env, 'o spawn precisa passar env explícito')
   assert.equal(Object.hasOwn(seen[0].env, 'OPENROUTER_API_KEY'), false)
   assert.equal(Object.hasOwn(seen[0].env, 'GRAPH_ENG_TRIAGE_CLASSIFIER'), false)

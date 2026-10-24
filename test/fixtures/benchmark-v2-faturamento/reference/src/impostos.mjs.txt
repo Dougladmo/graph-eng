@@ -1,9 +1,0 @@
-import { arredondar } from './dinheiro.mjs'
-
-export function impostoDoItem(base, uf, categoria, tabela) {
-  const aliquota = tabela.aliquotas[uf]
-  if (aliquota === undefined) throw Object.assign(new Error(`UF sem alíquota: ${uf}`), { code: 'UF_DESCONHECIDA' })
-  if (tabela.isentas.includes(categoria)) return 0
-  const fator = tabela.reduzidas[categoria] ?? 10000
-  return arredondar(base * aliquota * fator, 10000 * 10000)
-}
