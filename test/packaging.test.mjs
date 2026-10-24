@@ -57,7 +57,10 @@ test('commands de Claude são exatamente clarify, implemente, init, plan e tasks
 test('commands, SKILL e README não citam full, ceiling, economy, --model nem nomes de modelo', async () => {
   for (const file of ['commands/plan.md', 'commands/implemente.md', 'commands/init.md', 'skills/grapheng/SKILL.md', 'README.md', 'README.pt-BR.md', 'README.es.md']) {
     // O tier `full` do fluxo adaptativo é citado só entre crases; o antigo comando full continua proibido.
-    const text = (await readFile(path.join(root, file), 'utf8')).replaceAll('`full`', '`tier`')
+    // As flags do fluxo advisor (--haiku-max, --executor sonnet|haiku) são citadas só entre crases; a prosa usa forte/médio/barato.
+    const text = (await readFile(path.join(root, file), 'utf8'))
+      .replaceAll('`full`', '`tier`')
+      .replace(/`(--haiku-max|--executor)( \w+)?`|`(sonnet|haiku)`/g, '`flag`')
     assert.doesNotMatch(text, /\b(full|ceiling|economy)\b|--model\b|\b(opus|sonnet|haiku)\b|gpt-/i, file)
   }
 })

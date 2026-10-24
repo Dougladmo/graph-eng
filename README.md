@@ -178,6 +178,34 @@ node bin/graph-run.mjs triage-config
 
 The key is saved in `~/.graph-eng/config.json` with mode 0600 and never reaches the agents.
 
+### Advisor flow (`--flow advisor`)
+
+An alternative to the graph for `implemente`, turned on per run. Instead of one cheap executor per node, a single executor session does the whole task in order and asks the strong model for advice only when it gets stuck. It came out of the Minecraft benchmark, where the graph never delivered a working game (see [Benchmark](#benchmark)).
+
+```mermaid
+flowchart TD
+  P[🧠 Planner<br/>mid model] --> R{🧠 Plan review<br/>strong, one round}
+  R --> E[⚙️ Executor session<br/>steps in order]
+  E -. at most 3 calls .-> A[(🧠 Advisor<br/>strong model)]
+  E --> G[🧪 Supervisor gate<br/>npm test + npm run build]
+  G -- fails, up to 2 more sessions --> E
+  G -- passes --> D([✅ DONE])
+```
+
+- The planner (mid model) writes the steps and the strong model reviews the plan once.
+- The executor works in one continuous session, so it keeps the context from one step to the next. The strong model is its advisor, with at most 3 calls per run.
+- The executor's shell only runs `npm test` and `npm run build`. The supervisor runs both at the end, and the run is only DONE when that gate passes.
+
+**Routing by complexity.** The planner marks each step as `low`, `medium` or `high`. Steps up to the level set by `--haiku-max` go to the cheap model; the rest go to the mid model. Consecutive steps on the same model share one session, the advisor budget is shared across sessions, and a gate repair always runs on the mid model. In the benchmark, `low` kept the grade and was the cheapest variant, so it is the default on Claude.
+
+| Flag | Values | Default | What it does |
+| --- | --- | --- | --- |
+| `--flow` | `graph`, `advisor` | `graph` | Picks the flow. `advisor` only works with `implemente` and a task. |
+| `--haiku-max` | `low`, `medium`, `off` | `low` on Claude | Highest step complexity that goes to the cheap model. `off` keeps every step on the mid model. |
+| `--executor` | `sonnet`, `haiku` | none | One model for every step. Turns routing off and does not combine with `--haiku-max`. |
+
+`--haiku-max` and `--executor` only exist on the Claude host. On Codex the advisor flow does not route.
+
 ### The four decisions
 
 Every reviewer answers with one of these, always with evidence:
@@ -221,6 +249,23 @@ Rules that always apply:
 ## Benchmark
 
 `bin/graph-benchmark.mjs` runs a fixed task in a clean copy of the repository, with real Claude. The grade comes from a set of **external acceptance tests** that the agents never see. Every run is detailed in [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md).
+
+**Minecraft MVP (advisor flow, 2026-10-23):** a harder task, a playable Minecraft clone in React and three.js, graded by 55 hidden acceptance tests plus a visual check in the browser. The graph flow took 5 attempts there, spent $7.58 and never delivered a game. One run per variant:
+
+| Variant | Hidden tests | Cost | Time |
+| --- | --- | --- | --- |
+| 🧠 Single strong-model agent | 55/55 | $5.97 | 23 min |
+| Advisor, mid model executes | 55/55 | $1.79 | 11 min |
+| Advisor, cheap model executes everything (`--executor haiku`) | 54/55 | $2.33 | 20 min |
+| Advisor, cheap model on `low` + `medium` (`--haiku-max medium`) | 55/55 | $1.66 | 12.5 min |
+| ✅ Advisor, cheap model on `low` (`--haiku-max low`, default) | **55/55** | **$1.59** | **10 min** |
+
+- 💰 Same grade as the single strong-model agent for about a quarter of the cost, in less than half the time. Every advisor variant showed the game on screen with no console errors.
+- 🐢 The cheap model alone on the whole task was slower and more expensive: it called the advisor once ($1.21) and still failed one physics test.
+- ✂️ Split by step, the cheap model handled everything it got. With `medium` it took 4 of 10 steps for $0.06, with no errors.
+- ⚠️ Routing only saved 7% to 11%, because the planner marked 6 of 10 steps as `high`. With one run each, a 10% difference is within normal variance.
+
+Evidence in [docs/benchmarks/runs/](docs/benchmarks/runs/).
 
 **Run f366:**
 
@@ -267,7 +312,7 @@ Running the executor, verifier and synth calls on the strong model would cost ab
 
 ## Execution details
 
-Effort accepts `low`, `medium` (default) or `max`, in the separate form (`--effort max`); `--effort` overrides the configuration in `plan`, `clarify`, `tasks` and `implemente`. Roles and models are fixed by the trusted Claude or Codex adapter. There are no public flags for models, roles, width or internal limits. `--adaptive on|off` (default `on`) turns the tiers on or off; see [Adaptive flow](#adaptive-flow).
+Effort accepts `low`, `medium` (default) or `max`, in the separate form (`--effort max`); `--effort` overrides the configuration in `plan`, `clarify`, `tasks` and `implemente`. Roles and models are fixed by the trusted Claude or Codex adapter. There are no public flags for roles, width or internal limits; the only model choice is the executor in the [advisor flow](#advisor-flow---flow-advisor). `--adaptive on|off` (default `on`) turns the tiers on or off; see [Adaptive flow](#adaptive-flow).
 
 The execution adapter in this release only supports the Node native test runner, in repositories with a readable `package.json` and `scripts.test` set to exactly `node --test`. Vitest, Jest, scripts with extra flags and repositories without that contract produce `BLOCK` for `implemente`; `plan` still works. Each node gets a local selection derived from the `inputs`, `outputs` and `files` the supervisor approved. A known internal mapping runs the affected tests; without a complete mapping, coverage is marked as limited and only the applicable `node --check` runs plus the contract and grant validation. The final gate runs the whole suite with concurrency 2, only after all polish. Checks use `process.execPath`, explicit argv and spawn without a shell. Each run writes its selection and receipts to `.graph-runs/` in the repository.
 
