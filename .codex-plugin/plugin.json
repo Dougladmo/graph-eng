@@ -1,16 +1,16 @@
 {
   "name": "graph-eng",
-  "version": "1.2.0",
-  "description": "Plan or implement complex tasks as small agent graphs, with real checks and local evidence.",
+  "version": "1.3.0",
+  "description": "Plan or implement a task with an advisor: a mid model plans, the strong model reviews and advises, a cheap model does the simple steps, and the run only ends DONE when npm test and build pass.",
   "interface": {
     "displayName": "Graph Eng",
-    "shortDescription": "Agent graphs, trusted checks",
-    "longDescription": "Plan or implement complex tasks with controlled effort, trusted checks, local evidence and a detached live panel.",
+    "shortDescription": "Advisor flow, tested DONE",
+    "longDescription": "Plan and run tasks with the advisor flow: strong-model review and advice, cheap execution routed by step complexity, and a real test gate before DONE.",
     "developerName": "Douglas Oliveira",
     "category": "Developer tools",
     "capabilities": [
       "Interactive"
     ],
-    "defaultPrompt": "Help me plan or run this task with graph-eng."
+    "defaultPrompt": "Plan and implement this task with graph-eng."
   }
 }

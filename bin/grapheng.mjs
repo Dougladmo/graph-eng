@@ -1,256 +1,118 @@
 #!/usr/bin/env node
+// Entrada do graph-eng: plan e implemente, os dois no fluxo advisor (bin/advisor-flow.mjs).
 import { randomUUID } from 'node:crypto'
-import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { spawn } from 'node:child_process'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { runGraph } from './graph-run.mjs'
+import { pathToFileURL } from 'node:url'
 import { createHost } from './hosts.mjs'
 import { runAdvisorFlow } from './advisor-flow.mjs'
-import { NODE_CHECK_MAPPING_HASH, NODE_CHECK_POLICY_ID } from './node-check-policy.mjs'
-import { defaultConfigPath, readConfig, resolveConfig, validateConfig } from './config.mjs'
 
-const PLUGIN_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const REMOVED = new Set(['--ceiling', '--economy', '--width', '--model', '--planner-model', '--reviewer-model', '--executor-model', '--max-rounds', '--max-repairs', '--plan-gate', '--lean', '--high', '--manual', '--auto', '--max-agents'])
+// clarify, tasks e init eram do motor de grafo, removido na 1.3.0.
+const COMMANDS = ['plan', 'implemente']
+const REMOVED_COMMANDS = new Set(['clarify', 'tasks', 'init'])
+// Esforço de raciocínio de todas as chamadas (--effort do Claude Code).
 const EFFORTS = new Set(['low', 'medium', 'max'])
-const ADAPTIVE = new Set(['on', 'off'])
-// --flow advisor: sessão contínua do executor com o modelo forte de advisor (bin/advisor-flow.mjs). graph é o padrão.
-const FLOWS = new Set(['graph', 'advisor'])
-// --executor: modelo do executor contínuo do fluxo advisor. Plano e revisão não mudam.
+const DEFAULT_EFFORT = 'medium'
+// --executor: um modelo só para todos os passos. Desliga o roteamento.
 const EXECUTORS = new Set(['sonnet', 'haiku'])
 // --haiku-max: o planner marca a complexidade de cada passo e os passos até esse nível vão para o Haiku.
 // Padrão no claude: low (benchmark Minecraft 23/10: 55/55 por US$ 1,59). off ou --executor desligam o roteamento.
 const HAIKU_MAX = new Set(['low', 'medium', 'off'])
 const DEFAULT_HAIKU_MAX = 'low'
-const COMMANDS = ['plan', 'clarify', 'tasks', 'implemente', 'init']
-const TASK_FREE_COMMANDS = new Set(['clarify', 'tasks'])
-// Tabela do brief (I1): cada comando vira exatamente um runGraph com este pipeline.
-const PIPELINE_BY_COMMAND = {
-  plan: { from: 'plan', to: 'plan' },
-  clarify: { from: 'clarify', to: 'clarify' },
-  tasks: { from: 'tasks', to: 'tasks' },
-  implemente: { from: 'auto', to: 'implement' },
-}
-const INTERNAL = new Set(['--stage', '--pipeline', '--plan', '--plan-only', '--from', '--to', '--reuse', '--no-reuse', '--run-dir', '--run-id', '--resume', '--mode', '--checks', '--context', '--spec', '--done-when', '--host', '--answers'])
-const ENVELOPE_KEYS = new Set(['host', 'argv', 'clarification'])
-const CLARIFY_QUESTION_IDS = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5']
-const CONTROL_CHARS = /[\u0000-\u0009\u000b-\u001f\u007f]/
+const FLAGS = { '--effort': ['effort', EFFORTS, 'low, medium ou max'], '--executor': ['executor', EXECUTORS, 'sonnet ou haiku'], '--haiku-max': ['haikuMax', HAIKU_MAX, 'low, medium ou off'] }
+const REMOVED = new Set(['--adaptive', '--flow', '--ceiling', '--economy', '--width', '--model', '--planner-model', '--reviewer-model', '--executor-model', '--max-rounds', '--max-repairs', '--plan-gate', '--lean', '--high', '--manual', '--auto', '--max-agents'])
+const ENVELOPE_KEYS = new Set(['host', 'argv'])
+// Plano salvo pelo comando plan; implemente sem tarefa executa este.
+export const SAVED_PLAN = path.join('.graph-runs', 'advisor-plan.json')
 
 export function parseGrapheng(argv) {
   if (!Array.isArray(argv) || argv.some(arg => typeof arg !== 'string')) throw new TypeError('argv precisa ser uma lista de textos')
   const [command, ...tail] = argv
-  if (!COMMANDS.includes(command)) throw new Error(command === 'implement' ? 'comando desconhecido; use implemente' : `comando desconhecido; use ${COMMANDS.join(', ')}`)
-  let effort
-  let adaptive
-  let flow
-  let executor
-  let haikuMax
+  if (REMOVED_COMMANDS.has(command)) throw new Error(`${command} foi removido na 1.3.0; use plan ou implemente`)
+  if (!COMMANDS.includes(command)) throw new Error(command === 'implement' ? 'comando desconhecido; use implemente' : `comando desconhecido; use ${COMMANDS.join(' ou ')}`)
+  const parsed = { command }
   const taskTokens = []
   let literal = false
   for (let i = 0; i < tail.length; i++) {
     const token = tail[i]
     if (!literal && token === '--') { literal = true; continue }
-    if (!literal && token.startsWith('--effort=')) {
-      const value = token.slice('--effort='.length)
-      throw new Error(`--effort=${value} não é aceito; use --effort ${value}`)
-    }
-    if (!literal && token === '--effort') {
-      if (effort !== undefined) throw new Error('--effort repetido')
-      const value = tail[++i]
-      if (!EFFORTS.has(value)) throw new Error('--effort aceita somente low, medium ou max')
-      effort = value
-      continue
-    }
-    if (!literal && token.startsWith('--adaptive=')) {
-      const value = token.slice('--adaptive='.length)
-      throw new Error(`--adaptive=${value} não é aceito; use --adaptive ${value}`)
-    }
-    if (!literal && token === '--adaptive') {
-      if (adaptive !== undefined) throw new Error('--adaptive repetido')
-      const value = tail[++i]
-      if (!ADAPTIVE.has(value)) throw new Error('--adaptive aceita somente on ou off')
-      adaptive = value
-      continue
-    }
-    if (!literal && token.startsWith('--flow=')) throw new Error(`--flow=${token.slice('--flow='.length)} não é aceito; use --flow ${token.slice('--flow='.length)}`)
-    if (!literal && token === '--flow') {
-      if (flow !== undefined) throw new Error('--flow repetido')
-      const value = tail[++i]
-      if (!FLOWS.has(value)) throw new Error('--flow aceita somente graph ou advisor')
-      flow = value
-      continue
-    }
-    if (!literal && token.startsWith('--executor=')) throw new Error(`--executor=${token.slice('--executor='.length)} não é aceito; use --executor ${token.slice('--executor='.length)}`)
-    if (!literal && token === '--executor') {
-      if (executor !== undefined) throw new Error('--executor repetido')
-      const value = tail[++i]
-      if (!EXECUTORS.has(value)) throw new Error('--executor aceita somente sonnet ou haiku')
-      executor = value
-      continue
-    }
-    if (!literal && token.startsWith('--haiku-max=')) throw new Error(`--haiku-max=${token.slice('--haiku-max='.length)} não é aceito; use --haiku-max ${token.slice('--haiku-max='.length)}`)
-    if (!literal && token === '--haiku-max') {
-      if (haikuMax !== undefined) throw new Error('--haiku-max repetido')
-      const value = tail[++i]
-      if (!HAIKU_MAX.has(value)) throw new Error('--haiku-max aceita somente low, medium ou off')
-      haikuMax = value
-      continue
-    }
     if (!literal && token.startsWith('-')) {
-      const flag = token.split('=')[0]
+      const [flag, inline] = token.split('=')
+      if (FLAGS[flag]) {
+        if (inline !== undefined) throw new Error(`${token} não é aceito; use ${flag} ${inline}`)
+        const [key, values, hint] = FLAGS[flag]
+        if (parsed[key] !== undefined) throw new Error(`${flag} repetido`)
+        const value = tail[++i]
+        if (!values.has(value)) throw new Error(`${flag} aceita somente ${hint}`)
+        parsed[key] = value
+        continue
+      }
       if (REMOVED.has(flag)) throw new Error(`${flag}: opção removida`)
-      if (INTERNAL.has(flag)) throw new Error(`${flag}: opção interna, não pública`)
       throw new Error(`opção desconhecida: ${token}; use -- para tarefa iniciada por hífen`)
     }
     taskTokens.push(token)
   }
-  if (flow === 'advisor' && command !== 'implemente') throw new Error('--flow advisor só vale com implemente')
-  if (executor !== undefined && flow !== 'advisor') throw new Error('--executor só vale com --flow advisor')
-  if (haikuMax !== undefined && flow !== 'advisor') throw new Error('--haiku-max só vale com --flow advisor')
-  if (haikuMax !== undefined && executor !== undefined) throw new Error('--haiku-max não combina com --executor')
-  if (command === 'init') {
-    if (taskTokens.length || effort !== undefined || adaptive !== undefined) throw new Error('init não recebe tarefa, esforço nem --adaptive')
-    return { command }
-  }
-  if (TASK_FREE_COMMANDS.has(command)) {
-    if (taskTokens.length) throw new Error('clarify/tasks usam o plano aprovado do workspace; não recebem tarefa')
-    return { command, ...(effort ? { effort } : {}), ...(adaptive ? { adaptive } : {}) }
-  }
+  if (parsed.haikuMax !== undefined && parsed.executor !== undefined) throw new Error('--haiku-max não combina com --executor')
   const task = taskTokens.join(' ')
   if (taskTokens.length && !task.trim()) throw new Error('tarefa vazia')
+  if (task) parsed.task = task
   if (command === 'plan' && !task) throw new Error('plan exige uma tarefa')
-  if (flow === 'advisor' && !task) throw new Error('--flow advisor exige a tarefa')
-  return { command, ...(task ? { task } : {}), ...(effort ? { effort } : {}), ...(adaptive ? { adaptive } : {}), ...(flow === 'advisor' ? { flow } : {}), ...(executor ? { executor } : {}), ...(haikuMax ? { haikuMax } : {}) }
+  if (command === 'implemente' && !task && (parsed.haikuMax !== undefined || parsed.executor !== undefined)) throw new Error('implemente sem tarefa usa o roteamento salvo pelo plan; passe --haiku-max ou --executor no plan')
+  return parsed
 }
-
-// Valida a forma das respostas de clarify. Não compara questionSetId com o slot: isso só entra no passo R.
-export function validateClarificationAnswers(value) {
-  const fail = message => { throw new Error(`clarification inválida: ${message}`) }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('objeto esperado')
-  for (const key of Object.keys(value)) if (!['questionSetId', 'answers'].includes(key)) fail(`campo não permitido: ${key}`)
-  if (typeof value.questionSetId !== 'string' || !/^[a-f0-9]{64}$/.test(value.questionSetId)) fail('questionSetId precisa ser hash hex de 64 caracteres')
-  if (!Array.isArray(value.answers) || value.answers.length < 1 || value.answers.length > 5) fail('answers precisa ter de 1 a 5 itens')
-  const seen = new Set()
-  for (const item of value.answers) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) fail('cada resposta precisa ser objeto')
-    for (const key of Object.keys(item)) if (!['questionId', 'answer', 'skipped'].includes(key)) fail(`campo não permitido: ${key}`)
-    if (!CLARIFY_QUESTION_IDS.includes(item.questionId)) fail(`questionId desconhecido: ${item.questionId}`)
-    if (seen.has(item.questionId)) fail(`questionId duplicado: ${item.questionId}`)
-    seen.add(item.questionId)
-    if (item.skipped !== undefined && typeof item.skipped !== 'boolean') fail(`skipped precisa ser boolean (${item.questionId})`)
-    if (item.skipped === true) {
-      if (item.answer !== undefined) fail(`skipped:true não aceita answer (${item.questionId})`)
-      continue
-    }
-    if (typeof item.answer !== 'string') fail(`${item.questionId} precisa de resposta ou skipped:true explícito`)
-    if (!item.answer.trim()) fail(`resposta vazia (${item.questionId})`)
-    if ([...item.answer].length > 500) fail(`${item.questionId}: resposta acima de 500 caracteres`)
-    if (CONTROL_CHARS.test(item.answer)) fail(`${item.questionId}: caractere de controle não permitido`)
-  }
-  return value
-}
-
 
 function validateHost(host) {
   if (!['claude', 'codex'].includes(host)) throw new Error('host confiável obrigatório: claude ou codex')
   return host
 }
 
-async function configuredEffort(flag) {
-  const raw = flag === undefined ? {} : { effort: flag }
-  const checked = validateConfig(raw)
-  if (!checked.ok) throw new Error(`esforço inválido: ${checked.errors.effort}`)
-  const configFile = defaultConfigPath()
-  const read = readConfig(configFile)
-  const resolved = resolveConfig({ flags: checked.value, stored: read.stored })
-  return { effort: resolved.config.effort, effortSource: resolved.source.effort }
-}
-
-export async function discoverChecks(cwd, { packageReader = file => readFile(file, 'utf8'), affectedTests } = {}) {
-  const unsupported = 'Execução ainda suportada apenas para Node com scripts.test exatamente node --test; este repositório exige adapter confiável de checks que ainda não está implementado. Planejamento permanece disponível.'
-  if (affectedTests !== undefined) return { checks: [], block: 'seleção local de testes só pode ser derivada pela política confiável do supervisor' }
-  let pkg
-  let source
-  try {
-    source = await packageReader(path.join(cwd, 'package.json'))
-    pkg = JSON.parse(source)
+// Roteamento efetivo: --executor fixa um modelo; senão --haiku-max (padrão low no claude). Codex não roteia.
+function routing(parsed, host) {
+  if (parsed.executor) {
+    if (host !== 'claude') throw new Error('--executor vale só no host claude')
+    return { executor: parsed.executor, haikuMax: null }
   }
-  catch { return { checks: [], block: unsupported } }
-  if (pkg?.scripts?.test !== 'node --test') return { checks: [], block: unsupported }
-  const args = ['--test', '--test-concurrency=2']
-  const bytes = Buffer.isBuffer(source) ? source : Buffer.from(source, 'utf8')
-  return {
-    checks: [{ id: 'node-test', command: process.execPath, args, cwd: '.', timeoutMs: 1_800_000, heavy: true }],
-    checkContract: { path: 'package.json', sha256: createHash('sha256').update(bytes).digest('hex'), source: 'scripts.test=node --test' },
-    nodeCheckPolicy: { id: NODE_CHECK_POLICY_ID, mappingHash: NODE_CHECK_MAPPING_HASH, adapter: 'node-test-v1', concurrency: 2 },
-  }
+  if (parsed.haikuMax && parsed.haikuMax !== 'off' && host !== 'claude') throw new Error('--haiku-max vale só no host claude')
+  if (parsed.haikuMax === 'off' || host !== 'claude') return { executor: null, haikuMax: null }
+  return { executor: null, haikuMax: parsed.haikuMax ?? DEFAULT_HAIKU_MAX }
 }
 
-async function startPanel({ spawnImpl = spawn } = {}) {
-  const watchPath = path.join(PLUGIN_ROOT, 'bin', 'graph-watch.mjs')
-  const child = spawnImpl(process.execPath, [watchPath, 'ui', '--detach', '--no-open'], { cwd: process.cwd(), shell: false, stdio: ['ignore', 'pipe', 'pipe'] })
-  let stdout = ''
-  let stderr = ''
-  child.stdout?.setEncoding('utf8').on('data', chunk => { stdout += chunk })
-  child.stderr?.setEncoding('utf8').on('data', chunk => { stderr += chunk })
-  const code = await new Promise((resolve, reject) => {
-    child.once('error', reject)
-    child.once('close', resolve)
-  })
-  if (code !== 0) throw new Error((stderr || `graph-watch terminou com código ${code}`).trim())
-  const match = stdout.match(/graph-eng: painel: (https?:\/\/\S+)/)
-  if (!match) throw new Error('graph-watch não devolveu a URL do painel')
-  return { status: 'started', url: match[1].replace(/[.,;]+$/, '') }
-}
-
-export async function executeGrapheng({ invocation, clarification, cwd = process.cwd(), host, runGraphImpl = runGraph, startPanelImpl = startPanel, discoverChecksImpl = discoverChecks, configImpl = configuredEffort, advisorFlowImpl = runAdvisorFlow, hostFactory = createHost } = {}) {
+export async function executeGrapheng({ invocation, cwd = process.cwd(), host, advisorFlowImpl = runAdvisorFlow, hostFactory = createHost, log = () => {} } = {}) {
   const trustedHost = validateHost(host)
   const parsed = parseGrapheng(invocation)
-  if (clarification !== undefined) {
-    if (parsed.command !== 'clarify') throw new Error('clarification só vale com clarify')
-    validateClarificationAnswers(clarification)
-  }
-  if (parsed.command === 'init') return startPanelImpl()
-  const config = await configImpl(parsed.effort)
   const runId = `grapheng-${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`
-  const args = {
-    mode: 'implement',
-    effort: config.effort,
-    effortSource: config.effortSource,
-    runId,
-    runDir: path.join('.graph-runs', runId),
-    context: '',
-    pipeline: PIPELINE_BY_COMMAND[parsed.command],
+  const runDir = path.resolve(cwd, '.graph-runs', runId)
+  const savedPlanFile = path.resolve(cwd, SAVED_PLAN)
+  let task = parsed.task
+  let route = routing(parsed, trustedHost)
+  let planned = null
+  if (parsed.command === 'implemente' && !task) {
+    let saved
+    try { saved = JSON.parse(await readFile(savedPlanFile, 'utf8')) }
+    catch { return { status: 'blocked', runId, runDir, feedback: { kind: 'BLOCK', reason: 'advisor_plan_missing', detail: 'nenhum plano salvo: rode plan <tarefa> ou implemente <tarefa>' } } }
+    if (saved.host !== trustedHost) return { status: 'blocked', runId, runDir, feedback: { kind: 'BLOCK', reason: 'advisor_plan_host_mismatch', detail: `o plano salvo é do host ${saved.host}` } }
+    task = saved.task
+    route = { executor: saved.executor ?? null, haikuMax: saved.haikuMax ?? null }
+    planned = { plan: saved.plan, review: saved.review }
   }
-  // Tarefa só entra em plan e implemente com tarefa; clarify/tasks/implemente sem tarefa usam o slot único "feature corrente" no runner.
-  if (parsed.task) args.task = parsed.task
-  if (parsed.adaptive) args.adaptive = parsed.adaptive
-  if (parsed.command === 'clarify' && clarification !== undefined) args.clarification = clarification
-  if (parsed.flow === 'advisor') {
-    const runDir = path.resolve(cwd, args.runDir)
-    const haikuMax = parsed.haikuMax === 'off' || parsed.executor ? null : parsed.haikuMax ?? (trustedHost === 'claude' ? DEFAULT_HAIKU_MAX : null)
-    if (haikuMax && trustedHost !== 'claude') throw new Error('--haiku-max vale só no host claude')
-    const flowHost = hostFactory({ host: trustedHost, cwd, runDir, runId, ...(parsed.executor ? { advisedExecutorModel: parsed.executor } : {}) })
-    const result = await advisorFlowImpl({ host: flowHost, hostName: trustedHost, cwd, task: parsed.task, runDir, ...(haikuMax ? { haikuMax } : {}) })
-    return { ...result, runId, runDir }
+  const flowHost = hostFactory({ host: trustedHost, cwd, runDir, runId, ...(route.executor ? { advisedExecutorModel: route.executor } : {}) })
+  const result = await advisorFlowImpl({
+    host: flowHost, hostName: trustedHost, cwd, task, runDir, log,
+    effort: parsed.effort ?? DEFAULT_EFFORT,
+    ...(route.haikuMax ? { haikuMax: route.haikuMax } : {}),
+    ...(parsed.command === 'plan' ? { planOnly: true } : {}),
+    ...(planned ? { planned } : {}),
+  })
+  if (parsed.command === 'plan' && result.status === 'planned') {
+    await mkdir(path.dirname(savedPlanFile), { recursive: true })
+    await writeFile(savedPlanFile, JSON.stringify({ host: trustedHost, task, haikuMax: route.haikuMax, executor: route.executor, runId, plan: result.plan, review: result.review }, null, 2) + '\n')
   }
-  if (parsed.command === 'implemente') {
-    const discovery = await discoverChecksImpl(cwd)
-    if (discovery.block) return { status: 'blocked', runId, runDir: path.resolve(cwd, args.runDir), feedback: { kind: 'BLOCK', reason: 'trusted_check_discovery_failed', detail: discovery.block, severity: 'high', affectedNodes: [], evidenceIds: [] } }
-    args.checks = discovery.checks
-    args.checkContract = discovery.checkContract
-    if (discovery.nodeCheckPolicy) args.nodeCheckPolicy = discovery.nodeCheckPolicy
-  } else {
-    // plan, clarify e tasks são só de leitura no runner: nenhum check entra.
-    args.checks = []
-  }
-  return runGraphImpl({ hostName: trustedHost, args, cwd })
+  return { ...result, runId, runDir }
 }
 
-// Código de saída do driver: blocked e needs_clarification saem com 2 (§6.2 do brief).
+// Código de saída do driver: blocked sai com 2.
 export function exitCodeOf(result) {
-  return result?.status === 'blocked' || result?.status === 'needs_clarification' ? 2 : 0
+  return result?.status === 'blocked' ? 2 : 0
 }
 
 export async function readGraphengInvocationFile(argv) {
@@ -258,16 +120,12 @@ export async function readGraphengInvocationFile(argv) {
   const envelope = JSON.parse(await readFile(path.resolve(argv[1]), 'utf8'))
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) || !['claude', 'codex'].includes(envelope.host) || !Array.isArray(envelope.argv)) throw new Error('arquivo de invocação precisa conter host confiável e argv[]')
   for (const key of Object.keys(envelope)) if (!ENVELOPE_KEYS.has(key)) throw new Error(`chave não permitida no envelope: ${key}`)
-  if (envelope.clarification !== undefined) {
-    if (envelope.argv[0] !== 'clarify') throw new Error('clarification só vale com clarify')
-    validateClarificationAnswers(envelope.clarification)
-  }
   return envelope
 }
 
 async function main() {
   const envelope = await readGraphengInvocationFile(process.argv.slice(2))
-  const result = await executeGrapheng({ invocation: envelope.argv, clarification: envelope.clarification, cwd: process.cwd(), host: envelope.host })
+  const result = await executeGrapheng({ invocation: envelope.argv, cwd: process.cwd(), host: envelope.host, log: message => process.stderr.write(`graph-eng: ${message}\n`) })
   process.stdout.write(JSON.stringify(result, null, 2) + '\n')
   if (exitCodeOf(result) === 2) process.exitCode = 2
 }

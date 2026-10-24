@@ -1,7 +1,0 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import { normalizarRegistro } from '../src/a.mjs'
-
-test('A v2: colapsa espaços internos', () => {
-  assert.equal(normalizarRegistro(' São   Paulo '), 'São Paulo')
-})

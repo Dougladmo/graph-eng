@@ -1,8 +1,8 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "graph-eng",
-  "version": "1.2.0",
-  "description": "graph-eng: plan or implement complex tasks with controlled effort, verifiable checks and local evidence.",
+  "version": "1.3.0",
+  "description": "graph-eng: plan or implement a task with an advisor: a mid model plans, the strong model reviews and advises, a cheap model does the simple steps, and the run only ends DONE when npm test and build pass.",
   "author": {
     "name": "Douglas Oliveira",
     "url": "https://github.com/Dougladmo"
@@ -11,10 +11,9 @@
   "license": "MIT",
   "keywords": [
     "workflow",
+    "advisor",
     "multi-agent",
-    "orchestration",
-    "graph",
-    "verification",
-    "panel"
+    "model-routing",
+    "verification"
   ]
 }

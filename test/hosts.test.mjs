@@ -9,7 +9,6 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createHost as createHostImpl } from '../bin/hosts.mjs'
-import { createIntegrityGuard } from '../bin/run-integrity.mjs'
 
 const schema = { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] }
 
@@ -67,66 +66,49 @@ function waitForText(stream, getText, expected, timeoutMs) {
   })
 }
 
-test('papéis canônicos e aliases selecionam modelo; capabilities não alegam disponibilidade', async t => {
+test('papéis do advisor: Sonnet planeja, Opus revisa e Sonnet executa; papel do grafo antigo é recusado', async t => {
   const runDir = await tempRun(t)
-  const fake = fixtureSpawn({ run(child, command, args) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
   const capabilities = host.capabilities()
   assert.equal(capabilities.readOnlyEnforced, true)
   assert.match(capabilities.readOnlyEnforcement, /Read, Glob e Grep/)
-  assert.deepEqual(Object.keys(capabilities).sort(), ['agentShell', 'agentWeb', 'cancellation', 'cli', 'host', 'lifecycleEvents', 'modelAvailability', 'promptTransport', 'readOnlyEnforced', 'readOnlyEnforcement', 'roles', 'schemaTransport', 'structuredOutput'].sort())
+  assert.deepEqual(Object.keys(capabilities).sort(), ['agentShell', 'cancellation', 'cli', 'host', 'lifecycleEvents', 'modelAvailability', 'promptTransport', 'readOnlyEnforced', 'readOnlyEnforcement', 'roles', 'schemaTransport', 'structuredOutput'].sort())
+  assert.deepEqual(capabilities.roles, ['planner', 'planReviewer', 'advisedExecutor'])
   assert.equal(capabilities.agentShell, false, 'Claude não dá shell ao agente')
-  for (const [role, model] of [['planner', 'sonnet'], ['planReviewer', 'opus'], ['plan-review', 'opus'], ['designReviewer', 'opus'], ['critic', 'sonnet'], ['researcher', 'sonnet'], ['designer', 'sonnet'], ['notetaker', 'haiku'], ['synth', 'haiku'], ['worker', 'haiku'], ['repair', 'haiku'], ['polish', 'haiku'], ['verifier', 'haiku'], ['verify', 'haiku']]) {
+  for (const [role, model] of [['planner', 'sonnet'], ['planReviewer', 'opus'], ['advisedExecutor', 'sonnet']]) {
     await host.wait(await host.spawn({ role, prompt: 'x', schema }))
     assert.equal(fake.calls.at(-1).args[fake.calls.at(-1).args.indexOf('--model') + 1], model)
   }
-})
-
-test('pesquisa e design escritos pelo Sonnet e só leem; o Opus revisa o design', async t => {
-  // Pedido do Douglas (21/10): Sonnet pesquisa, planeja e desenha; Opus só carimba plano e design; Haiku implementa.
-  const runDir = await tempRun(t)
-  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
-  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
-  for (const role of ['researcher', 'designer', 'notetaker']) {
-    await host.wait(await host.spawn({ role, prompt: 'x', schema }))
-    const args = fake.calls.at(-1).args
-    assert.equal(args[args.indexOf('--tools') + 1].includes('Edit'), false, `${role} não pode escrever`)
+  for (const role of ['executor', 'verifier', 'critic', 'researcher', 'worker']) {
+    await assert.rejects(host.spawn({ role, prompt: 'x', schema }), error => error.code === 'UNKNOWN_ROLE', role)
   }
 })
 
 test('effort da chamada vira --effort do Claude Code; sem effort não há flag e valor fora da lista é recusado', async t => {
-  // Regressão (xadrez, 21/10): o workflow pedia effort por chamada, mas o adaptador nunca o repassava ao CLI.
+  // Regressão (xadrez, 21/10): o effort pedido por chamada nunca chegava ao CLI.
   const runDir = await tempRun(t)
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
-  await host.wait(await host.spawn({ role: 'planReviewer', prompt: 'x', schema, effort: 'medium' }))
+  await host.wait(await host.spawn({ role: 'planReviewer', prompt: 'x', schema, effort: 'max' }))
   const args = fake.calls.at(-1).args
-  assert.equal(args[args.indexOf('--effort') + 1], 'medium')
-  await host.wait(await host.spawn({ role: 'verifier', prompt: 'x', schema }))
+  assert.equal(args[args.indexOf('--effort') + 1], 'max')
+  await host.wait(await host.spawn({ role: 'planner', prompt: 'x', schema }))
   assert.equal(fake.calls.at(-1).args.includes('--effort'), false)
-  await assert.rejects(host.spawn({ role: 'critic', prompt: 'x', schema, effort: 'turbo' }), error => error.code === 'INVALID_EFFORT')
+  await assert.rejects(host.spawn({ role: 'planner', prompt: 'x', schema, effort: 'turbo' }), error => error.code === 'INVALID_EFFORT')
 })
 
-test('agentShell: só o Codex dá shell ao agente; o valor chega como capability do transporte', async t => {
+test('agentShell: só o Codex dá shell ao agente; nenhum papel do Claude lê a web', async t => {
   const runDir = await tempRun(t)
   const codex = createHost({ host: 'codex', cwd: runDir, runDir, transport: { spawn: fixtureSpawn({ run() {} }).spawn } })
   assert.equal(codex.capabilities().agentShell, true)
-  const claude = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fixtureSpawn({ run() {} }).spawn } })
-  assert.equal(claude.capabilities().agentShell, false)
-  // Claude: só o researcher ganha WebSearch/WebFetch (fluxo adaptativo, estágio de pesquisa). Codex roda sem --search.
-  assert.equal(claude.capabilities().agentWeb, true)
-  assert.equal(codex.capabilities().agentWeb, false)
-})
-
-test('web só para o researcher no Claude; planner, designer e executor seguem sem web', async t => {
-  const runDir = await tempRun(t)
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
-  const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
-  const toolsOf = async role => { await host.wait(await host.spawn({ role, prompt: 'x', schema })); const args = fake.calls.at(-1).args; return [args[args.indexOf('--tools') + 1], args[args.indexOf('--allowedTools') + 1]] }
-  assert.deepEqual(await toolsOf('researcher'), ['Read,Glob,Grep,WebSearch,WebFetch', 'Read,Glob,Grep,WebSearch,WebFetch'])
-  for (const role of ['planner', 'designer', 'notetaker', 'critic']) assert.deepEqual(await toolsOf(role), ['Read,Glob,Grep', 'Read,Glob,Grep'], role)
-  const [executorTools] = await toolsOf('executor')
-  assert.equal(executorTools.includes('Web'), false)
+  const claude = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
+  assert.equal(claude.capabilities().agentShell, false)
+  for (const role of ['planner', 'planReviewer', 'advisedExecutor']) {
+    await claude.wait(await claude.spawn({ role, prompt: 'x', schema }))
+    assert.equal(fake.calls.at(-1).args.some(arg => /Web/.test(arg)), false, role)
+  }
 })
 
 // B3: escrita do Claude sob diretório .claude é negada pelo Claude Code; o host recusa antes do spawn.
@@ -136,7 +118,7 @@ test('B3: papel de escrita do claude com cwd sob .claude dá CWD_PROTECTED_PATH 
   await mkdir(cwd, { recursive: true })
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
   const host = createHost({ host: 'claude', cwd, runDir, transport: { spawn: fake.spawn } })
-  await assert.rejects(host.spawn({ role: 'executor', prompt: 'x', schema }), err => err.code === 'CWD_PROTECTED_PATH')
+  await assert.rejects(host.spawn({ role: 'advisedExecutor', prompt: 'x', schema }), err => err.code === 'CWD_PROTECTED_PATH')
   assert.equal(fake.calls.length, 0, 'nenhum spawn antes da recusa')
 })
 
@@ -145,11 +127,11 @@ test('B3: permission_denials do envelope do Claude é repassado como permissionD
   const denial = { tool_name: 'Write', tool_input: { file_path: '/x' } }
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false, permission_denials: [denial] })); close(child) } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
-  const withDenial = await host.wait(await host.spawn({ role: 'executor', prompt: 'x', schema }))
+  const withDenial = await host.wait(await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema }))
   assert.deepEqual(withDenial.permissionDenials, [denial])
   const quiet = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
   const host2 = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: quiet.spawn } })
-  const without = await host2.wait(await host2.spawn({ role: 'executor', prompt: 'x', schema }))
+  const without = await host2.wait(await host2.spawn({ role: 'advisedExecutor', prompt: 'x', schema }))
   assert.deepEqual(without.permissionDenials, [])
 })
 
@@ -187,7 +169,7 @@ test('Claude libera escrita do executor só dentro do cwd e mantém papéis de l
     close(child)
   } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, runId: 'run-test', transport: { spawn: fake.spawn } })
-  await host.wait(await host.spawn({ role: 'executor', prompt: 'grave', schema }))
+  await host.wait(await host.spawn({ role: 'advisedExecutor', prompt: 'grave', schema }))
   await host.wait(await host.spawn({ role: 'planner', prompt: 'leia', schema }))
   const [writer, reader] = fake.calls
   const allowed = call => call.args[call.args.indexOf('--allowedTools') + 1]
@@ -208,7 +190,7 @@ test('Claude roda isolado do ambiente do usuário: sem MCP, sem skills e sem set
     close(child)
   } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, runId: 'run-test', transport: { spawn: fake.spawn } })
-  for (const role of ['executor', 'planner']) await host.wait(await host.spawn({ role, prompt: 'x', schema }))
+  for (const role of ['advisedExecutor', 'planner']) await host.wait(await host.spawn({ role, prompt: 'x', schema }))
   for (const { args } of fake.calls) {
     assert.ok(args.includes('--strict-mcp-config'), 'sem --strict-mcp-config o agente carrega os MCPs do usuário')
     assert.equal(args[args.indexOf('--mcp-config') + 1], '{"mcpServers":{}}')
@@ -253,7 +235,7 @@ test('Codex torna schema strict recursivo e remove nulls só de campos opcionais
   assert.equal(result.effectiveModel, null)
 })
 
-test('Codex worker usa Luna e readOnly restringe permissão; cwd divergente/writeScope falham', async t => {
+test('Codex executor usa Luna e readOnly restringe permissão; cwd divergente/writeScope falham', async t => {
   const runDir = await tempRun(t)
   const fake = fixtureSpawn({ async run(child, command, args) {
     await writeFile(args[args.indexOf('--output-last-message') + 1], JSON.stringify({ answer: child.input }))
@@ -262,7 +244,7 @@ test('Codex worker usa Luna e readOnly restringe permissão; cwd divergente/writ
   } })
   const host = createHost({ host: 'codex', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
   const prompt = 'texto $(echo nope); `x`'
-  const handle = await host.spawn({ role: 'executor', prompt, schema, readOnly: true })
+  const handle = await host.spawn({ role: 'advisedExecutor', prompt, schema, readOnly: true })
   const { args, options } = fake.calls[0]
   assert.equal(options.shell, false)
   assert.equal(args[args.indexOf('--model') + 1], 'gpt-6-luna')
@@ -270,8 +252,8 @@ test('Codex worker usa Luna e readOnly restringe permissão; cwd divergente/writ
   assert.equal(args.at(-1), '-')
   assert.equal(fake.calls[0].child.input, prompt)
   assert.deepEqual((await host.wait(handle)).output, { answer: prompt })
-  await assert.rejects(host.spawn({ role: 'worker', prompt, schema, cwd: '/wrong/path' }), { code: 'CWD_MISMATCH' })
-  await assert.rejects(host.spawn({ role: 'worker', prompt, schema, writeScope: ['x.js'] }), { code: 'UNSUPPORTED_WRITE_SCOPE' })
+  await assert.rejects(host.spawn({ role: 'advisedExecutor', prompt, schema, cwd: '/wrong/path' }), { code: 'CWD_MISMATCH' })
+  await assert.rejects(host.spawn({ role: 'advisedExecutor', prompt, schema, writeScope: ['x.js'] }), { code: 'UNSUPPORTED_WRITE_SCOPE' })
 })
 
 test('validação semântica contempla anyOf, type unions, enums e limites de array; desconhecido falha fechado', async t => {
@@ -283,7 +265,7 @@ test('validação semântica contempla anyOf, type unions, enums e limites de ar
     close(child)
   } })
   const host = createHost({ host: 'codex', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
-  const valid = await host.spawn({ role: 'verifier', prompt: 'verificar', schema: checkSchema })
+  const valid = await host.spawn({ role: 'planReviewer', prompt: 'verificar', schema: checkSchema })
   assert.deepEqual((await host.wait(valid)).output, { status: 'ok', items: ['a', 2] })
   const invalidFake = fixtureSpawn({ async run(child, command, args) {
     await writeFile(args[args.indexOf('--output-last-message') + 1], JSON.stringify({ status: 'ok', items: [] }))
@@ -291,10 +273,10 @@ test('validação semântica contempla anyOf, type unions, enums e limites de ar
     close(child)
   } })
   const invalidHost = createHost({ host: 'codex', cwd: runDir, runDir, transport: { spawn: invalidFake.spawn } })
-  await assert.rejects(invalidHost.wait(await invalidHost.spawn({ role: 'verifier', prompt: 'verificar', schema: checkSchema })), { code: 'INVALID_OUTPUT' })
-  await assert.rejects(host.spawn({ role: 'verifier', prompt: 'x', schema: { type: 'string', format: 'date-time' } }), { code: 'UNSUPPORTED_SCHEMA' })
-  await assert.rejects(host.spawn({ role: 'verifier', prompt: ' ', schema }), { code: 'INVALID_PROMPT' })
-  await assert.rejects(host.spawn({ role: 'verifier', prompt: 'x', schema, timeoutMs: 0 }), { code: 'INVALID_TIMEOUT' })
+  await assert.rejects(invalidHost.wait(await invalidHost.spawn({ role: 'planReviewer', prompt: 'verificar', schema: checkSchema })), { code: 'INVALID_OUTPUT' })
+  await assert.rejects(host.spawn({ role: 'planReviewer', prompt: 'x', schema: { type: 'string', format: 'date-time' } }), { code: 'UNSUPPORTED_SCHEMA' })
+  await assert.rejects(host.spawn({ role: 'planReviewer', prompt: ' ', schema }), { code: 'INVALID_PROMPT' })
+  await assert.rejects(host.spawn({ role: 'planReviewer', prompt: 'x', schema, timeoutMs: 0 }), { code: 'INVALID_TIMEOUT' })
 })
 
 test('object rejeita array e anyOf ainda respeita restrições irmãs', async t => {
@@ -310,7 +292,7 @@ test('object rejeita array e anyOf ainda respeita restrições irmãs', async t 
       close(child)
     } })
     const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
-    const handle = await host.spawn({ role: 'verifier', prompt: 'validar', schema: schemas[index] })
+    const handle = await host.spawn({ role: 'planReviewer', prompt: 'validar', schema: schemas[index] })
     await assert.rejects(host.wait(handle), { code: 'INVALID_OUTPUT' })
   }
 })
@@ -323,8 +305,8 @@ test('Codex não aceita turn.failed mesmo com exit 0; modelo arbitrário não é
     close(child, 0)
   } })
   const host = createHost({ host: 'codex', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
-  await assert.rejects(host.spawn({ role: 'critic', prompt: 'x', schema, model: 'outro' }), { code: 'MODEL_MISMATCH' })
-  const handle = await host.spawn({ role: 'critic', prompt: 'x', schema })
+  await assert.rejects(host.spawn({ role: 'planReviewer', prompt: 'x', schema, model: 'outro' }), { code: 'MODEL_MISMATCH' })
+  const handle = await host.spawn({ role: 'planReviewer', prompt: 'x', schema })
   await assert.rejects(host.wait(handle), { code: 'MODEL_UNAVAILABLE' })
   assert.equal(fake.calls.length, 1)
 })
@@ -333,7 +315,7 @@ test('Claude rejeita is_error mesmo com exit 0 e valida saída estruturada', asy
   const runDir = await tempRun(t)
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ is_error: true, result: 'authentication failed' })); close(child) } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
-  const handle = await host.spawn({ role: 'executor', prompt: 'x', schema })
+  const handle = await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema })
   await assert.rejects(host.wait(handle), { code: 'AUTH_FAILED' })
 })
 
@@ -344,7 +326,7 @@ test('regressão: is_error do Claude sem result preserva subtype, errors, uso e 
   for (const code of [0, 1]) {
     const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify(envelope)); close(child, code) } })
     const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
-    const error = await host.wait(await host.spawn({ role: 'executor', prompt: 'x', schema })).then(() => null, e => e)
+    const error = await host.wait(await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema })).then(() => null, e => e)
     assert.equal(error?.code, 'CLI_FAILED')
     assert.match(error.message, /error_max_structured_output_retries/)
     assert.match(error.message, /schema mismatch/)
@@ -362,7 +344,7 @@ test('classifica autenticação e modelo a partir do envelope de erro com exit n
     close(child, 1)
   } })
   const claude = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: claudeFake.spawn } })
-  await assert.rejects(claude.wait(await claude.spawn({ role: 'executor', prompt: 'x', schema })), { code: 'AUTH_FAILED' })
+  await assert.rejects(claude.wait(await claude.spawn({ role: 'advisedExecutor', prompt: 'x', schema })), { code: 'AUTH_FAILED' })
 
   const codexFake = fixtureSpawn({ run(child) {
     child.stdout.write(`${JSON.stringify({ type: 'turn.failed', error: { message: 'model unknown' } })}\n`)
@@ -397,7 +379,7 @@ test('saída natural só completa depois de drenar neto resistente a TERM', { ti
   const host = createHostImpl({ host: 'codex', cwd: runDir, runDir, commandTransform, onEvent: event => { events.push(event); throw new Error('observability failure') } })
   let handle
   try {
-    handle = await host.spawn({ role: 'executor', prompt: 'x', schema })
+    handle = await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema })
     const pid = handle.child.pid
     assert.equal(await waitForText(handle.child.stderr, () => handle.stderr, 'GRAPH_HOST_GRANDCHILD_READY', 3000), true)
     const finalizeDeadline = Date.now() + 1000
@@ -434,7 +416,7 @@ test('falhas AUTH_FAILED e INVALID_OUTPUT preservam código após drenar descend
     const host = createHostImpl({ host: hostName, cwd: runDir, runDir, commandTransform })
     let handle
     try {
-      handle = await host.spawn({ role: 'executor', prompt: 'x', schema })
+      handle = await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema })
       const pid = handle.child.pid
       assert.equal(await waitForText(handle.child.stderr, () => handle.stderr, 'GRAPH_HOST_ERROR_READY', 3000), true)
       await assert.rejects(host.wait(handle), { code: scenario === 'auth' ? 'AUTH_FAILED' : 'INVALID_OUTPUT' })
@@ -452,11 +434,11 @@ test('CLI ausente e falha síncrona de spawn limpam temporários e não fazem fa
   const runDir = await tempRun(t)
   const missing = fixtureSpawn({ run() { const err = new Error('missing'); err.code = 'ENOENT'; missing.calls[0].child.emit('error', err) } })
   const claude = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: missing.spawn } })
-  const absent = await claude.spawn({ role: 'executor', prompt: 'x', schema })
+  const absent = await claude.spawn({ role: 'advisedExecutor', prompt: 'x', schema })
   await assert.rejects(claude.wait(absent), { code: 'CLI_MISSING' })
   assert.equal(missing.calls.length, 1)
   const broken = createHost({ host: 'codex', cwd: runDir, runDir, transport: { spawn() { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) } } })
-  await assert.rejects(broken.spawn({ role: 'executor', prompt: 'x', schema }), { code: 'CLI_MISSING' })
+  await assert.rejects(broken.spawn({ role: 'advisedExecutor', prompt: 'x', schema }), { code: 'CLI_MISSING' })
 })
 
 async function assertProcessGroupGone(pid) {
@@ -482,7 +464,7 @@ test('stdout final em múltiplos chunks chega inteiro antes da saída natural e 
     const host = createHostImpl({ host: 'claude', cwd: runDir, runDir, commandTransform })
     let handle
     try {
-      handle = await host.spawn({ role: 'executor', prompt: 'x', schema })
+      handle = await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema })
       const pid = handle.child.pid
       if (scenario === 'success') {
         const result = await host.wait(handle)
@@ -516,7 +498,7 @@ test('cancel e timeout encerram netos do processo próprio e estabilizam wait', 
     const host = createHostImpl({ host: 'codex', cwd: runDir, runDir, commandTransform, onEvent: event => events.push(event), timeoutMs: 1500 })
     let handle
     try {
-      handle = await host.spawn({ role: 'executor', prompt: 'x', schema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] } })
+      handle = await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] } })
       // The ready handshake proves the resistant grandchild joined the sentinel's group.
       assert.equal(await waitForText(handle.child.stderr, () => handle.stderr, 'GRAPH_HOST_GRANDCHILD_READY', 3000), true)
       const pid = handle.child.pid
@@ -550,7 +532,7 @@ test('cancel com limpeza falha rejeita CANCELLED marcado drainUnproven', { timeo
   const host = createHostImpl({ host: 'codex', cwd: runDir, runDir, commandTransform, timeoutMs: 5000 })
   let handle
   try {
-    handle = await host.spawn({ role: 'executor', prompt: 'x', schema })
+    handle = await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema })
     assert.equal(await waitForText(handle.child.stderr, () => handle.stderr, 'GRAPH_HOST_CLEANUP_READY', 3000), true)
     assert.equal(host.cancel(handle), true)
     await assert.rejects(host.wait(handle), error => {
@@ -567,31 +549,25 @@ test('cancel com limpeza falha rejeita CANCELLED marcado drainUnproven', { timeo
   }
 })
 
-// C14: arquivos de transporte do codex (.host-<id>.schema.json e .host-<id>.output.json) são efêmeros ativos exatos do handle.
+// Arquivos de transporte do codex (.host-<id>.schema.json e .host-<id>.output.json) são exclusivos do handle.
 async function transportFixture(t, run) {
   const runDir = await tempRun(t)
-  const guard = createIntegrityGuard({ root: runDir, scope: 'tree' })
-  await guard.install()
-  const fake = fixtureSpawn({ run: (child, command, args) => run({ child, args, guard, runDir }) })
-  const host = createHostImpl({ host: 'codex', cwd: runDir, runDir, transport: { spawn: fake.spawn }, killProcess: () => {}, onTransportPaths: ({ files, phase }) => (phase === 'created' ? guard.registerEphemeral(files) : guard.releaseEphemeral(files)) })
-  return { runDir, guard, host }
+  const fake = fixtureSpawn({ run: (child, command, args) => run({ child, args, runDir }) })
+  const host = createHostImpl({ host: 'codex', cwd: runDir, runDir, transport: { spawn: fake.spawn }, killProcess: () => {} })
+  return { runDir, host }
 }
 
 const outputPathOf = args => args[args.indexOf('--output-last-message') + 1]
 const schemaPathOf = args => args[args.indexOf('--output-schema') + 1]
-const finishWith = (child, text) => { child.stdout.write(`${JSON.stringify({ type: 'turn.completed' })}\n`); close(child) }
+const finishWith = child => { child.stdout.write(`${JSON.stringify({ type: 'turn.completed' })}\n`); close(child) }
 
-test('C14: transporte do codex não dá falso positivo durante o agente e não sobra depois', async t => {
-  let midRun = null
-  const { runDir, guard, host } = await transportFixture(t, async ({ child, args }) => {
-    midRun = await guard.assertIntegrity().then(() => 'ok', error => error)
+test('C14: transporte do codex não sobra na runDir depois do handle', async t => {
+  const { runDir, host } = await transportFixture(t, async ({ child, args }) => {
     await writeFile(outputPathOf(args), JSON.stringify({ answer: 'ok' }))
     finishWith(child)
   })
-  const handle = await host.spawn({ role: 'executor', prompt: 'p', schema, readOnly: true })
+  const handle = await host.spawn({ role: 'planner', prompt: 'p', schema })
   assert.deepEqual((await host.wait(handle)).output, { answer: 'ok' })
-  assert.equal(midRun, 'ok', String(midRun?.message ?? midRun))
-  await guard.assertIntegrity()
   assert.deepEqual((await readdir(runDir)).filter(name => name.startsWith('.host-')), [])
 })
 
@@ -601,20 +577,8 @@ test('C14: schema de transporte alterado durante o handle bloqueia a limpeza com
     await writeFile(outputPathOf(args), JSON.stringify({ answer: 'ok' }))
     finishWith(child)
   })
-  const handle = await host.spawn({ role: 'executor', prompt: 'p', schema, readOnly: true })
+  const handle = await host.spawn({ role: 'planner', prompt: 'p', schema })
   await assert.rejects(host.wait(handle), error => error.code === 'CLEANUP_FAILED' && JSON.stringify(error.cleanupErrors ?? error.errors ?? []).includes('TRANSPORT_SCHEMA_CHANGED'), 'schema trocado precisa falhar fechado')
-})
-
-test('C14: output com id de outro handle fica fora dos efêmeros e bloqueia no assert', async t => {
-  const otherName = '.host-00000000-0000-4000-8000-000000000000.output.json'
-  const { runDir, guard, host } = await transportFixture(t, async ({ child, args }) => {
-    await writeFile(path.join(runDir, otherName), JSON.stringify({ answer: 'alheio' }))
-    await writeFile(outputPathOf(args), JSON.stringify({ answer: 'ok' }))
-    finishWith(child)
-  })
-  const handle = await host.spawn({ role: 'executor', prompt: 'p', schema, readOnly: true })
-  assert.deepEqual((await host.wait(handle)).output, { answer: 'ok' })
-  await assert.rejects(guard.assertIntegrity(), error => error.code === 'run_integrity_violation' && error.paths.includes(otherName))
 })
 
 test('C14: output trocado por symlink bloqueia a leitura com TRANSPORT_OUTPUT_UNSAFE', async t => {
@@ -625,45 +589,22 @@ test('C14: output trocado por symlink bloqueia a leitura com TRANSPORT_OUTPUT_UN
     await symlink(outside, outputPathOf(args))
     finishWith(child)
   })
-  const handle = await host.spawn({ role: 'executor', prompt: 'p', schema, readOnly: true })
+  const handle = await host.spawn({ role: 'planner', prompt: 'p', schema })
   await assert.rejects(host.wait(handle), error => error.code === 'TRANSPORT_OUTPUT_UNSAFE')
 })
 
-test('C14: .host-* sobrando depois do cleanup bloqueia no assert', async t => {
-  const { runDir, guard, host } = await transportFixture(t, async ({ child, args }) => {
-    await writeFile(path.join(runDir, `${path.basename(schemaPathOf(args))}.leftover`), 'sobra\n')
-    await writeFile(outputPathOf(args), JSON.stringify({ answer: 'ok' }))
-    finishWith(child)
-  })
-  const handle = await host.spawn({ role: 'executor', prompt: 'p', schema, readOnly: true })
-  await host.wait(handle).catch(() => {})
-  await assert.rejects(guard.assertIntegrity(), error => error.code === 'run_integrity_violation' && error.paths.some(name => name.startsWith('.host-') && name.endsWith('.leftover')))
-})
-
-
-test('C14 FIX4: falha ao gravar o schema do codex remove o que sobrou e solta o efêmero', async t => {
+test('falha ao gravar o schema do codex remove o que sobrou e não spawna', async t => {
   const runDir = await tempRun(t)
-  const guard = createIntegrityGuard({ root: runDir, scope: 'tree' })
-  await guard.install()
-  const host = createHostImpl({
-    host: 'codex', cwd: runDir, runDir,
-    transport: { spawn: () => { throw new Error('não deve spawnar: o schema falhou antes') } },
-    killProcess: () => {},
-    // O caminho do schema vira diretório logo depois do registro: o writeFile falha e o efêmero não pode continuar ativo.
-    onTransportPaths: async ({ files, phase }) => {
-      if (phase === 'created') { await guard.registerEphemeral(files); await mkdir(path.join(runDir, files[0])) }
-      else await guard.releaseEphemeral(files)
-    },
-  })
-  await assert.rejects(host.spawn({ role: 'executor', prompt: 'p', schema, readOnly: true }))
-  const schemaName = (await readdir(runDir)).find(name => name.startsWith('.host-') && name.endsWith('.schema.json'))
-  assert.ok(schemaName, 'o diretório plantado precisa existir na runDir')
-  await assert.rejects(guard.assertIntegrity(), error => error.code === 'run_integrity_violation' && error.paths.includes(schemaName))
+  const host = createHostImpl({ host: 'codex', cwd: runDir, runDir, transport: { spawn: () => { throw new Error('não deve spawnar: o schema falhou antes') } }, killProcess: () => {} })
+  // runDir vira arquivo: o mkdir/writeFile do schema falha antes do spawn.
+  await rm(runDir, { recursive: true, force: true })
+  await writeFile(runDir, 'não é diretório')
+  await assert.rejects(host.spawn({ role: 'planner', prompt: 'p', schema }))
 })
 
 // Fluxo advisor (benchmark Minecraft, 22/10): o executor contínuo roda no Sonnet com o Opus de advisor na mesma
-// sessão e ganha Bash só nos comandos do gate. O executor do grafo segue no Haiku, sem advisor e sem shell.
-test('advisedExecutor Claude roda no Sonnet com --advisor opus; executor e papéis do grafo não têm advisor', async t => {
+// sessão e ganha Bash só nos comandos do gate. Planner e revisor não têm advisor.
+test('advisedExecutor Claude roda no Sonnet com --advisor opus; planner e revisor não têm advisor', async t => {
   const runDir = await tempRun(t)
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false, session_id: 'sess-1' })); close(child) } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
@@ -672,12 +613,10 @@ test('advisedExecutor Claude roda no Sonnet com --advisor opus; executor e papé
   assert.equal(args[args.indexOf('--model') + 1], 'sonnet')
   assert.equal(args[args.indexOf('--advisor') + 1], 'opus')
   assert.equal(result.sessionId, 'sess-1')
-  for (const role of ['executor', 'planner', 'planReviewer', 'verifier', 'critic', 'synth', 'researcher']) {
+  for (const role of ['planner', 'planReviewer']) {
     await host.wait(await host.spawn({ role, prompt: 'x', schema }))
     assert.equal(fake.calls.at(-1).args.includes('--advisor'), false, role)
   }
-  const graphExecutor = fake.calls.at(-7).args
-  assert.equal(graphExecutor[graphExecutor.indexOf('--model') + 1], 'haiku')
 })
 
 // Benchmark do fluxo advisor com Haiku (23/10): só o executor contínuo troca de modelo; plano e revisão continuam iguais.
@@ -709,7 +648,7 @@ test('executorModel por pedido troca o modelo só do advisedExecutor, entre sonn
     assert.equal(args[args.indexOf('--advisor') + 1], 'opus')
   }
   await assert.rejects(host.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: 'opus' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
-  await assert.rejects(host.spawn({ role: 'executor', prompt: 'x', schema, executorModel: 'haiku' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
+  await assert.rejects(host.spawn({ role: 'planner', prompt: 'x', schema, executorModel: 'haiku' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
 })
 
 test('executor de escrita ganha Bash só nos comandos aprovados; leitura e papéis de revisão seguem sem shell', async t => {
@@ -721,8 +660,8 @@ test('executor de escrita ganha Bash só nos comandos aprovados; leitura e papé
   assert.equal(writer.tools, 'Read,Glob,Grep,Edit,Write,Bash')
   assert.equal(writer.allowed, 'Read,Glob,Grep,Edit(./**),Bash(npm test),Bash(npm run build)')
   assert.equal((await argsOf({ role: 'advisedExecutor', readOnly: true, allowCommands: ['npm test'] })).tools.includes('Bash'), false)
-  assert.equal((await argsOf({ role: 'verifier', allowCommands: ['npm test'] })).tools.includes('Bash'), false)
-  assert.equal((await argsOf({ role: 'executor' })).tools, 'Read,Glob,Grep,Edit,Write')
+  assert.equal((await argsOf({ role: 'planReviewer', allowCommands: ['npm test'] })).tools.includes('Bash'), false)
+  assert.equal((await argsOf({ role: 'advisedExecutor' })).tools, 'Read,Glob,Grep,Edit,Write')
 })
 
 test('allowCommands com metacaractere de shell, quebra de linha, curinga ou vazio é recusado antes do spawn', async t => {

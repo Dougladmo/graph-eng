@@ -2,74 +2,58 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg">
-    <img src="docs/assets/logo-light.svg" width="200" height="200" alt="Logo do graph-eng: quadrado escuro com quatro bolinhas em losango ligadas por linhas retas">
+    <img src="docs/assets/logo-light.svg" width="200" height="200" alt="logo do graph-eng: um quadrado escuro com quatro pontos em losango, ligados por linhas retas">
   </picture>
 </p>
 
 <h1 align="center">graph-eng</h1>
 
 <p align="center">
-  <em>Tarefa complexa vira um grafo pequeno de agentes: o feedback dos revisores volta pelo grafo, e só sai DONE com evidência.</em>
+  <em>Um modelo médio planeja, o forte revisa e aconselha, um barato faz os passos simples, e a run só fecha DONE quando os testes e o build passam.</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="stars"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.2.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versão 1.2.0"></a>
+  <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="estrelas"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.3.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versão 1.3.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-1d1d1f?style=flat-square" alt="licença MIT"></a>
-  <a href="#os-cinco-comandos"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="plugin do Claude Code"></a>
-  <a href="#os-cinco-comandos"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="plugin do Codex"></a>
+  <a href="#comandos"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="plugin do Claude Code"></a>
+  <a href="#comandos"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="plugin do Codex"></a>
   <a href="#desenvolvimento"><img src="https://img.shields.io/badge/Node-22-1d1d1f?style=flat-square" alt="Node 22"></a>
-  <a href="#benchmark"><img src="https://img.shields.io/badge/benchmark%20Claude-DONE%2010%2F10-30d158?style=flat-square&labelColor=1d1d1f" alt="benchmark real com Claude: DONE com aceite externo 10/10"></a>
+  <a href="#benchmark"><img src="https://img.shields.io/badge/benchmark%20Minecraft-55%2F55%20por%20US%24%201%2C59-30d158?style=flat-square&labelColor=1d1d1f" alt="benchmark Minecraft: 55/55 testes ocultos por US$ 1,59"></a>
 </p>
 
 <p align="center">
-  <a href="#instalação">Instalação</a> ·
+  <a href="#primeiros-passos">Primeiros passos</a> ·
   <a href="#como-funciona">Como funciona</a> ·
+  <a href="#comandos">Comandos</a> ·
+  <a href="#flags">Flags</a> ·
   <a href="#benchmark">Benchmark</a> ·
-  <a href="#os-cinco-comandos">Comandos</a> ·
-  <a href="#estado-final-no-painel">Painel</a> ·
-  <a href="CHANGELOG.md">Changelog</a> ·
-  <a href="skills/grapheng/DESIGN.md">Por que o desenho é este</a>
+  <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <p align="center">
   🌐 <a href="README.md">English</a> · <strong>Português</strong> · <a href="README.es.md">Español</a>
 </p>
 
-<p align="center">
-  <strong>papel forte só revisa · papel médio planeja · papel barato executa · fluxo do tamanho da tarefa · checks reais por nó · DONE só com evidência · painel ao vivo</strong><br>
-  <sub>O graph-eng planeja ou executa tarefas complexas como grafos pequenos, com papéis definidos pelo host, checks confiáveis e evidências por execução. O pacote mantém a identidade <code>graph-eng</code> e descobre <code>skills/</code> em local portátil.</sub>
-</p>
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/painel-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/painel-light.png">
-    <img src="docs/assets/painel-light.png" width="860" alt="Painel do graph-eng com uma run fictícia rodando: na lateral, as runs em Fixadas, num grupo, Em andamento, Paradas e Finalizadas recolhida; no centro, o grafo em colunas de fase, com nós prontos, rodando, bloqueado, falho e pulado">
-  </picture>
-</p>
-
 ---
 
 ## Em 30 segundos
 
-> Você descreve a tarefa. Um modelo **médio** planeja, o modelo **forte** só dá a revisão final, modelos **baratos** executam, e o supervisor roda **testes de verdade** em cada passo. A run só termina como **DONE** quando há evidência; senão, para com um **motivo legível**.
->
-> A ideia: tarefas complexas sem pagar o preço do modelo forte em cada linha de trabalho. O modelo caro só pensa; o barato faz o volume. Veja [por que dividir os modelos](#benchmark).
+> Você descreve a tarefa. Um modelo **médio** escreve o plano, o modelo **forte** revisa uma vez e fica de plantão como **advisor**, e o trabalho roda numa **sessão contínua**: o modelo **barato** pega os passos simples e repetitivos e o médio pega o resto. No fim, o supervisor roda `npm test` e `npm run build` ele mesmo. A run só fica **DONE** se os dois passarem; senão ela para com um **motivo legível**.
 
 | | |
 | --- | --- |
-| 🧠 **Revisa forte** | Um modelo médio monta o plano como grafo; o forte só carimba o plano e o design. Tarefa pequena pula a revisão pesada. |
-| ⚙️ **Executa barato** | O modelo operacional do host, mais barato, faz o trabalho de cada nó. |
-| 🧪 **Confere com testes** | `node --test` nos arquivos de cada nó e a suíte inteira no fim. |
-| 🔁 **Corrige pelo caminho** | O feedback dos revisores volta pelo grafo: refaz um nó, replaneja ou para. |
-| 🔒 **Sem DONE falso** | Sem testes aprovados, critic aprovado e evidência atual, o DONE é negado. |
+| 🧠 **Forte só revisa e aconselha** | Uma revisão do plano e no máximo 3 chamadas de advisor por run. |
+| 📝 **Médio planeja e faz os passos difíceis** | Escreve o plano, marca a complexidade de cada passo e executa os passos `medium` e `high`. |
+| ⚙️ **Barato faz os passos simples** | Os passos marcados `low` vão para o modelo barato por padrão. |
+| 🧪 **Gate real** | `npm test` e `npm run build`, rodados pelo supervisor, decidem o DONE. |
+| 💰 **Mais barato e mais rápido** | Mesma nota de um agente único no modelo forte por cerca de um quarto do custo, em menos da metade do tempo ([benchmark](#benchmark)). |
 
-Versão atual: **1.2.0** · veja o [CHANGELOG](CHANGELOG.md).
+Versão atual: **1.3.0** · veja o [CHANGELOG](CHANGELOG.md).
 
 ## Instalação
 
-Numa sessão do Claude Code, um comando de cada vez:
+Numa sessão do Claude Code, um comando por vez:
 
 ```
 /plugin marketplace add Dougladmo/graph-eng
@@ -86,295 +70,139 @@ claude plugin marketplace add Dougladmo/graph-eng
 claude plugin install graph-eng@graph-eng
 ```
 
-Requisitos: `node` 22 no `PATH`. O pacote não tem dependência de runtime.
+Requisitos: `node` 22 no `PATH` e um repositório com script `test` no `package.json` (o gate roda ele). O pacote não tem dependências de runtime.
 
-## Os cinco comandos
+## Primeiros passos
 
-O caminho normal é de cima para baixo. Cada passo reaproveita o anterior enquanto ele ainda vale.
+Cole isto no Claude Code, dentro do seu repositório, e troque a tarefa (o prompt é em inglês para funcionar em qualquer projeto):
 
-```mermaid
-flowchart TD
-  I([init<br/>sobe o painel]) -.-> P
-  P[plan<br/>gera o plano] --> Q{tem perguntas?}
-  Q -- sim --> C[clarify<br/>responde as perguntas] --> T
-  Q -- não --> T[tasks<br/>quebra em tarefas]
-  T --> M[implemente<br/>executa e testa]
-  M --> R([DONE ou BLOCK<br/>com motivo])
+```
+Use graph-eng 1.3 (advisor flow) for this task. First run /graph-eng:plan with it and show me the plan; after I approve, run /graph-eng:implemente with no arguments.
+
+Task: <describe what you want built or changed>
 ```
 
-| Comando | O que faz | Mexe no código? |
-| --- | --- | --- |
-| `plan <tarefa>` | Gera o plano. Se faltar informação, termina com `needs_clarification`. | ❌ |
-| `clarify` | Responde as perguntas pendentes do plano. Não inventa respostas. | ❌ |
-| `tasks` | Quebra o plano aprovado em tarefas (um grafo de dependências). | ❌ |
-| `implemente [<tarefa>]` | Executa as tarefas, roda os testes e decide DONE ou BLOCK. | ✅ |
-| `init` | Sobe (ou reaproveita) o painel local e mostra a porta. | ❌ |
+Ou pule a revisão e rode tudo de uma vez:
 
-| Host | Como chamar |
-| --- | --- |
-| Claude Code | `/graph-eng:plan <tarefa>`, `/graph-eng:clarify`, `/graph-eng:tasks`, `/graph-eng:implemente [<tarefa>]`, `/graph-eng:init` (ou `/graph-eng:grapheng <comando>`) |
-| Codex | a skill `graph-eng:grapheng`, com os mesmos cinco comandos. Não há slash global do plugin no Codex |
-
-Há um slot de plano e um de tarefas por repositório, a **feature corrente**: um `plan` aprovado novo substitui o anterior. Se algo mudou desde o passo anterior, o runner recusa o reuso e diz o motivo (`workspace_changed`, `task_changed`, `tasks_plan_mismatch`, `source_unverified`, entre outros).
+```
+/graph-eng:implemente <sua tarefa>
+```
 
 ## Como funciona
 
-### O ciclo inteiro
-
 ```mermaid
 flowchart TD
-  P[🧠 Planner<br/>monta o plano] --> R{🧠 Revisor do plano}
-  R -- pede ajuste --> P
-  R -- aprova --> W[⚙️ Executores<br/>um por nó do grafo]
-  W --> C[🧪 Supervisor roda os testes do nó]
-  C --> V{🔍 Verificador do nó}
-  V -- FIX_LOCAL --> W
-  V -- aprovado --> PO[✨ Polish por área]
-  PO --> G[🧪 Gate final<br/>suíte inteira]
-  G --> K{🧠 Critic}
-  K -- FIX_LOCAL --> W
-  K -- REPLAN, no máximo 2 --> P
-  K -- BLOCK --> B([⛔ BLOCK com motivo])
-  K -- DONE com evidência --> D([✅ DONE])
-```
-
-### Quem faz o quê
-
-O modelo de cada papel é fixo por host. Não há flag para trocar. O modelo forte só revisa: dá o carimbo final no plano e no design. O médio pensa, o barato faz o volume. Host com só dois modelos usa o forte nos papéis médios.
-
-| Papel | Tipo | O que faz |
-| --- | --- | --- |
-| Pesquisadores | médio | Leem o código e, no Claude, a documentação atual na web. Rodam em paralelo. |
-| Notetaker | ⚙️ barato | Junta as notas dos pesquisadores num resumo e aponta conflitos. |
-| Planner | médio | Monta o plano como grafo, com critérios de pronto (`doneWhen`). |
-| Revisor do plano | 🧠 forte | Aprova ou devolve com o motivo. |
-| Designer | médio | Escreve o design dos nós que precisam de um. |
-| Revisor do design | 🧠 forte | Aprova o design ou devolve. |
-| Critic | médio | Confere cada critério de pronto contra a evidência e decide. |
-| Executor | ⚙️ barato | Faz o trabalho de um nó, só nos arquivos liberados para ele. |
-| Verificador | ⚙️ barato | Lê o que o executor fez e os recibos dos testes. |
-| Synth | ⚙️ barato | Escreve o resumo final. |
-| Supervisor | 🧪 código | Roda os testes, sela a evidência e nega DONE sem prova. Não é um modelo. |
-
-Todo papel roda com esforço `medium`.
-
-### Fluxo adaptativo
-
-Nem toda tarefa precisa do ciclo inteiro. Antes de planejar, o runner faz a triagem da tarefa e escolhe um tier:
-
-| Tier | Quando | O que roda |
-| --- | --- | --- |
-| ⚡ `fast` | mudança pequena e local, com check rodável | plano → implementação → verify → critic |
-| ⚖️ `standard` | vários arquivos, ou domínio sensível (dinheiro, auth, dados de produção) | soma a revisão do plano pelo modelo forte |
-| 🧭 `full` | tarefa ampla ou ambígua | soma pesquisa, design e a revisão do design pelo modelo forte |
-
-Verify, checks e o critic final rodam em todo tier. O motor só sobe o tier (nó de design, nó de risco alto, plano grande), nunca desce. A decisão e os motivos vão para o journal da run. `--adaptive off` força o fluxo completo.
-
-Classificador opcional: com uma chave do OpenRouter, um classificador externo pequeno (Jev 1.13, da TypeSafe) ajuda na triagem. Sem a chave, ou em qualquer falha, decide só a heurística. Para ligar, rode no seu terminal e cole a chave quando pedir:
-
-```bash
-node bin/graph-run.mjs triage-config
-```
-
-A chave fica em `~/.graph-eng/config.json` com permissão 0600 e nunca chega aos agentes.
-
-### Fluxo advisor (`--flow advisor`)
-
-Uma alternativa ao grafo para o `implemente`, ligada por run. Em vez de um executor barato por nó, uma única sessão de executor faz a tarefa inteira em ordem e só pede conselho ao modelo forte quando trava. Nasceu do benchmark do Minecraft, em que o grafo nunca entregou um jogo funcionando (ver [Benchmark](#benchmark)).
-
-```mermaid
-flowchart TD
-  P[🧠 Planner<br/>modelo médio] --> R{🧠 Revisão do plano<br/>forte, uma rodada}
+  P[📝 Planejador<br/>modelo médio] --> R{🧠 Revisão do plano<br/>modelo forte, uma rodada}
   R --> E[⚙️ Sessão do executor<br/>passos em ordem]
-  E -. no máximo 3 consultas .-> A[(🧠 Advisor<br/>modelo forte)]
+  E -. no máximo 3 chamadas .-> A[(🧠 Advisor<br/>modelo forte)]
   E --> G[🧪 Gate do supervisor<br/>npm test + npm run build]
-  G -- falhou, até 2 sessões a mais --> E
+  G -- falhou: até 2 sessões de conserto --> E
   G -- passou --> D([✅ DONE])
 ```
 
-- O planner (modelo médio) escreve os passos e o modelo forte revisa o plano uma vez.
-- O executor trabalha numa sessão contínua, então guarda o contexto de um passo para o outro. O modelo forte é o advisor dele, com no máximo 3 consultas por run.
-- O shell do executor só roda `npm test` e `npm run build`. O supervisor roda os dois no fim, e o run só é DONE quando esse gate passa.
+1. **Plano.** O planejador (modelo médio, só leitura) lê o repositório e escreve os passos, cada um marcado `low`, `medium` ou `high`, e o que significa "pronto".
+2. **Revisão.** O modelo forte revisa o plano uma vez. Se pedir mudanças, as notas vão direto para o executor; não há segunda rodada.
+3. **Execução.** O executor trabalha numa sessão contínua, então mantém o contexto de um passo para o outro. Quando trava, pode pedir conselho ao modelo forte, no máximo 3 vezes por run. O shell dele só roda `npm test` e `npm run build`.
+4. **Gate.** O supervisor roda `npm test` e `npm run build` ele mesmo. Se algum falhar, o executor recebe a saída da falha numa sessão nova, até 2 sessões de conserto, sempre no modelo médio.
 
-**Roteamento por complexidade.** O planner marca cada passo como `low`, `medium` ou `high`. Os passos até o nível de `--haiku-max` vão para o modelo barato; o resto fica com o modelo médio. Passos seguidos no mesmo modelo dividem uma sessão, a cota do advisor é compartilhada entre as sessões e o conserto do gate roda sempre no modelo médio. No benchmark, `low` manteve a nota e foi a variante mais barata, por isso é o padrão no Claude.
+**Quem faz o quê por padrão (host Claude):**
+
+| Papel | Modelo | Por quê |
+| --- | --- | --- |
+| Revisão do plano e advisor | 🧠 forte | Julgamento onde importa, poucas chamadas |
+| Planejador | 📝 médio | Lê o código e escreve os passos |
+| Passos `medium` e `high`, consertos do gate | 📝 médio | O trabalho de verdade |
+| Passos `low` | ⚙️ barato | Trabalho simples e repetitivo |
+
+Passos seguidos no mesmo modelo dividem uma sessão. O orçamento do advisor é compartilhado entre as sessões.
+
+## Comandos
+
+| Comando | O que faz | Mexe no código? |
+| --- | --- | --- |
+| `plan <tarefa>` | Escreve e revisa o plano, mostra a complexidade de cada passo e qual modelo pega cada um, e salva em `.graph-runs/advisor-plan.json`. | ❌ |
+| `implemente <tarefa>` | Faz tudo numa run: plano, revisão, execução e gate. | ✅ |
+| `implemente` | Executa o último plano salvo pelo `plan`, com o roteamento escolhido lá. | ✅ |
+
+| Host | Como chamar |
+| --- | --- |
+| Claude Code | `/graph-eng:plan <tarefa>`, `/graph-eng:implemente [<tarefa>]` (ou `/graph-eng:grapheng <comando>`) |
+| Codex | a skill `graph-eng:grapheng`, com os mesmos dois comandos. O Codex não tem slash global para o plugin |
+
+## Flags
+
+Sempre na forma separada (`--effort max`, nunca `--effort=max`).
 
 | Flag | Valores | Padrão | O que faz |
 | --- | --- | --- | --- |
-| `--flow` | `graph`, `advisor` | `graph` | Escolhe o fluxo. `advisor` só vale com `implemente` e uma tarefa. |
-| `--haiku-max` | `low`, `medium`, `off` | `low` no Claude | Maior complexidade de passo que vai para o modelo barato. `off` deixa todos os passos no modelo médio. |
-| `--executor` | `sonnet`, `haiku` | nenhum | Um modelo só para todos os passos. Desliga o roteamento e não combina com `--haiku-max`. |
+| `--effort` | `low`, `medium`, `max` | `medium` | Esforço de raciocínio de todas as chamadas da run. |
+| `--haiku-max` | `low`, `medium`, `off` | `low` no Claude | Complexidade máxima de passo que vai para o modelo barato. `off` deixa todos os passos no médio. |
+| `--executor` | `sonnet`, `haiku` | nenhum | Um modelo para todos os passos. Desliga o roteamento e não combina com `--haiku-max`. |
 
-`--haiku-max` e `--executor` só existem no host Claude. No Codex o fluxo advisor não roteia.
+`--haiku-max` e `--executor` só existem no host Claude; no Codex o fluxo não roteia. Em `implemente` sem tarefa, o roteamento vem do plano salvo, então passe essas duas flags no `plan`.
 
-### As quatro decisões
+Exemplos:
 
-Todo revisor responde com uma destas, sempre com evidência:
-
-| Decisão | O que acontece | Limite |
-| --- | --- | --- |
-| 🔧 `FIX_LOCAL` | Refaz só o nó afetado, com o motivo do revisor no prompt. | conta no orçamento do nó |
-| 🗺️ `REPLAN` | Gera um plano novo. Os critérios de pronto do usuário ficam travados. | no máximo 2 por run |
-| ⛔ `BLOCK` | Para e mostra o motivo (por exemplo `original_plan_criteria_changed`). | — |
-| ✅ `DONE` | Fecha a run. Exige testes aprovados, critic aprovado e evidência atual. | negado sem prova |
-
-### Como um nó vira pronto
-
-```mermaid
-flowchart TD
-  E[⚙️ Executor altera só os arquivos liberados] --> D{🧪 Supervisor: o diff ficou<br/>dentro dos arquivos liberados?}
-  D -- não --> X([⛔ BLOCK])
-  D -- sim --> T[🧪 Supervisor roda node --test<br/>dos arquivos do nó]
-  T --> V{🔍 Verificador lê o diff<br/>e os recibos dos testes}
-  V -- FIX_LOCAL --> E
-  V -- aprova --> S([🔒 Supervisor sela a evidência do nó])
+```
+/graph-eng:implemente adicionar modo escuro na página de configurações --effort max
 ```
 
-Regras que valem sempre:
+```
+/graph-eng:plan migrar os helpers de data para Temporal --haiku-max medium
+```
 
-- O nó só mexe nos arquivos que o plano liberou para ele. Arquivo fora disso bloqueia.
-- A suíte inteira roda uma vez, no gate final, depois de todo polish.
-- A retomada nunca devolve orçamento, e os contadores nunca diminuem.
+## Resultados e bloqueios
 
-### O que mudou da 0.1 para a 1.0
+| Status | Significado |
+| --- | --- |
+| `planned` | O `plan` terminou e o plano foi salvo. |
+| `done` | O gate passou e o executor declarou todos os passos prontos. |
+| `blocked` | A run parou. O motivo vem junto. |
 
-| | 0.1 | 1.0 |
-| --- | --- | --- |
-| Fluxo | grafo de ida, com critic no fim | grafo **bidirecional**: o feedback volta e muda o plano |
-| Fim da run | relatório `PARTIAL`, sem saber se terminou | **DONE** com evidência, ou **BLOCK** com motivo |
-| Testes | comando livre por nó | `node --test` selecionado pelos arquivos do nó, suíte inteira no fim |
-| Configuração | esforço × teto de agentes, mais vários ajustes finos | só `--effort low\|medium\|max` |
-| Hosts | Claude | Claude e Codex |
-| Painel | visualização e fila de ações | visualização ao vivo, só leitura |
+Motivos de bloqueio: `advisor_gate_missing_test` (sem script `test` no `package.json`), `advisor_plan_missing` (`implemente` sem tarefa e sem plano salvo), `advisor_plan_host_mismatch` (plano salvo de outro host), `advisor_gate_failed` (testes ou build ainda falhando depois dos consertos), `advisor_executor_blocked` (o gate passou, mas o executor declarou um passo bloqueado), `advisor_call_failed` (uma chamada de modelo falhou).
+
+Cada run deixa a evidência em `.graph-runs/<runId>/advisor-run.json`: plano, revisão, roteamento, sessões, saída do gate, chamadas e custo por modelo e por papel.
 
 ## Benchmark
 
-`bin/graph-benchmark.mjs` roda uma tarefa fixa numa cópia limpa do repositório, com Claude real. Quem dá a nota é um conjunto de **testes de aceitação externos**, que os agentes não veem. Detalhe de todas as rodadas em [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md).
-
-**Minecraft MVP (fluxo advisor, 2026-10-23):** uma tarefa mais difícil, um clone jogável de Minecraft em React e three.js, com nota de 55 testes de aceitação ocultos mais uma checagem visual no navegador. Ali o fluxo de grafo precisou de 5 tentativas, gastou US$ 7,58 e não entregou jogo em nenhuma. Uma rodada por variante:
+**Minecraft MVP (22 e 23/10/2026):** um clone jogável do Minecraft em React e three.js, a partir de um esqueleto vazio. A nota vem de **55 testes de aceite ocultos** que os agentes nunca veem, mais `npm run build` e uma checagem visual no navegador (criar mundo, andar, minerar, colocar bloco, abrir o inventário). Uma run por variante, Claude real.
 
 | Variante | Testes ocultos | Custo | Tempo |
 | --- | --- | --- | --- |
-| 🧠 Agente único com o modelo forte | 55/55 | US$ 5,97 | 23 min |
-| Advisor, modelo médio executa | 55/55 | US$ 1,79 | 11 min |
+| 🧠 Agente único no modelo forte, sem graph-eng | 55/55 | US$ 5,97 | 23 min |
+| Advisor, modelo médio executa tudo (`--executor sonnet`) | 55/55 | US$ 1,79 | 11 min |
 | Advisor, modelo barato executa tudo (`--executor haiku`) | 54/55 | US$ 2,33 | 20 min |
 | Advisor, modelo barato em `low` + `medium` (`--haiku-max medium`) | 55/55 | US$ 1,66 | 12,5 min |
-| ✅ Advisor, modelo barato em `low` (`--haiku-max low`, padrão) | **55/55** | **US$ 1,59** | **10 min** |
+| ✅ Advisor, modelo barato em `low` (padrão) | **55/55** | **US$ 1,59** | **10 min** |
 
-- 💰 Mesma nota do agente único com o modelo forte por cerca de um quarto do custo, em menos da metade do tempo. Todas as variantes advisor mostraram o jogo na tela, sem erro no console.
-- 🐢 O modelo barato sozinho na tarefa inteira foi mais lento e mais caro: chamou o advisor uma vez (US$ 1,21) e ainda falhou um teste de física.
-- ✂️ Picado por passo, o modelo barato deu conta de tudo que recebeu. Com `medium` ele fez 4 de 10 passos por US$ 0,06, sem erro.
-- ⚠️ O roteamento economizou só 7% a 11%, porque o planner marcou 6 de 10 passos como `high`. Com uma rodada de cada, diferença de 10% está dentro da variação normal.
+- 💰 O padrão tirou a mesma nota do agente único no modelo forte por **cerca de um quarto do custo** (US$ 1,59 contra US$ 5,97), em **menos da metade do tempo**. Todas as variantes do advisor mostraram o jogo na tela sem erro no console.
+- 🐢 O modelo barato sozinho na tarefa inteira foi mais lento e mais caro: chamou o advisor uma vez (US$ 1,21) e ainda falhou um teste de física. Por isso ele só pega os passos simples.
+- ✂️ Dividido por passo, o modelo barato deu conta de tudo que recebeu. Com `medium` ele pegou 4 de 10 passos por US$ 0,06, sem erro.
+- ⚠️ O roteamento só economizou de 7% a 11% aqui, porque o planejador marcou 6 de 10 passos como `high`. Com uma run de cada, 10% de diferença está dentro da variação normal.
 
-Evidências em [docs/benchmarks/runs/](docs/benchmarks/runs/).
+**Para onde foi o dinheiro na run padrão (US$ 1,59):**
 
-**Rodada f366:**
+| Papel | Modelo | USD |
+| --- | --- | --- |
+| 📝 Planejador | médio | `█` 0,14 |
+| 🧠 Revisão do plano | forte | `█` 0,15 |
+| ⚙️ Sessões do executor (passos `medium`/`high`) | médio | `████████` 1,29 |
+| ⚙️ Sessões do executor (passos `low`) | barato | 0,01 |
+| 🧠 Advisor | forte | 0 (não foi chamado) |
 
-| | graph-eng 1.0 |
-| --- | --- |
-| 💵 Custo da rodada | **US$ 0,80** |
-| ✅ Testes externos | **10/10** |
-| 🏁 O que o motor disse | **DONE** com evidência |
-| 🔒 DONE falso | **não** |
-| 📞 Chamadas de modelo | 21 |
-| 🔤 Tokens (entrada / saída) | 605k / 36k |
-| ⏱️ Tempo do motor | 292 s |
+O modelo forte custou menos de 10% da run. A evidência bruta de cada run está em [docs/benchmarks/](docs/benchmarks/).
 
-**Onde vai o dinheiro:**
+### Por que o motor de grafo saiu
 
-| Papel | Modelo | Chamadas | US$ |
-| --- | --- | --- | --- |
-| 🧠 critic | forte | 2 | `██████` 0,31 |
-| 🧠 planner | forte | 2 | `████` 0,18 |
-| 🧠 revisor do plano | forte | 2 | `███` 0,17 |
-| 🧠 revisor do design | forte | 1 | `██` 0,10 |
-| ⚙️ executor | operacional | 8 | 0,015 |
-| 🔍 verificador | operacional | 5 | 0,011 |
-| ⚙️ synth | operacional | 1 | 0,005 |
-| **Total** | | **21** | **0,80** |
-
-O modelo forte responde por cerca de 95% do custo. As 14 chamadas do modelo operacional somam só 3 centavos. Para baixar o custo, o lugar é nas chamadas fortes (critic, planner e revisores), e esse trabalho segue em aberto.
-
-**Por que dividir os modelos:**
-
-Nesta run, cada token do modelo forte custou cerca de **40×** o token do operacional. É essa diferença de preço que o graph-eng usa: o modelo forte só pensa (plano, revisão, veredito final), e o operacional faz o volume do trabalho.
-
-| Mesmas 21 chamadas, mesmos tokens | USD |
-| --- | --- |
-| ✅ graph-eng 1.0: forte planeja e revisa, operacional executa (medido) | `████` **0,80** |
-| 🧠 Todas as chamadas no modelo forte (estimativa) | `██████████` 1,99 |
-
-Rodar as chamadas de executor, verifier e synth no modelo forte custaria cerca de **2,5× mais**. A estimativa reprecifica os tokens que cada chamada usou de verdade pela tarifa do modelo forte. Um agente único fazendo a tarefa inteira sozinho não usaria os mesmos tokens, e esse baseline ainda não foi medido. A Anthropic relatou o mesmo padrão no seu [sistema de pesquisa multiagente](https://www.anthropic.com/engineering/multi-agent-research-system): um agente líder forte com subagentes mais leves superou um agente forte sozinho em 90,2% na avaliação interna de pesquisa.
-
-- 💰 O isolamento do host derrubou o custo de cerca de US$ 88 para menos de US$ 1 por rodada: o host deixou de vazar cerca de 75k tokens de contexto por chamada e agora manda cerca de 6,5k.
-- 📈 Em 13 rodadas reais, a 1.0 nunca deu DONE falso. Cada BLOCK virou correção com teste de regressão, até fechar DONE na f366.
-- 🧪 O cenário ainda é simples. Falta um cenário mais difícil.
-- ⚠️ O host Codex real ainda não foi validado.
-
-## Detalhes de execução
-
-O esforço aceita `low`, `medium` (padrão) ou `max`, na forma separada (`--effort max`); `--effort` substitui a configuração em `plan`, `clarify`, `tasks` e `implemente`. Papéis e modelos são fixos pelo adapter confiável de Claude ou Codex. Não há flags públicas para papéis, largura ou limites internos; a única escolha de modelo é a do executor no [fluxo advisor](#fluxo-advisor---flow-advisor). `--adaptive on|off` (padrão `on`) liga ou desliga os tiers; ver [Fluxo adaptativo](#fluxo-adaptativo).
-
-O adapter de execução implementado neste corte é somente Node native test runner em repositórios com `package.json` legível e `scripts.test` exatamente `node --test`. Vitest, Jest, scripts com flags extras e repositórios sem esse contrato produzem `BLOCK` para `implemente`; `plan` continua disponível. Cada nó recebe uma seleção local derivada de `inputs`, `outputs` e `files` aprovados pelo supervisor. Um mapping interno conhecido roda os testes afetados; sem mapping completo, a cobertura é marcada como limitada e só se executam `node --check` aplicáveis e a validação do contrato/grants. O gate final roda a suíte completa com concorrência 2 somente depois de todo polish. Os checks usam `process.execPath`, argv explícito e spawn sem shell. Cada run grava seleção e receipts em `.graph-runs/` no repositório.
-
-O runner informa o estado e os bloqueios encontrados durante a execução. Quando não há mapeamento confiável de checks, `implemente` fica bloqueado; não invente comandos para contornar isso.
-
-## Concorrência no mesmo repositório
-
-Enquanto um `implemente` roda no mesmo repositório, `plan`, `clarify` e `tasks` podem ser bloqueados com `workspace_busy`. Isso é esperado: o lock do workspace é o mesmo para leitura e escrita, e só sai quando a run termina.
-
-## CLI direto (`bin/graph-run.mjs`)
-
-O uso direto do runner é para depuração. `node bin/graph-run.mjs --host <claude|codex> --args <arquivo.json>` bloqueia implementação sem `nodeCheckPolicy` com `write_audit_unavailable`, sem criar host nem runDir, e sai com código 2. Plano só de leitura (`planOnly`, `research`, `architecture`, `review`) passa sem política.
-
-Retomar pelo CLI direto exige repetir `mode` e `nodeCheckPolicy` nos args. Um arquivo só com `{ "runId": "...", "resume": { ... } }` cai no mesmo bloqueio, mesmo que a run original tenha política.
-
-## Limites de integridade da runDir
-
-A run grava o estado em `.graph-runs/<runId>/` e confere a árvore com um guard de integridade. Esse guard tem dois limites conhecidos:
-
-- **A violação não persiste depois que o processo sai.** Enquanto o processo que detectou a alteração está vivo, a run fica bloqueada com `run_integrity_violation` e não escreve REPORT. Quando a run é retomada depois, o baseline é recalculado a partir dos bytes atuais do disco, e o resume aceita o que estiver lá.
-- **Durante o handle de um host, a saída de outro handle não é vigiada.** Um agente com escrita na runDir pode trocar o `.host-*.output.json` de outro handle sem que o guard perceba, porque a saída não tem hash. O schema tem hash e é conferido na limpeza.
-
-Um erro de checagem que não é violação, como um diretório ilegível no inventário, bloqueia com `integrity_check_failed`, mesmo que a permissão volte antes do fim da run, e não grava REPORT.
-
-Custo: a checagem da árvore inteira roda por agente e custa O(bytes da runDir). Com runDir de 1 a 10 MB, cada checagem leva de 10 a 25 ms; acima de 100 MB, esse custo deve ser reavaliado.
-
-## Lock de workspace com dono morto
-
-Cada workspace tem um lock de recurso no diretório de estado. Se a run encontra esse lock com dono morto, ela não o remove sozinha: a execução para com `workspace_lock_owner_dead`, e o detalhe traz o caminho do arquivo e o pid do dono. Um pid vivo com outra identidade de processo (pid reutilizado) conta como dono morto.
-
-Remoção manual: confirme que o pid do detalhe não existe mais e só então apague o arquivo indicado. Um lock com JSON inválido (`workspace_lock_invalid`) ou com dono ambíguo (`workspace_lock_ambiguous`) também fica parado para inspeção e exige a mesma conferência antes de qualquer remoção.
-
-## Memória entre runs
-
-Ao fim de cada run sem violação de integridade e com lease confiável (sem falha de heartbeat), o supervisor registra na memória do repositório (`~/.claude/graph-eng/memory/<repoId>`, fora da runDir) os registros de design aprovado e de checks válidos. Falha de memória ou de registro vira diagnóstico no journal e nunca muda o status da run.
-
-Uma run seguinte no mesmo repositório seleciona esses registros por nó e contrato. Cada worker recebe só os registros do próprio nó e com a mesma identidade de contrato pré-trabalho, num bloco `<memoryContext>` com o aviso de que o conteúdo são dados não confiáveis. Os registros vêm como JSON, com `<` escapado, então um resumo não consegue fechar a tag nem virar instrução. O evento `memory.selected` aparece no journal antes do agente.
-
-Na retomada, a seleção fixada da run é reaproveitada só depois de conferida. O evento `memory.selected` sai de novo com `reused: true`, e o painel mostra essa marca. Se a conferência falhar, a run registra um diagnóstico `selection_reuse_rejected` e faz uma nova seleção.
-
-Limitações desta versão (v1.0):
-
-- **O planner não recebe seleção de memória.** Ele não tem nó nem caminho definidos no início da run, e a seleção exige um escopo que case com algum registro.
-- **O critic não recebe seleção de memória.** O ramo que selecionava por caminho não tinha produtor de registro com caminhos; foi retirado e não é relaxado. Registros de memória não entram na revisão crítica.
-- **Evidência da fase final fica fora.** Receipts de checks finais (depois do polish) não têm escopo por nó e não alimentam a memória. Só os receipts da fase de nó entram, com escopo `nodeId + contractIdentity`, e só o worker do mesmo nó e contrato os recebe.
-- **Contract, failure e version ficam fora da v1.0.** Esses tipos existem no modelo de registro, mas nenhum produtor os grava e nenhum papel os seleciona. Nada é alimentado sem consumidor.
-
-## Estado final no painel
-
-O evento `run.finished` é o último do journal e carrega o status terminal. Ele sai depois do REPORT e antes da liberação do lease. Uma run planOnly bem-sucedida grava `plan_only` (plano concluído), não `blocked`.
-
-Divergência conhecida: se a liberação do lease ou do workspace falha depois do `run.finished`, o journal continua com o status do resultado (por exemplo `done`), enquanto o retorno do CLI sai `blocked` com `lease_release_failed` ou `workspace_release_failed`. O painel só mostra o status do journal quando o lease já foi solto; com o lease preso, o status fica desconhecido.
+Até a 1.2, o graph-eng também tinha um fluxo de grafo: a tarefa virava um grafo de nós, cada um rodado por um agente barato separado, com verificadores, critic e revisores no meio. Em tarefa pequena funcionava, mas na tarefa do Minecraft ele levou 5 tentativas, gastou US$ 7,58 e nunca entregou um jogo funcionando. Cada nó começava sem o contexto dos outros, e as camadas de revisão custavam mais que o próprio trabalho. O fluxo advisor mantém a parte boa (o modelo forte só pensa, os mais baratos fazem o volume, um gate real decide o DONE) numa sessão contínua. Na 1.3.0 saíram o motor de grafo, os comandos `clarify`, `tasks` e `init`, `--adaptive`, `--flow` e o painel local.
 
 ## Desenvolvimento
 
-O pacote não precisa de instalação global. Com Node.js e dependências de desenvolvimento já instaladas, execute os testes do driver e dos manifests:
+O pacote não precisa de instalação. Rode os testes com:
 
 ```sh
-node --test --test-concurrency=2 test/grapheng.test.mjs test/packaging.test.mjs
+node --test --test-concurrency=2
 ```
-
-O projeto usa `node --test`; alterações de UI podem exigir `npm run css:build`. A justificativa histórica do desenho está em [DESIGN.md](skills/grapheng/DESIGN.md).
 
 ## Licença
 

@@ -1,4 +1,0 @@
-// Contrato v2 de A (cenário contract-change): colapsa espaços internos.
-export function normalizarRegistro(texto) {
-  return String(texto).trim().replace(/\s+/g, ' ')
-}

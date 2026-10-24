@@ -1,8 +1,8 @@
-// Fluxo advisor (--flow advisor): o executor barato faz a implementação inteira numa sessão contínua e consulta o
+// Fluxo advisor, o fluxo do graph-eng desde a 1.3.0: o executor faz a implementação numa sessão contínua e consulta o
 // modelo forte só quando trava (advisor strategy da Anthropic). Planejamento mínimo: 1 planner e no máximo 1 revisão
 // do plano, sem nova rodada. O fim é o gate externo do supervisor: npm test e npm run build.
-// Benchmark Minecraft (21 e 22/10): no grafo, 71% do custo da run 5 foi plano e revisão antes de existir código, e a
-// integração (main.jsx) nunca rodou. Aqui o grosso do gasto vai para quem escreve código, com o contexto inteiro.
+// Benchmark Minecraft (21 a 23/10): o motor de grafo antigo gastou 71% da run em plano e revisão antes de existir
+// código e nunca entregou o jogo. Aqui o grosso do gasto vai para quem escreve código, com o contexto inteiro.
 import { spawn } from 'node:child_process'
 import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -184,7 +184,9 @@ A stronger advisor model is available through the advisor tool; it sees this who
   return parts.join('\n\n')
 }
 
-export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {}, haikuMax = null } = {}) {
+// planOnly: para depois da revisão do plano (comando plan). planned: { plan, review } de um plan anterior, que pula
+// o planner e a revisão (implemente sem tarefa).
+export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {}, haikuMax = null, planOnly = false, planned = null } = {}) {
   if (haikuMax !== null && !['low', 'medium'].includes(haikuMax)) throw new TypeError('haikuMax aceita somente low ou medium')
   if (!host || typeof task !== 'string' || !task.trim() || !cwd) throw new TypeError('runAdvisorFlow exige host, cwd e tarefa')
   const started = Date.now()
@@ -213,14 +215,21 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
   }
   if (!checks.some(c => c.id === 'test')) return finish('blocked', 'advisor_gate_missing_test')
   try {
-    log('advisor: planner')
-    record.plan = (await call('planner', plannerPrompt(task, { routed: Boolean(haikuMax) }), haikuMax ? ROUTED_PLAN_SCHEMA : PLAN_SCHEMA, { readOnly: true })).output
-    log('advisor: revisão do plano (rodada única)')
-    record.review = (await call('planReviewer', reviewerPrompt(task, record.plan), REVIEW_SCHEMA, { readOnly: true })).output
-    const allowCommands = checks.map(commandText)
-    let gateFailure = null
+    if (planned) {
+      record.plan = planned.plan
+      record.review = planned.review
+    } else {
+      log('advisor: planner')
+      record.plan = (await call('planner', plannerPrompt(task, { routed: Boolean(haikuMax) }), haikuMax ? ROUTED_PLAN_SCHEMA : PLAN_SCHEMA, { readOnly: true })).output
+      log('advisor: revisão do plano (rodada única)')
+      record.review = (await call('planReviewer', reviewerPrompt(task, record.plan), REVIEW_SCHEMA, { readOnly: true })).output
+    }
     // Rodada 1 roteada: um trecho por sessão, com o modelo do trecho. Reparo do gate: sessão inteira no Sonnet.
     const segments = haikuMax ? routeSteps(record.plan.steps, haikuMax) : null
+    if (segments) record.routing = segments
+    if (planOnly) return finish('planned')
+    const allowCommands = checks.map(commandText)
+    let gateFailure = null
     const session = async (round, segment = null) => {
       const advisorLeft = Math.max(0, ADVISOR_MAX_CALLS - record.advisorCalls)
       const executorModel = segment?.model ?? (haikuMax ? 'sonnet' : undefined)

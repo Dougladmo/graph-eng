@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { ADVISOR_MAX_CALLS, countAdvisorCalls, executorPrompt, gateCommands, routeSteps, runAdvisorFlow, splitCost } from '../bin/advisor-flow.mjs'
-import { executeGrapheng, parseGrapheng } from '../bin/grapheng.mjs'
 
 async function tempDir(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'advisor-flow-'))
@@ -129,48 +128,6 @@ test('splitCost divide o custo em entrada, escrita e leitura de cache e saída, 
   assert.equal(ADVISOR_MAX_CALLS, 3)
 })
 
-test('--flow advisor só vale com implemente e tarefa; graph é o padrão e não aparece no parse', () => {
-  assert.deepEqual(parseGrapheng(['implemente', 'faça', '--flow', 'advisor']), { command: 'implemente', task: 'faça', flow: 'advisor' })
-  assert.deepEqual(parseGrapheng(['implemente', 'faça', '--flow', 'graph']), { command: 'implemente', task: 'faça' })
-  assert.throws(() => parseGrapheng(['plan', 'x', '--flow', 'advisor']), /só vale com implemente/)
-  assert.throws(() => parseGrapheng(['implemente', '--flow', 'advisor']), /exige a tarefa/)
-  assert.throws(() => parseGrapheng(['implemente', 'x', '--flow', 'outro']), /graph ou advisor/)
-  assert.throws(() => parseGrapheng(['implemente', 'x', '--flow=advisor']), /não é aceito/)
-})
-
-test('--executor haiku troca o modelo do executor contínuo e só vale com --flow advisor', async t => {
-  assert.deepEqual(parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--executor', 'haiku']), { command: 'implemente', task: 'faça', flow: 'advisor', executor: 'haiku' })
-  assert.throws(() => parseGrapheng(['implemente', 'faça', '--executor', 'haiku']), /só vale com --flow advisor/)
-  assert.throws(() => parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--executor', 'opus']), /sonnet ou haiku/)
-  assert.throws(() => parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--executor', 'haiku', '--executor', 'haiku']), /repetido/)
-  const cwd = await tempDir(t)
-  const seen = []
-  await executeGrapheng({
-    invocation: ['implemente', 'faça o jogo', '--flow', 'advisor', '--executor', 'haiku'], cwd, host: 'claude',
-    configImpl: async () => ({ effort: 'medium', effortSource: 'default' }),
-    hostFactory: options => ({ options }),
-    advisorFlowImpl: async options => { seen.push(options); return { flow: 'advisor', status: 'done' } },
-  })
-  assert.equal(seen[0].host.options.advisedExecutorModel, 'haiku')
-})
-
-test('executeGrapheng com --flow advisor roda o fluxo advisor e não o motor de grafo', async t => {
-  const cwd = await tempDir(t)
-  const seen = []
-  const result = await executeGrapheng({
-    invocation: ['implemente', 'faça o jogo', '--flow', 'advisor'], cwd, host: 'claude',
-    configImpl: async () => ({ effort: 'medium', effortSource: 'default' }),
-    runGraphImpl: async () => { throw new Error('não deveria rodar o grafo') },
-    hostFactory: options => ({ options }),
-    advisorFlowImpl: async options => { seen.push(options); return { flow: 'advisor', status: 'done' } },
-  })
-  assert.equal(result.status, 'done')
-  assert.equal(seen[0].task, 'faça o jogo')
-  assert.equal(seen[0].hostName, 'claude')
-  assert.equal(seen[0].host.options.cwd, cwd)
-  assert.ok(seen[0].runDir.startsWith(path.join(cwd, '.graph-runs')))
-})
-
 // Roteamento por complexidade (benchmark 23/10): o planner marca cada passo; passos até --haiku-max vão para o Haiku,
 // o resto fica no Sonnet. Passos seguidos do mesmo modelo viram uma sessão; o reparo do gate fica no Sonnet.
 const routedPlan = { goal: 'g', doneWhen: ['d1'], risks: [], steps: [
@@ -220,41 +177,32 @@ test('fluxo advisor roteado: gate reprovado vai para uma sessão de reparo intei
   assert.doesNotMatch(sessions[3].prompt, /Your part/)
 })
 
-test('--haiku-max só vale com --flow advisor, aceita low ou medium e não combina com --executor', async t => {
-  assert.deepEqual(parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--haiku-max', 'low']), { command: 'implemente', task: 'faça', flow: 'advisor', haikuMax: 'low' })
-  assert.throws(() => parseGrapheng(['implemente', 'faça', '--haiku-max', 'low']), /só vale com --flow advisor/)
-  assert.throws(() => parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--haiku-max', 'high']), /low, medium ou off/)
-  assert.throws(() => parseGrapheng(['implemente', 'faça', '--flow', 'advisor', '--haiku-max', 'low', '--executor', 'haiku']), /não combina/)
+test('planOnly (comando plan): planner e revisão, sem executor nem gate, com o roteamento de cada passo', async t => {
   const cwd = await tempDir(t)
-  const seen = []
-  await executeGrapheng({
-    invocation: ['implemente', 'faça o jogo', '--flow', 'advisor', '--haiku-max', 'medium'], cwd, host: 'claude',
-    configImpl: async () => ({ effort: 'medium', effortSource: 'default' }),
-    hostFactory: options => ({ options }),
-    advisorFlowImpl: async options => { seen.push(options); return { flow: 'advisor', status: 'done' } },
-  })
-  assert.equal(seen[0].haikuMax, 'medium')
+  const host = fakeHost({ plan: routedPlan })
+  let gates = 0
+  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: async () => { gates++; return { pass: true, results: [] } }, haikuMax: 'low', planOnly: true, runDir: path.join(cwd, 'run') })
+  assert.equal(result.status, 'planned')
+  assert.deepEqual(host.requests.map(r => r.role), ['planner', 'planReviewer'])
+  assert.equal(gates, 0)
+  assert.deepEqual(result.routing, [{ model: 'haiku', from: 1, to: 1 }, { model: 'sonnet', from: 2, to: 3 }, { model: 'haiku', from: 4, to: 5 }])
+  assert.equal(JSON.parse(await readFile(path.join(cwd, 'run', 'advisor-run.json'), 'utf8')).status, 'planned')
 })
 
-// v1.2.0: no host claude o fluxo advisor roteia por padrão com o Haiku só nos passos low (benchmark 23/10: 55/55, US$ 1,59).
-test('fluxo advisor no claude usa --haiku-max low por padrão; --executor e --haiku-max off desligam o roteamento; codex não roteia', async t => {
+test('planned (implemente sem tarefa): pula planner e revisão e executa o plano recebido com as notas da revisão', async t => {
   const cwd = await tempDir(t)
-  const run = async (invocation, host = 'claude') => {
-    const seen = []
-    await executeGrapheng({
-      invocation, cwd, host,
-      configImpl: async () => ({ effort: 'medium', effortSource: 'default' }),
-      hostFactory: options => ({ options }),
-      advisorFlowImpl: async options => { seen.push(options); return { flow: 'advisor', status: 'done' } },
-    })
-    return seen[0]
-  }
-  assert.equal((await run(['implemente', 'x', '--flow', 'advisor'])).haikuMax, 'low')
-  assert.equal((await run(['implemente', 'x', '--flow', 'advisor', '--haiku-max', 'medium'])).haikuMax, 'medium')
-  assert.equal((await run(['implemente', 'x', '--flow', 'advisor', '--haiku-max', 'off'])).haikuMax, undefined)
-  const sonnetOnly = await run(['implemente', 'x', '--flow', 'advisor', '--executor', 'sonnet'])
-  assert.equal(sonnetOnly.haikuMax, undefined)
-  assert.equal(sonnetOnly.host.options.advisedExecutorModel, 'sonnet')
-  assert.equal((await run(['implemente', 'x', '--flow', 'advisor'], 'codex')).haikuMax, undefined)
-  await assert.rejects(run(['implemente', 'x', '--flow', 'advisor', '--haiku-max', 'low'], 'codex'), /vale só no host claude/)
+  const host = fakeHost()
+  const planned = { plan: routedPlan, review: { verdict: 'REVISE', notes: ['testar a física com dt grande'] } }
+  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: passing, countAdvisor: async () => 0, haikuMax: 'low', planned })
+  assert.equal(result.status, 'done')
+  assert.deepEqual(host.requests.map(r => r.role), ['advisedExecutor', 'advisedExecutor', 'advisedExecutor'])
+  assert.match(host.requests[0].prompt, /testar a física com dt grande/)
+  assert.deepEqual(host.requests.map(r => r.executorModel), ['haiku', 'sonnet', 'haiku'])
+})
+
+test('effort chega a todas as chamadas do fluxo', async t => {
+  const cwd = await tempDir(t)
+  const host = fakeHost()
+  await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: passing, countAdvisor: async () => 0, effort: 'max' })
+  assert.deepEqual(host.requests.map(r => r.effort), ['max', 'max', 'max'])
 })

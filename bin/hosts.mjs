@@ -7,35 +7,23 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+// Papéis do fluxo advisor: o Sonnet planeja, o Opus revisa o plano e o executor contínuo escreve o código.
 const MODEL_BY_ROLE = {
-  claude: {
-    planner: 'sonnet', planReviewer: 'opus', designReviewer: 'opus', critic: 'sonnet',
-    researcher: 'sonnet', designer: 'sonnet', notetaker: 'haiku',
-    executor: 'haiku', verifier: 'haiku', synth: 'haiku', advisedExecutor: 'sonnet',
-  },
-  codex: {
-    planner: 'gpt-6.1-sol', planReviewer: 'gpt-6.1-sol', designReviewer: 'gpt-6.1-sol', critic: 'gpt-6.1-sol',
-    researcher: 'gpt-6.1-sol', designer: 'gpt-6.1-sol', notetaker: 'gpt-6-luna',
-    executor: 'gpt-6-luna', verifier: 'gpt-6-luna', synth: 'gpt-6-luna', advisedExecutor: 'gpt-6-luna',
-  },
+  claude: { planner: 'sonnet', planReviewer: 'opus', advisedExecutor: 'sonnet' },
+  codex: { planner: 'gpt-6.1-sol', planReviewer: 'gpt-6.1-sol', advisedExecutor: 'gpt-6-luna' },
 }
-// Fluxo advisor (--flow advisor): o executor faz a implementação inteira numa sessão e consulta o modelo forte quando
-// trava, na mesma sessão (--advisor do Claude Code, ferramenta de servidor que vê a transcrição inteira).
+// O executor consulta o modelo forte quando trava, na mesma sessão (--advisor do Claude Code, ferramenta de servidor
+// que vê a transcrição inteira).
 const ADVISOR_BY_ROLE = { claude: { advisedExecutor: 'opus' } }
-// Modelos aceitos no executor contínuo (--executor do fluxo advisor). O Opus fica de fora: ele já é o advisor.
+// Modelos aceitos no executor contínuo (--executor e roteamento por complexidade). O Opus fica de fora: ele já é o advisor.
 const ADVISED_EXECUTOR_MODELS = new Set(['sonnet', 'haiku'])
-const WRITE_SHELL_ROLES = new Set(['executor', 'advisedExecutor'])
+const WRITE_SHELL_ROLES = new Set(['advisedExecutor'])
 // Comando de check liberado ao executor: texto exato, sem metacaractere de shell nem curinga de permissão.
 const ALLOW_COMMAND = /^[A-Za-z0-9_./@=+:,-]+( [A-Za-z0-9_./@=+:,-]+)*$/
 export const isAllowCommand = value => typeof value === 'string' && value.length <= 200 && ALLOW_COMMAND.test(value)
-const ROLE_ALIASES = {
-  'plan-review': 'planReviewer', 'design-review': 'designReviewer',
-  worker: 'executor', verify: 'verifier', repair: 'executor', polish: 'executor',
-}
 // Esforço de raciocínio por chamada (--effort do Claude Code). Fora desta lista a chamada é recusada; ausente = padrão do modelo.
 const REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
-const WEB_TOOLS = 'WebSearch,WebFetch'
-const READ_ONLY = new Set(['planner', 'planReviewer', 'designReviewer', 'verifier', 'critic', 'synth', 'researcher', 'designer', 'notetaker'])
+const READ_ONLY = new Set(['planner', 'planReviewer'])
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 const MAX_TIMEOUT_MS = 60 * 60 * 1000
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024
@@ -57,8 +45,6 @@ export class HostError extends Error {
     Object.assign(this, details)
   }
 }
-
-function roleFor(role) { return ROLE_ALIASES[role] ?? role }
 
 function assertSchema(schema, at = '$') {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) throw new HostError('INVALID_SCHEMA', `JSON Schema inválido em ${at}`)
@@ -187,7 +173,7 @@ function errorFromCli(host, code, message, stderr = '', extra = {}) {
 }
 
 // Envelope is_error do Claude: sem `result`, o motivo está em subtype/errors. Uso, modelo e negações seguem
-// no erro para o benchmark contar o custo da chamada que falhou.
+// no erro para o fluxo contar o custo da chamada que falhou.
 function claudeEnvelopeError(host, envelope, stderr) {
   const errors = Array.isArray(envelope.errors) ? envelope.errors.map(String) : []
   const why = [envelope.subtype, errors.join('; ')].filter(Boolean).join(': ')
@@ -220,46 +206,27 @@ function classifyExitFailure(host, stdout, stderr, exitCode, signal) {
 
 function samePath(left, right) { return path.resolve(left) === path.resolve(right) }
 
-// Transporte experimental do benchmark (B4): só existe quando createHost recebe experimentalPolicy.
-// Sem essa opção, o caminho de produto (MODEL_BY_ROLE, READ_ONLY, MODEL_MISMATCH) permanece idêntico.
-function validateExperimentalPolicy(policy, host) {
-  if (!policy || typeof policy !== 'object') throw new TypeError('experimentalPolicy inválida')
-  if (policy.host !== host) throw new TypeError('experimentalPolicy.host diverge do host')
-  for (const field of ['models', 'readOnly']) if (!policy[field] || typeof policy[field] !== 'object') throw new TypeError(`experimentalPolicy.${field} é obrigatório`)
-  for (const [role, model] of Object.entries(policy.models)) if (typeof model !== 'string' || !model) throw new TypeError(`modelo experimental inválido para ${role}`)
-  for (const [role, flag] of Object.entries(policy.readOnly)) if (typeof flag !== 'boolean') throw new TypeError(`readOnly experimental inválido para ${role}`)
-}
-
 /**
- * Adapta Claude Code ou Codex CLI. Papéis canônicos: planner, planReviewer,
- * designReviewer, executor, verifier, critic e synth. Aliases aceitos:
- * plan-review, design-review, worker, verify, repair e polish. readOnly pode
- * restringir executor; papéis de revisão/verificação já são sempre read-only.
- * writeScope é rejeitado até haver enforcement real. A disponibilidade de
- * modelo permanece desconhecida até o CLI executar e reportar o identificador.
+ * Adapta Claude Code ou Codex CLI aos papéis do fluxo advisor: planner, planReviewer e advisedExecutor.
+ * planner e planReviewer são sempre read-only. writeScope é rejeitado até haver enforcement real. A disponibilidade
+ * de modelo permanece desconhecida até o CLI executar e reportar o identificador.
  */
-// C14: onTransportPaths({ id, files, phase: 'created' | 'removed' }) recebe os nomes exatos (relativos à runDir) dos arquivos de transporte
-// do codex. 'created' roda antes de gravar o schema; 'removed' roda depois da limpeza, e o dono exige que os caminhos tenham sumido.
-export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, onTransportPaths = null, experimentalPolicy = null, advisedExecutorModel = null }) {
+export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, advisedExecutorModel = null }) {
   if (!MODEL_BY_ROLE[host]) throw new TypeError(`Host desconhecido: ${host}`)
   if (advisedExecutorModel !== null && (host !== 'claude' || !ADVISED_EXECUTOR_MODELS.has(advisedExecutorModel))) throw new TypeError('advisedExecutorModel aceita somente sonnet ou haiku, no host claude')
-  if (experimentalPolicy) validateExperimentalPolicy(experimentalPolicy, host)
   if (!cwd || !runDir) throw new TypeError('cwd e runDir são obrigatórios')
   let eventSeq = 0
 
   function emit(event, request, handle, extra = {}) {
-    try { (request.onEvent ?? onEvent)({ event, host, role: roleFor(request.role), id: handle.id, runId, seq: ++eventSeq, at: new Date().toISOString(), ...extra }) } catch { /* callbacks são observabilidade */ }
+    try { (request.onEvent ?? onEvent)({ event, host, role: request.role, id: handle.id, runId, seq: ++eventSeq, at: new Date().toISOString(), ...extra }) } catch { /* callbacks são observabilidade */ }
   }
 
   function prepare(request, id) {
     if (!request || typeof request !== 'object' || Array.isArray(request)) throw new HostError('INVALID_REQUEST', 'Solicitação inválida')
-    const role = roleFor(request.role)
-    const model = experimentalPolicy
-      ? (Object.hasOwn(experimentalPolicy.models, role) ? experimentalPolicy.models[role] : undefined)
-      : role === 'advisedExecutor' ? request.executorModel ?? advisedExecutorModel ?? MODEL_BY_ROLE[host][role] : MODEL_BY_ROLE[host][role]
-    // Fluxo advisor roteado: cada trecho do plano escolhe o modelo do executor contínuo (sonnet ou haiku).
-    if (request.executorModel !== undefined && (role !== 'advisedExecutor' || host !== 'claude' || experimentalPolicy || !ADVISED_EXECUTOR_MODELS.has(request.executorModel))) throw new HostError('INVALID_EXECUTOR_MODEL', 'executorModel vale só no advisedExecutor do claude, com sonnet ou haiku')
-    if (experimentalPolicy && !model) throw new HostError('EXPERIMENT_ROLE_UNMAPPED', `Papel fora do mapa experimental: ${request.role}`)
+    const role = request.role
+    const model = role === 'advisedExecutor' ? request.executorModel ?? advisedExecutorModel ?? MODEL_BY_ROLE[host][role] : MODEL_BY_ROLE[host]?.[role]
+    // Roteamento por complexidade: cada trecho do plano escolhe o modelo do executor contínuo (sonnet ou haiku).
+    if (request.executorModel !== undefined && (role !== 'advisedExecutor' || host !== 'claude' || !ADVISED_EXECUTOR_MODELS.has(request.executorModel))) throw new HostError('INVALID_EXECUTOR_MODEL', 'executorModel vale só no advisedExecutor do claude, com sonnet ou haiku')
     if (!model) throw new HostError('UNKNOWN_ROLE', `Papel desconhecido: ${request.role}`)
     if (request.model && request.model !== model) throw new HostError('MODEL_MISMATCH', `Modelo do papel ${request.role} deve ser ${model}`)
     if (typeof request.prompt !== 'string' || !request.prompt.trim()) throw new HostError('INVALID_PROMPT', 'prompt deve ser texto não vazio')
@@ -271,18 +238,17 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const effectiveTimeout = request.timeoutMs ?? timeoutMs
     if (!Number.isFinite(effectiveTimeout) || effectiveTimeout <= 0 || effectiveTimeout > MAX_TIMEOUT_MS) throw new HostError('INVALID_TIMEOUT', `timeoutMs deve estar entre 1 e ${MAX_TIMEOUT_MS}`)
     if (request.cwd !== undefined && !samePath(request.cwd, cwd)) throw new HostError('CWD_MISMATCH', 'request.cwd diverge do cwd configurado no host')
-    const readonly = experimentalPolicy ? experimentalPolicy.readOnly[role] === true || request.readOnly === true : READ_ONLY.has(role) || request.readOnly === true
+    const readonly = READ_ONLY.has(role) || request.readOnly === true
     // B3: o Claude Code nega Write em cwd com segmento .claude (dontAsk); recusa antes do spawn em vez de falhar no meio.
     if (host === 'claude' && !readonly && path.resolve(cwd).split(path.sep).includes('.claude')) throw new HostError('CWD_PROTECTED_PATH', 'papel de escrita do claude não roda sob diretório .claude (dontAsk nega Write)')
     const strict = wireSchema(request.schema)
     // Isolado do ambiente do usuário (MCPs, skills, settings globais): sem isso cada turno carregava ~75k tokens.
     // dontAsk nega toda ferramenta sem regra de permissão: a escrita do executor precisa de --allowedTools,
     // e Edit(./**) (vale também para Write) a prende ao cwd do spawn.
-    // Só o researcher (Sonnet, só leitura) lê a web: docs atuais da biblioteca na versão instalada. Nenhum papel de escrita tem web.
-    const readTools = role === 'researcher' && readonly ? `Read,Glob,Grep,${WEB_TOOLS}` : 'Read,Glob,Grep'
+    const readTools = 'Read,Glob,Grep'
     // Laço de feedback do executor de escrita: Bash só nos comandos aprovados (o dontAsk nega qualquer outro comando).
     const shell = WRITE_SHELL_ROLES.has(role) && !readonly ? (request.allowCommands || []) : []
-    const advisor = experimentalPolicy ? null : ADVISOR_BY_ROLE[host]?.[role] || null
+    const advisor = ADVISOR_BY_ROLE[host]?.[role] || null
     if (host === 'claude') return {
       role, model, readonly, schema: request.schema, wireSchema: strict,
       command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : ['Read,Glob,Grep,Edit(./**)', ...shell.map(c => `Bash(${c})`)].join(','), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
@@ -297,7 +263,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const readOnlyEnforcement = host === 'claude'
       ? 'Claude Code usa permission-mode dontAsk e limita as ferramentas a Read, Glob e Grep; não oferece ferramenta de escrita nem shell. Papéis de escrita só gravam dentro do cwd (Edit(./**)).'
       : readOnlyEnforced ? 'Codex CLI usa -s read-only para restringir gravações no sandbox do sistema de arquivos.' : null
-    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(MODEL_BY_ROLE[host]), structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex', agentWeb: host === 'claude' && !experimentalPolicy }
+    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(MODEL_BY_ROLE[host]), structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex' }
   }
 
   async function spawnRequest(request) {
@@ -305,15 +271,12 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const built = prepare(request, id)
     const effectiveTimeout = request.timeoutMs ?? timeoutMs
     await mkdir(runDir, { recursive: true })
-    const transportNames = built.schemaFile ? [built.schemaFile, built.outputFile].map(file => path.basename(file)) : []
     const schemaHash = built.schemaFile ? createHash('sha256').update(built.schemaText).digest('hex') : null
-    if (built.schemaFile && onTransportPaths) await onTransportPaths({ id, files: transportNames, phase: 'created' })
     if (built.schemaFile) {
       try { await writeFile(built.schemaFile, built.schemaText, { mode: 0o600 }) }
       catch (error) {
-        // Falha ao gravar o schema: remove o que sobrou e solta o efêmero; sobra no disco fica como violação no release.
+        // Falha ao gravar o schema: remove o que sobrou.
         await rm(built.schemaFile, { force: true }).catch(() => {})
-        if (onTransportPaths) await onTransportPaths({ id, files: transportNames, phase: 'removed' }).catch(() => {})
         throw error
       }
     }
@@ -328,7 +291,6 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
           : nodeSpawn(process.execPath, [SUPERVISOR_PATH, String(effectiveTimeout)], { cwd, shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'], env: childEnv() })
     } catch (error) {
       await Promise.all([built.schemaFile, built.outputFile].filter(Boolean).map(file => rm(file, { force: true }).catch(() => {})))
-      if (built.schemaFile && onTransportPaths) await onTransportPaths({ id, files: transportNames, phase: 'removed' }).catch(() => {})
       const code = error.code === 'ENOENT' ? 'CLI_MISSING' : 'SPAWN_FAILED'
       throw new HostError(code, `${host}: ${built.command} indisponível (${error.message})`, { cause: error })
     }
@@ -339,7 +301,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
       settled: false, finalizing: false, cancelled: false, timedOut: false, termination: null, timer: null, killTimer: null,
       startedAt: Date.now(), supervised: !injectedTransport && process.platform !== 'win32', cliExit: null, supervisorError: null, drainAck: null, closeSignal: null, pendingTermination: null,
     }
-    emit('spawn', request, handle, { pid: child.pid, requestedModel: built.model, ...(experimentalPolicy ? { experimental: true } : {}) })
+    emit('spawn', request, handle, { pid: child.pid, requestedModel: built.model })
 
     const safeCleanup = async () => {
       clearTimeout(handle.timer)
@@ -351,10 +313,6 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
       }
       for (const file of [built.schemaFile, built.outputFile].filter(Boolean)) {
         try { await rm(file, { force: true }) } catch (error) { cleanupErrors.push(error) }
-      }
-      if (built.schemaFile && onTransportPaths) {
-        // Os dois caminhos precisam ter sumido: sobra é violação no dono do guard.
-        try { await onTransportPaths({ id, files: transportNames, phase: 'removed' }) } catch (error) { cleanupErrors.push(error) }
       }
       return cleanupErrors
     }
@@ -525,7 +483,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
             const modelIds = Object.keys(envelope.modelUsage ?? {})
             handle.effectiveModel = modelIds.length === 1 ? modelIds[0] : null
             handle.usage = envelope.modelUsage ?? envelope.usage ?? null
-            // B3: negações de permissão do Claude ficam visíveis ao benchmark (calls.jsonl).
+            // B3: negações de permissão do Claude ficam visíveis no registro da run.
             handle.permissionDenials = Array.isArray(envelope.permission_denials) ? envelope.permission_denials : []
             // Sessão do Claude Code: o fluxo advisor conta na transcrição quantas vezes o executor consultou o advisor.
             handle.sessionId = typeof envelope.session_id === 'string' ? envelope.session_id : null
