@@ -178,6 +178,34 @@ node bin/graph-run.mjs triage-config
 
 La clave queda en `~/.graph-eng/config.json` con permiso 0600 y nunca llega a los agentes.
 
+### Flujo advisor (`--flow advisor`)
+
+Una alternativa al grafo para `implemente`, que se activa por run. En vez de un ejecutor barato por nodo, una sola sesión de ejecutor hace toda la tarea en orden y solo le pide consejo al modelo fuerte cuando se traba. Nació del benchmark de Minecraft, donde el grafo nunca entregó un juego funcionando (ver [Benchmark](#benchmark)).
+
+```mermaid
+flowchart TD
+  P[🧠 Planner<br/>modelo medio] --> R{🧠 Revisión del plan<br/>fuerte, una ronda}
+  R --> E[⚙️ Sesión del ejecutor<br/>pasos en orden]
+  E -. como máximo 3 consultas .-> A[(🧠 Advisor<br/>modelo fuerte)]
+  E --> G[🧪 Gate del supervisor<br/>npm test + npm run build]
+  G -- falla, hasta 2 sesiones más --> E
+  G -- pasa --> D([✅ DONE])
+```
+
+- El planner (modelo medio) escribe los pasos y el modelo fuerte revisa el plan una vez.
+- El ejecutor trabaja en una sesión continua, así que conserva el contexto de un paso al siguiente. El modelo fuerte es su advisor, con como máximo 3 consultas por run.
+- El shell del ejecutor solo corre `npm test` y `npm run build`. El supervisor corre los dos al final, y el run solo es DONE cuando ese gate pasa.
+
+**Enrutamiento por complejidad.** El planner marca cada paso como `low`, `medium` o `high`. Los pasos hasta el nivel de `--haiku-max` van al modelo barato; el resto queda con el modelo medio. Los pasos seguidos en el mismo modelo comparten una sesión, la cuota del advisor se comparte entre sesiones y la reparación del gate corre siempre en el modelo medio. En el benchmark, `low` mantuvo la nota y fue la variante más barata, por eso es el valor por defecto en Claude.
+
+| Flag | Valores | Por defecto | Qué hace |
+| --- | --- | --- | --- |
+| `--flow` | `graph`, `advisor` | `graph` | Elige el flujo. `advisor` solo funciona con `implemente` y una tarea. |
+| `--haiku-max` | `low`, `medium`, `off` | `low` en Claude | Mayor complejidad de paso que va al modelo barato. `off` deja todos los pasos en el modelo medio. |
+| `--executor` | `sonnet`, `haiku` | ninguno | Un solo modelo para todos los pasos. Apaga el enrutamiento y no se combina con `--haiku-max`. |
+
+`--haiku-max` y `--executor` solo existen en el host Claude. En Codex el flujo advisor no enruta.
+
 ### Las cuatro decisiones
 
 Todo revisor responde con una de estas, siempre con evidencia:
@@ -221,6 +249,23 @@ Reglas que siempre valen:
 ## Benchmark
 
 `bin/graph-benchmark.mjs` corre una tarea fija en una copia limpia del repositorio, con Claude real. La nota sale de un conjunto de **tests de aceptación externos** que los agentes nunca ven. Cada run está detallada en [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md).
+
+**Minecraft MVP (flujo advisor, 2026-10-23):** una tarea más difícil, un clon jugable de Minecraft en React y three.js, calificado con 55 tests de aceptación ocultos más una revisión visual en el navegador. Ahí el flujo de grafo necesitó 5 intentos, gastó US$ 7,58 y no entregó un juego en ninguno. Una run por variante:
+
+| Variante | Tests ocultos | Costo | Tiempo |
+| --- | --- | --- | --- |
+| 🧠 Agente único con el modelo fuerte | 55/55 | US$ 5,97 | 23 min |
+| Advisor, modelo medio ejecuta | 55/55 | US$ 1,79 | 11 min |
+| Advisor, modelo barato ejecuta todo (`--executor haiku`) | 54/55 | US$ 2,33 | 20 min |
+| Advisor, modelo barato en `low` + `medium` (`--haiku-max medium`) | 55/55 | US$ 1,66 | 12,5 min |
+| ✅ Advisor, modelo barato en `low` (`--haiku-max low`, por defecto) | **55/55** | **US$ 1,59** | **10 min** |
+
+- 💰 La misma nota que el agente único con el modelo fuerte por cerca de un cuarto del costo, en menos de la mitad del tiempo. Todas las variantes advisor mostraron el juego en pantalla, sin errores en la consola.
+- 🐢 El modelo barato solo en toda la tarea fue más lento y más caro: llamó al advisor una vez (US$ 1,21) y aun así falló un test de física.
+- ✂️ Dividido por paso, el modelo barato resolvió todo lo que recibió. Con `medium` hizo 4 de 10 pasos por US$ 0,06, sin errores.
+- ⚠️ El enrutamiento solo ahorró entre 7% y 11%, porque el planner marcó 6 de 10 pasos como `high`. Con una run de cada una, una diferencia de 10% está dentro de la variación normal.
+
+Evidencia en [docs/benchmarks/runs/](docs/benchmarks/runs/).
 
 **Run f366:**
 
@@ -267,7 +312,7 @@ Correr las llamadas de ejecutor, verificador y synth en el modelo fuerte costar�
 
 ## Detalles de ejecución
 
-El esfuerzo acepta `low`, `medium` (por defecto) o `max`, en la forma separada (`--effort max`); `--effort` sobrescribe la configuración en `plan`, `clarify`, `tasks` e `implemente`. Los roles y modelos los fija el adaptador confiable de Claude o Codex. No hay flags públicas para modelos, roles, ancho ni límites internos. `--adaptive on|off` (por defecto `on`) activa o desactiva los tiers; ver [Flujo adaptativo](#flujo-adaptativo).
+El esfuerzo acepta `low`, `medium` (por defecto) o `max`, en la forma separada (`--effort max`); `--effort` sobrescribe la configuración en `plan`, `clarify`, `tasks` e `implemente`. Los roles y modelos los fija el adaptador confiable de Claude o Codex. No hay flags públicas para roles, ancho ni límites internos; la única elección de modelo es la del ejecutor en el [flujo advisor](#flujo-advisor---flow-advisor). `--adaptive on|off` (por defecto `on`) activa o desactiva los tiers; ver [Flujo adaptativo](#flujo-adaptativo).
 
 El adaptador de ejecución de esta versión solo soporta el test runner nativo de Node, en repositorios con un `package.json` legible y `scripts.test` igual a exactamente `node --test`. Vitest, Jest, scripts con flags extra y repositorios sin ese contrato dan `BLOCK` en `implemente`; `plan` sigue funcionando. Cada nodo recibe una selección local derivada de los `inputs`, `outputs` y `files` que aprobó el supervisor. Un mapeo interno conocido corre los tests afectados; sin un mapeo completo, la cobertura se marca como limitada y solo corren el `node --check` aplicable y la validación del contrato y del grant. El gate final corre la suite completa con concurrencia 2, solo después de todo el pulido. Los checks usan `process.execPath`, argv explícito y spawn sin shell. Cada run escribe su selección y sus recibos en `.graph-runs/` dentro del repositorio.
 

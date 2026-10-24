@@ -178,6 +178,34 @@ node bin/graph-run.mjs triage-config
 
 A chave fica em `~/.graph-eng/config.json` com permissão 0600 e nunca chega aos agentes.
 
+### Fluxo advisor (`--flow advisor`)
+
+Uma alternativa ao grafo para o `implemente`, ligada por run. Em vez de um executor barato por nó, uma única sessão de executor faz a tarefa inteira em ordem e só pede conselho ao modelo forte quando trava. Nasceu do benchmark do Minecraft, em que o grafo nunca entregou um jogo funcionando (ver [Benchmark](#benchmark)).
+
+```mermaid
+flowchart TD
+  P[🧠 Planner<br/>modelo médio] --> R{🧠 Revisão do plano<br/>forte, uma rodada}
+  R --> E[⚙️ Sessão do executor<br/>passos em ordem]
+  E -. no máximo 3 consultas .-> A[(🧠 Advisor<br/>modelo forte)]
+  E --> G[🧪 Gate do supervisor<br/>npm test + npm run build]
+  G -- falhou, até 2 sessões a mais --> E
+  G -- passou --> D([✅ DONE])
+```
+
+- O planner (modelo médio) escreve os passos e o modelo forte revisa o plano uma vez.
+- O executor trabalha numa sessão contínua, então guarda o contexto de um passo para o outro. O modelo forte é o advisor dele, com no máximo 3 consultas por run.
+- O shell do executor só roda `npm test` e `npm run build`. O supervisor roda os dois no fim, e o run só é DONE quando esse gate passa.
+
+**Roteamento por complexidade.** O planner marca cada passo como `low`, `medium` ou `high`. Os passos até o nível de `--haiku-max` vão para o modelo barato; o resto fica com o modelo médio. Passos seguidos no mesmo modelo dividem uma sessão, a cota do advisor é compartilhada entre as sessões e o conserto do gate roda sempre no modelo médio. No benchmark, `low` manteve a nota e foi a variante mais barata, por isso é o padrão no Claude.
+
+| Flag | Valores | Padrão | O que faz |
+| --- | --- | --- | --- |
+| `--flow` | `graph`, `advisor` | `graph` | Escolhe o fluxo. `advisor` só vale com `implemente` e uma tarefa. |
+| `--haiku-max` | `low`, `medium`, `off` | `low` no Claude | Maior complexidade de passo que vai para o modelo barato. `off` deixa todos os passos no modelo médio. |
+| `--executor` | `sonnet`, `haiku` | nenhum | Um modelo só para todos os passos. Desliga o roteamento e não combina com `--haiku-max`. |
+
+`--haiku-max` e `--executor` só existem no host Claude. No Codex o fluxo advisor não roteia.
+
 ### As quatro decisões
 
 Todo revisor responde com uma destas, sempre com evidência:
@@ -221,6 +249,23 @@ Regras que valem sempre:
 ## Benchmark
 
 `bin/graph-benchmark.mjs` roda uma tarefa fixa numa cópia limpa do repositório, com Claude real. Quem dá a nota é um conjunto de **testes de aceitação externos**, que os agentes não veem. Detalhe de todas as rodadas em [docs/validation/graph-eng-2-benchmark.md](docs/validation/graph-eng-2-benchmark.md).
+
+**Minecraft MVP (fluxo advisor, 2026-10-23):** uma tarefa mais difícil, um clone jogável de Minecraft em React e three.js, com nota de 55 testes de aceitação ocultos mais uma checagem visual no navegador. Ali o fluxo de grafo precisou de 5 tentativas, gastou US$ 7,58 e não entregou jogo em nenhuma. Uma rodada por variante:
+
+| Variante | Testes ocultos | Custo | Tempo |
+| --- | --- | --- | --- |
+| 🧠 Agente único com o modelo forte | 55/55 | US$ 5,97 | 23 min |
+| Advisor, modelo médio executa | 55/55 | US$ 1,79 | 11 min |
+| Advisor, modelo barato executa tudo (`--executor haiku`) | 54/55 | US$ 2,33 | 20 min |
+| Advisor, modelo barato em `low` + `medium` (`--haiku-max medium`) | 55/55 | US$ 1,66 | 12,5 min |
+| ✅ Advisor, modelo barato em `low` (`--haiku-max low`, padrão) | **55/55** | **US$ 1,59** | **10 min** |
+
+- 💰 Mesma nota do agente único com o modelo forte por cerca de um quarto do custo, em menos da metade do tempo. Todas as variantes advisor mostraram o jogo na tela, sem erro no console.
+- 🐢 O modelo barato sozinho na tarefa inteira foi mais lento e mais caro: chamou o advisor uma vez (US$ 1,21) e ainda falhou um teste de física.
+- ✂️ Picado por passo, o modelo barato deu conta de tudo que recebeu. Com `medium` ele fez 4 de 10 passos por US$ 0,06, sem erro.
+- ⚠️ O roteamento economizou só 7% a 11%, porque o planner marcou 6 de 10 passos como `high`. Com uma rodada de cada, diferença de 10% está dentro da variação normal.
+
+Evidências em [docs/benchmarks/runs/](docs/benchmarks/runs/).
 
 **Rodada f366:**
 
@@ -267,7 +312,7 @@ Rodar as chamadas de executor, verifier e synth no modelo forte custaria cerca d
 
 ## Detalhes de execução
 
-O esforço aceita `low`, `medium` (padrão) ou `max`, na forma separada (`--effort max`); `--effort` substitui a configuração em `plan`, `clarify`, `tasks` e `implemente`. Papéis e modelos são fixos pelo adapter confiável de Claude ou Codex. Não há flags públicas para modelos, papéis, largura ou limites internos. `--adaptive on|off` (padrão `on`) liga ou desliga os tiers; ver [Fluxo adaptativo](#fluxo-adaptativo).
+O esforço aceita `low`, `medium` (padrão) ou `max`, na forma separada (`--effort max`); `--effort` substitui a configuração em `plan`, `clarify`, `tasks` e `implemente`. Papéis e modelos são fixos pelo adapter confiável de Claude ou Codex. Não há flags públicas para papéis, largura ou limites internos; a única escolha de modelo é a do executor no [fluxo advisor](#fluxo-advisor---flow-advisor). `--adaptive on|off` (padrão `on`) liga ou desliga os tiers; ver [Fluxo adaptativo](#fluxo-adaptativo).
 
 O adapter de execução implementado neste corte é somente Node native test runner em repositórios com `package.json` legível e `scripts.test` exatamente `node --test`. Vitest, Jest, scripts com flags extras e repositórios sem esse contrato produzem `BLOCK` para `implemente`; `plan` continua disponível. Cada nó recebe uma seleção local derivada de `inputs`, `outputs` e `files` aprovados pelo supervisor. Um mapping interno conhecido roda os testes afetados; sem mapping completo, a cobertura é marcada como limitada e só se executam `node --check` aplicáveis e a validação do contrato/grants. O gate final roda a suíte completa com concorrência 2 somente depois de todo polish. Os checks usam `process.execPath`, argv explícito e spawn sem shell. Cada run grava seleção e receipts em `.graph-runs/` no repositório.
 
