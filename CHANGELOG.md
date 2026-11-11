@@ -20,6 +20,10 @@ Power Mode: cada papel sobe um degrau na família, os passos rodam em paralelo, 
 - `implemente` sem tarefa com qualquer flag de roteamento (`--power`, `--haiku-max`, `--executor`) é recusado com a mensagem apontando o `plan`.
 - `--fable-min` (desta mesma versão, nunca publicada) saiu: é recusada como opção removida. O planejador do Power Mode não tem mais piso `high` de esforço.
 
+### Fixed
+
+- **Executor do Claude com `Write` negado.** O `--allowedTools` do papel de escrita só tinha `Edit(./**)`, e essa regra não cobre `Write`: no benchmark de 11/11 (rodada 1) a primeira sessão do executor padrão e duas raias do Power Mode devolveram `BLOCKED` sem escrever nada, e a run só fechou na sessão de conserto. Agora `Write(./**)` também é liberado, preso ao cwd.
+
 ### Pendente
 
 - Benchmark Minecraft do Power Mode: as runs reais esperam o reset semanal de uso da conta (12/11 às 12h, horário de Belém; a tentativa de 10/11 bloqueou com `USAGE_LIMIT`). O plano são 5 rodadas de cada variante (padrão, `--power`, `--power max`), alternando as três a cada rodada e ajustando o graph-eng entre rodadas. As variantes e hipóteses estão em [docs/power-mode.md](docs/power-mode.md).

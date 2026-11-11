@@ -175,7 +175,8 @@ test('Claude libera escrita do executor só dentro do cwd e mantém papéis de l
   const [writer, reader] = fake.calls
   const allowed = call => call.args[call.args.indexOf('--allowedTools') + 1]
   assert.ok(writer.args.includes('--allowedTools'), 'executor sem --allowedTools tem Edit/Write negados pelo dontAsk')
-  assert.equal(allowed(writer), 'Read,Glob,Grep,Edit(./**)')
+  // Regressão (benchmark 11/11): sem Write(./**) o executor tinha todo Write negado e devolvia BLOCKED sem escrever.
+  assert.equal(allowed(writer), 'Read,Glob,Grep,Edit(./**),Write(./**)')
   assert.equal(writer.args[writer.args.indexOf('--tools') + 1], 'Read,Glob,Grep,Edit,Write')
   assert.equal(writer.options.cwd, runDir)
   assert.equal(allowed(reader), 'Read,Glob,Grep')
@@ -704,7 +705,7 @@ test('executor de escrita ganha Bash só nos comandos aprovados; leitura e papé
   const argsOf = async request => { await host.wait(await host.spawn({ prompt: 'x', schema, ...request })); const a = fake.calls.at(-1).args; return { tools: a[a.indexOf('--tools') + 1], allowed: a[a.indexOf('--allowedTools') + 1] } }
   const writer = await argsOf({ role: 'advisedExecutor', allowCommands: ['npm test', 'npm run build'] })
   assert.equal(writer.tools, 'Read,Glob,Grep,Edit,Write,Bash')
-  assert.equal(writer.allowed, 'Read,Glob,Grep,Edit(./**),Bash(npm test),Bash(npm run build)')
+  assert.equal(writer.allowed, 'Read,Glob,Grep,Edit(./**),Write(./**),Bash(npm test),Bash(npm run build)')
   assert.equal((await argsOf({ role: 'advisedExecutor', readOnly: true, allowCommands: ['npm test'] })).tools.includes('Bash'), false)
   assert.equal((await argsOf({ role: 'planReviewer', allowCommands: ['npm test'] })).tools.includes('Bash'), false)
   assert.equal((await argsOf({ role: 'advisedExecutor' })).tools, 'Read,Glob,Grep,Edit,Write')

@@ -258,14 +258,15 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const strict = wireSchema(request.schema)
     // Isolado do ambiente do usuário (MCPs, skills, settings globais): sem isso cada turno carregava ~75k tokens.
     // dontAsk nega toda ferramenta sem regra de permissão: a escrita do executor precisa de --allowedTools,
-    // e Edit(./**) (vale também para Write) a prende ao cwd do spawn.
+    // e Edit(./**) e Write(./**) a prendem ao cwd do spawn. Edit(./**) não cobre Write: no benchmark de 11/11 o executor
+    // teve todo Write negado, devolveu BLOCKED sem escrever e perdeu a sessão.
     const readTools = 'Read,Glob,Grep'
     // Laço de feedback do executor de escrita: Bash só nos comandos aprovados (o dontAsk nega qualquer outro comando).
     const shell = WRITE_SHELL_ROLES.has(role) && !readonly ? (request.allowCommands || []) : []
     const advisor = advisors[role] || null
     if (host === 'claude') return {
       role, model, readonly, schema: request.schema, wireSchema: strict,
-      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : ['Read,Glob,Grep,Edit(./**)', ...shell.map(c => `Bash(${c})`)].join(','), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
+      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : ['Read,Glob,Grep,Edit(./**),Write(./**)', ...shell.map(c => `Bash(${c})`)].join(','), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
     }
     const schemaFile = path.join(runDir, `.host-${id}.schema.json`)
     const outputFile = path.join(runDir, `.host-${id}.output.json`)
