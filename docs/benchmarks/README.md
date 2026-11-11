@@ -34,6 +34,8 @@ bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-power --power
 bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-power-max --power max
 ```
 
+Para o experimento das divisões de executor do Power Mode, `GRAPHENG_POWER_SPLIT=<medium>/<high>` (com `sonnet` ou `opus`) troca o modelo dos passos medium e high; por exemplo `GRAPHENG_POWER_SPLIT=opus/opus bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-power --power`. Sem a variável vale o padrão (Sonnet nos medium, Opus nos high). A run grava a divisão em `powerSplit` e o resumo do `bench.sh` mostra `split medium=… high=…`.
+
 Com `BENCH_SKIP_RUN=1`, o script só dá a nota do que já estiver no destino (serve para conferir o próprio corretor com o motor de referência). O smoke visual continua manual: `npm run dev` no destino e o roteiro de `acceptance.md`.
 
 Para guardar a evidência, copie o `.graph-runs/<runId>/advisor-run.json` e o `bench-acceptance.tap` para uma pasta nova em `runs/`.

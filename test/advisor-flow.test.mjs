@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { ADVISOR_MAX_CALLS, POWER_ADVISOR_MAX_CALLS, countAdvisorCalls, executorPrompt, gateCommands, powerWaves, routeSteps, runAdvisorFlow, splitCost } from '../bin/advisor-flow.mjs'
+import { ADVISOR_MAX_CALLS, POWER_ADVISOR_MAX_CALLS, countAdvisorCalls, executorPrompt, gateCommands, parsePowerSplit, powerWaves, routeSteps, runAdvisorFlow, splitCost } from '../bin/advisor-flow.mjs'
 
 async function tempDir(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'advisor-flow-'))
@@ -242,6 +242,14 @@ test('powerWaves: as ondas do plano viram raias por modelo; conflito de arquivo 
   // --haiku-max medium manda os medium para o Haiku; sem Haiku, low vai para o Sonnet.
   assert.deepEqual(powerWaves(powerPlan.steps.slice(3, 6), { haikuMax: 'medium' }), [{ wave: 1, lanes: [{ model: 'opus', steps: [1, 2] }, { model: 'haiku', steps: [3] }] }])
   assert.deepEqual(powerWaves(powerPlan.steps.slice(0, 1), { haikuMax: null }), [{ wave: 1, lanes: [{ model: 'sonnet', steps: [1] }] }])
+  // Divisão experimental: medium e high no mesmo modelo viram uma raia só; o Haiku não muda.
+  assert.deepEqual(powerWaves(powerPlan.steps.slice(3, 6), { haikuMax: 'low', medium: 'opus', high: 'opus' }), [{ wave: 1, lanes: [{ model: 'opus', steps: [1, 2, 3] }] }])
+  assert.deepEqual(powerWaves(powerPlan.steps.slice(0, 3), { haikuMax: 'low', medium: 'sonnet', high: 'sonnet' }), [{ wave: 1, lanes: [{ model: 'haiku', steps: [1, 3] }, { model: 'sonnet', steps: [2] }] }])
+  assert.deepEqual(parsePowerSplit('sonnet/sonnet'), { medium: 'sonnet', high: 'sonnet' })
+  assert.equal(parsePowerSplit(undefined), null)
+  assert.equal(parsePowerSplit(''), null)
+  assert.throws(() => parsePowerSplit('opus'), /GRAPHENG_POWER_SPLIT aceita/)
+  assert.throws(() => parsePowerSplit('opus/opus/opus'), /GRAPHENG_POWER_SPLIT aceita/)
   // Mesmo arquivo na mesma onda: o segundo passo abre a onda seguinte e a ordem dos passos não muda. ./ e \ normalizam.
   const clash = [
     { step: 'a', complexity: 'low', files: ['./src/x.js'], wave: 1 },
@@ -317,6 +325,10 @@ test('fluxo power max: --effort vale para todas as chamadas; planOnly devolve as
   assert.deepEqual(host.requests.map(r => r.effort), ['max', 'max'])
   assert.deepEqual(host.requests.map(r => r.role), ['planner', 'planReviewer'])
   assert.equal(result.routing[1].lanes[0].model, 'opus')
+  assert.equal(result.powerSplit, undefined)
+  const split = await runAdvisorFlow({ host: fakeHost({ plan: powerPlan }), cwd, task: 't', gate: GATE, runGateImpl: passing, haikuMax: 'low', power: true, planOnly: true, powerSplit: { medium: 'sonnet', high: 'sonnet' } })
+  assert.deepEqual(split.powerSplit, { medium: 'sonnet', high: 'sonnet' })
+  assert.deepEqual(split.routing[1].lanes.map(l => l.model), ['sonnet'])
   await assert.rejects(runAdvisorFlow({ host, cwd, task: 't', gate: GATE, hostName: 'codex', power: true }), /power vale só no host claude/)
   await assert.rejects(runAdvisorFlow({ host, cwd, task: 't', gate: GATE, powerMax: true }), /powerMax exige power/)
 })

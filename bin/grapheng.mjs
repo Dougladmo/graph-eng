@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createHost } from './hosts.mjs'
-import { runAdvisorFlow } from './advisor-flow.mjs'
+import { parsePowerSplit, runAdvisorFlow } from './advisor-flow.mjs'
 
 // clarify, tasks e init eram do motor de grafo, removido na 1.3.0.
 const COMMANDS = ['plan', 'implemente']
@@ -92,7 +92,7 @@ function routing(parsed, host) {
   return { executor: null, haikuMax: parsed.haikuMax ?? DEFAULT_HAIKU_MAX, ...power }
 }
 
-export async function executeGrapheng({ invocation, cwd = process.cwd(), host, advisorFlowImpl = runAdvisorFlow, hostFactory = createHost, log = () => {} } = {}) {
+export async function executeGrapheng({ invocation, cwd = process.cwd(), host, advisorFlowImpl = runAdvisorFlow, hostFactory = createHost, log = () => {}, env = process.env } = {}) {
   const trustedHost = validateHost(host)
   const parsed = parseGrapheng(invocation)
   const runId = `grapheng-${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`
@@ -115,7 +115,7 @@ export async function executeGrapheng({ invocation, cwd = process.cwd(), host, a
     host: flowHost, hostName: trustedHost, cwd, task, runDir, log,
     effort: parsed.effort ?? DEFAULT_EFFORT,
     ...(route.haikuMax ? { haikuMax: route.haikuMax } : {}),
-    ...(route.power ? { power: true, powerMax: route.powerMax } : {}),
+    ...(route.power ? { power: true, powerMax: route.powerMax, powerSplit: parsePowerSplit(env.GRAPHENG_POWER_SPLIT) } : {}),
     ...(parsed.command === 'plan' ? { planOnly: true } : {}),
     ...(planned ? { planned } : {}),
   })

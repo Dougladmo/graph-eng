@@ -14,10 +14,10 @@ async function tempDir(t) {
 }
 
 // Roda executeGrapheng com host e fluxo falsos e devolve as opções que o fluxo recebeu.
-async function run(cwd, invocation, { host = 'claude', flowResult = { flow: 'advisor', status: 'done' } } = {}) {
+async function run(cwd, invocation, { host = 'claude', flowResult = { flow: 'advisor', status: 'done' }, env = {} } = {}) {
   const seen = []
   const result = await executeGrapheng({
-    invocation, cwd, host,
+    invocation, cwd, host, env,
     hostFactory: options => ({ options }),
     advisorFlowImpl: async options => { seen.push(options); return typeof flowResult === 'function' ? flowResult(options) : flowResult },
   })
@@ -144,6 +144,12 @@ test('--power e --power max: parser, roteamento, host e plano salvo', async t =>
   const plain = (await run(cwd, ['implemente', 'x'])).options
   assert.equal(plain.power, undefined)
   assert.equal(plain.host.options.power, undefined)
+  assert.equal(plainPower.powerSplit, null)
+  // GRAPHENG_POWER_SPLIT (experimento do benchmark) troca o modelo dos medium e dos high, só no power.
+  const split = (await run(cwd, ['implemente', 'x', '--power'], { env: { GRAPHENG_POWER_SPLIT: 'opus/opus' } })).options
+  assert.deepEqual(split.powerSplit, { medium: 'opus', high: 'opus' })
+  assert.equal((await run(cwd, ['implemente', 'x'], { env: { GRAPHENG_POWER_SPLIT: 'opus/opus' } })).options.powerSplit, undefined)
+  await assert.rejects(run(cwd, ['implemente', 'x', '--power'], { env: { GRAPHENG_POWER_SPLIT: 'haiku/opus' } }), /GRAPHENG_POWER_SPLIT aceita/)
   await assert.rejects(run(cwd, ['implemente', 'x', '--power'], { host: 'codex' }), /--power vale só no host claude/)
   await run(cwd, ['plan', 'y', '--power', 'max', '--haiku-max', 'off'], { flowResult: { status: 'planned', plan: { steps: [] }, review: null } })
   const saved = JSON.parse(await readFile(path.join(cwd, SAVED_PLAN), 'utf8'))

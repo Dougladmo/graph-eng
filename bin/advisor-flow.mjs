@@ -65,11 +65,19 @@ export function routeSteps(steps, haikuMax) {
   return segments
 }
 
-// Power: Haiku até haikuMax, Opus nos high, Sonnet no resto e na complexidade inválida.
-export function powerModelFor(complexity, { haikuMax = 'low' } = {}) {
+// Power: Haiku até haikuMax, Opus nos high, Sonnet no resto e na complexidade inválida. GRAPHENG_POWER_SPLIT troca
+// o modelo dos medium e dos high (experimento do benchmark).
+export const POWER_SPLIT_MODELS = new Set(['sonnet', 'opus'])
+export function powerModelFor(complexity, { haikuMax = 'low', medium = 'sonnet', high = 'opus' } = {}) {
   const level = COMPLEXITIES.indexOf(complexity)
   if (level >= 0 && level <= COMPLEXITIES.indexOf(haikuMax)) return 'haiku'
-  return level === 2 ? 'opus' : 'sonnet'
+  return level === 2 ? high : medium
+}
+export function parsePowerSplit(text) {
+  if (text === undefined || text === null || text === '') return null
+  const [medium, high, ...rest] = String(text).split('/')
+  if (rest.length || !POWER_SPLIT_MODELS.has(medium) || !POWER_SPLIT_MODELS.has(high)) throw new Error('GRAPHENG_POWER_SPLIT aceita <medium>/<high> com sonnet ou opus, ex.: opus/opus')
+  return { medium, high }
 }
 
 const footprint = step => new Set((Array.isArray(step?.files) ? step.files : []).map(file => path.posix.normalize(String(file).trim().replace(/\\/g, '/')).replace(/^\.\//, '')).filter(file => file && file !== '.'))
@@ -257,7 +265,7 @@ A stronger advisor model is available through the advisor tool; it sees this who
 // planOnly: para depois da revisão do plano (comando plan). planned: { plan, review } de um plan anterior, que pula
 // o planner e a revisão (implemente sem tarefa). power: Power Mode; powerMax: o Fable também planeja. Todas as chamadas
 // usam o effort da run (medium por padrão, o que a Anthropic recomenda para o Fable).
-export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {}, haikuMax = null, planOnly = false, planned = null, power = false, powerMax = false } = {}) {
+export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {}, haikuMax = null, planOnly = false, planned = null, power = false, powerMax = false, powerSplit = null } = {}) {
   if (haikuMax !== null && !['low', 'medium'].includes(haikuMax)) throw new TypeError('haikuMax aceita somente low ou medium')
   if (power && hostName !== 'claude') throw new TypeError('power vale só no host claude')
   if (powerMax && !power) throw new TypeError('powerMax exige power')
@@ -278,7 +286,7 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
     }
   }
   const advisorMax = power ? POWER_ADVISOR_MAX_CALLS : ADVISOR_MAX_CALLS
-  const record = { flow: 'advisor', ...(power ? { power: true, powerMax: Boolean(powerMax) } : {}), ...(haikuMax ? { haikuMax } : {}), status: 'blocked', plan: null, review: null, sessions: [], gate: [], advisorCalls: 0, calls }
+  const record = { flow: 'advisor', ...(power ? { power: true, powerMax: Boolean(powerMax), ...(powerSplit ? { powerSplit } : {}) } : {}), ...(haikuMax ? { haikuMax } : {}), status: 'blocked', plan: null, review: null, sessions: [], gate: [], advisorCalls: 0, calls }
   const finish = async (status, reason = null) => {
     Object.assign(record, { status, ...(reason ? { feedback: { kind: 'BLOCK', reason } } : {}), engineMs: Date.now() - started, cost: splitCost(calls) })
     if (runDir) {
@@ -305,7 +313,7 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
     }
     // Rodada 1: no power, uma sessão por raia, raias da mesma onda em paralelo; roteado, um trecho por sessão, com o
     // modelo do trecho. Reparo do gate: sessão inteira no Opus (power) ou no Sonnet.
-    const waves = power ? powerWaves(record.plan.steps, { haikuMax }) : null
+    const waves = power ? powerWaves(record.plan.steps, { haikuMax, ...powerSplit }) : null
     const segments = !power && haikuMax ? routeSteps(record.plan.steps, haikuMax) : null
     if (waves) record.routing = waves
     else if (segments) record.routing = segments
