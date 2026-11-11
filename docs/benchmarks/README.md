@@ -26,10 +26,18 @@ Cada pasta tem o JSON da run (no advisor: plano, revisão, roteamento, sessões,
 
 ## Rodar de novo
 
-Cada run real gasta dinheiro da conta do Claude: peça autorização antes.
+Cada run real gasta uso da conta do Claude: peça autorização antes. O `bench.sh` faz tudo: cria o repositório, roda `implemente` com o `task.md` como tarefa e as flags que você passar, dá a nota com os 55 testes ocultos e o `npm run build`, e resume custo, tempo e sessões. Ele deixa `bench-result.json` (a run), `bench-acceptance.tap` (os testes ocultos) e `bench-build.log` no destino.
 
 ```bash
-bash test/fixtures/benchmark-minecraft/setup.sh /tmp/minecraft-bench
+bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-padrao
+bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-power --power
+bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-power-max --power --fable-min high
 ```
 
-Depois, dentro de `/tmp/minecraft-bench`, rode `/graph-eng:implemente` com o conteúdo de `task.md` como tarefa e dê a nota como descrito em `acceptance.md`.
+Com `BENCH_SKIP_RUN=1`, o script só dá a nota do que já estiver no destino (serve para conferir o próprio corretor com o motor de referência). O smoke visual continua manual: `npm run dev` no destino e o roteiro de `acceptance.md`.
+
+Para guardar a evidência, copie o `.graph-runs/<runId>/advisor-run.json` e o `bench-acceptance.tap` para uma pasta nova em `runs/`.
+
+## Power Mode (1.4)
+
+As runs com `--power` ainda não foram feitas: esperam o reset semanal de uso da conta (12/11/2026). As variantes, o que medir e as hipóteses estão em [docs/power-mode.md](../power-mode.md).

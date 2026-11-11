@@ -54,7 +54,7 @@ test('parser rejeita tarefa vazia, flags repetidas, removidas, com = e valores f
     [['implemente', 'x', '--executor', 'opus'], /sonnet ou haiku/],
     [['implemente', 'x', '--haiku-max', 'high'], /low, medium ou off/],
     [['implemente', 'x', '--haiku-max', 'low', '--executor', 'haiku'], /não combina/],
-    [['implemente', '--haiku-max', 'medium'], /passe --haiku-max ou --executor no plan/],
+    [['implemente', '--haiku-max', 'medium'], /passe --power, --fable-min, --haiku-max ou --executor no plan/],
   ]
   for (const [argv, message] of cases) assert.throws(() => parseGrapheng(argv), message, JSON.stringify(argv))
 })
@@ -96,7 +96,7 @@ test('plan só planeja e salva o plano; implemente sem tarefa executa o plano sa
   assert.equal(planned.options.planOnly, true)
   assert.equal(planned.options.haikuMax, 'medium')
   const saved = JSON.parse(await readFile(path.join(cwd, SAVED_PLAN), 'utf8'))
-  assert.deepEqual({ ...saved, runId: undefined }, { host: 'claude', task: 'faça o jogo', haikuMax: 'medium', executor: null, runId: undefined, plan, review })
+  assert.deepEqual({ ...saved, runId: undefined }, { host: 'claude', task: 'faça o jogo', haikuMax: 'medium', executor: null, power: false, fableMin: 'off', runId: undefined, plan, review })
   const { options } = await run(cwd, ['implemente', '--effort', 'low'])
   assert.equal(options.task, 'faça o jogo')
   assert.equal(options.haikuMax, 'medium')
@@ -111,6 +111,41 @@ test('plan com --executor salva o modelo fixo e implemente sem tarefa o reaplica
   const { options } = await run(cwd, ['implemente'])
   assert.equal(options.host.options.advisedExecutorModel, 'haiku')
   assert.equal(options.haikuMax, undefined)
+})
+
+// Power Mode (1.4): --power liga o modo e --fable-min high manda os passos high para o Fable 5.2; os dois só no claude.
+test('--power e --fable-min: parser, roteamento, host e plano salvo', async t => {
+  assert.deepEqual(parseGrapheng(['plan', 'x', '--power']), { command: 'plan', task: 'x', power: true })
+  assert.deepEqual(parseGrapheng(['implemente', 'x', '--power', '--fable-min', 'high']), { command: 'implemente', task: 'x', power: true, fableMin: 'high' })
+  const cases = [
+    [['plan', 'x', '--power', '--power'], /--power repetido/],
+    [['plan', 'x', '--power=on'], /--power não aceita valor/],
+    [['plan', 'x', '--fable-min', 'high'], /--fable-min exige --power/],
+    [['plan', 'x', '--power', '--fable-min', 'medium'], /high ou off/],
+    [['plan', 'x', '--power', '--executor', 'haiku'], /--power não combina com --executor/],
+    [['implemente', '--power'], /no plan/],
+  ]
+  for (const [argv, message] of cases) assert.throws(() => parseGrapheng(argv), message, JSON.stringify(argv))
+  const cwd = await tempDir(t)
+  const { options } = await run(cwd, ['implemente', 'x', '--power', '--fable-min', 'high'])
+  assert.equal(options.power, true)
+  assert.equal(options.fableMin, 'high')
+  assert.equal(options.haikuMax, 'low')
+  assert.equal(options.host.options.power, true)
+  const plain = (await run(cwd, ['implemente', 'x'])).options
+  assert.equal(plain.power, undefined)
+  assert.equal(plain.host.options.power, undefined)
+  await assert.rejects(run(cwd, ['implemente', 'x', '--power'], { host: 'codex' }), /--power vale só no host claude/)
+  await run(cwd, ['plan', 'y', '--power', '--haiku-max', 'off'], { flowResult: { status: 'planned', plan: { steps: [] }, review: null } })
+  const saved = JSON.parse(await readFile(path.join(cwd, SAVED_PLAN), 'utf8'))
+  assert.equal(saved.power, true)
+  assert.equal(saved.fableMin, 'off')
+  assert.equal(saved.haikuMax, null)
+  const again = (await run(cwd, ['implemente'])).options
+  assert.equal(again.power, true)
+  assert.equal(again.fableMin, 'off')
+  assert.equal(again.haikuMax, undefined)
+  assert.equal(again.host.options.power, true)
 })
 
 test('plan bloqueado não sobrescreve o plano salvo', async t => {

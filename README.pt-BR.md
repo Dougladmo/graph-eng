@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="estrelas"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.3.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versão 1.3.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.4.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versão 1.4.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-1d1d1f?style=flat-square" alt="licença MIT"></a>
   <a href="#comandos"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="plugin do Claude Code"></a>
   <a href="#comandos"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="plugin do Codex"></a>
@@ -49,7 +49,7 @@
 | 🧪 **Gate real** | `npm test` e `npm run build`, rodados pelo supervisor, decidem o DONE. |
 | 💰 **Mais barato e mais rápido** | Mesma nota de um agente único no modelo forte por cerca de um quarto do custo, em menos da metade do tempo ([benchmark](#benchmark)). |
 
-Versão atual: **1.3.0** · veja o [CHANGELOG](CHANGELOG.md).
+Versão atual: **1.4.0** · veja o [CHANGELOG](CHANGELOG.md). Novidade: o [Power Mode](#power-mode).
 
 ## Instalação
 
@@ -77,7 +77,7 @@ Requisitos: `node` 22 no `PATH` e um repositório com script `test` no `package.
 Cole isto no Claude Code, dentro do seu repositório, e troque a tarefa (o prompt é em inglês para funcionar em qualquer projeto):
 
 ```
-Use graph-eng 1.3 (advisor flow) for this task. First run /graph-eng:plan with it and show me the plan; after I approve, run /graph-eng:implemente with no arguments.
+Use graph-eng 1.4 (advisor flow) for this task. First run /graph-eng:plan with it and show me the plan; after I approve, run /graph-eng:implemente with no arguments.
 
 Task: <describe what you want built or changed>
 ```
@@ -116,6 +116,25 @@ flowchart TD
 
 Passos seguidos no mesmo modelo dividem uma sessão. O orçamento do advisor é compartilhado entre as sessões.
 
+## Power Mode
+
+`--power` liga o modo em que o modelo **mais forte** da família (Fable 5.2) pensa e os outros digitam em paralelo:
+
+| Papel | Padrão | Power |
+| --- | --- | --- |
+| Planejador | 📝 médio | 🔥 **mais forte**, esforço `high` |
+| Revisão do plano | 🧠 forte | 🧠 forte |
+| Advisor | 🧠 forte | 🔥 **mais forte** (6 chamadas por run, 2 por raia) |
+| Passos `high` e consertos do gate | 📝 médio | 🧠 **forte** (ou o mais forte, com `--fable-min high`) |
+| Passos `medium` | 📝 médio | 📝 médio |
+| Passos `low` | ⚙️ barato | ⚙️ barato |
+
+O plano sai em **ondas**: cada passo nomeia seus arquivos e a onda em que roda. Dentro de uma onda, os passos viram **raias** por modelo, que rodam ao mesmo tempo em arquivos diferentes; as ondas rodam em série, e o gate roda uma vez no fim. O runner confere a pegada de arquivos antes de rodar: conflito na mesma onda abre uma onda nova. Desenho completo, exemplo com o Minecraft e plano de benchmark em [docs/power-mode.md](docs/power-mode.md).
+
+```
+/graph-eng:implemente construir o clone de Minecraft descrito em task.md --power
+```
+
 ## Comandos
 
 | Comando | O que faz | Mexe no código? |
@@ -137,9 +156,11 @@ Sempre na forma separada (`--effort max`, nunca `--effort=max`).
 | --- | --- | --- | --- |
 | `--effort` | `low`, `medium`, `max` | `medium` | Esforço de raciocínio de todas as chamadas da run. |
 | `--haiku-max` | `low`, `medium`, `off` | `low` no Claude | Complexidade máxima de passo que vai para o modelo barato. `off` deixa todos os passos no médio. |
-| `--executor` | `sonnet`, `haiku` | nenhum | Um modelo para todos os passos. Desliga o roteamento e não combina com `--haiku-max`. |
+| `--executor` | `sonnet`, `haiku` | nenhum | Um modelo para todos os passos. Desliga o roteamento e não combina com `--haiku-max` nem com `--power`. |
+| `--power` | — | desligado | Liga o [Power Mode](#power-mode). |
+| `--fable-min` | `high`, `off` | `off` | Com `high`, os passos `high` vão para o modelo mais forte. Exige `--power`. |
 
-`--haiku-max` e `--executor` só existem no host Claude; no Codex o fluxo não roteia. Em `implemente` sem tarefa, o roteamento vem do plano salvo, então passe essas duas flags no `plan`.
+`--haiku-max`, `--executor`, `--power` e `--fable-min` só existem no host Claude; no Codex o fluxo não roteia. Em `implemente` sem tarefa, o roteamento vem do plano salvo, então passe essas flags no `plan`.
 
 Exemplos:
 
@@ -191,6 +212,8 @@ Cada run deixa a evidência em `.graph-runs/<runId>/advisor-run.json`: plano, re
 | 🧠 Advisor | forte | 0 (não foi chamado) |
 
 O modelo forte custou menos de 10% da run. A evidência bruta de cada run está em [docs/benchmarks/](docs/benchmarks/).
+
+**Power Mode:** as runs do Minecraft com `--power` ainda não foram feitas (esperam o reset de uso da conta). As variantes e as hipóteses estão em [docs/power-mode.md](docs/power-mode.md); para rodar, `bash test/fixtures/benchmark-minecraft/bench.sh <destino> --power`.
 
 ### Por que o motor de grafo saiu
 

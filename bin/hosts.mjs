@@ -17,6 +17,12 @@ const MODEL_BY_ROLE = {
 const ADVISOR_BY_ROLE = { claude: { advisedExecutor: 'opus' } }
 // Modelos aceitos no executor contínuo (--executor e roteamento por complexidade). O Opus fica de fora: ele já é o advisor.
 const ADVISED_EXECUTOR_MODELS = new Set(['sonnet', 'haiku'])
+// Power Mode (1.4, docs/power-mode.md): o Fable 5.2 planeja e é o advisor; o Opus revisa o plano e é o executor padrão
+// (conserto do gate). Com o Fable de advisor, o Opus entra nas raias high; o próprio Fable entra com --fable-min high.
+export const FABLE = 'claude-fable-5-2'
+const POWER_MODEL_BY_ROLE = { planner: FABLE, planReviewer: 'opus', advisedExecutor: 'opus' }
+const POWER_ADVISOR_BY_ROLE = { advisedExecutor: FABLE }
+const POWER_EXECUTOR_MODELS = new Set(['sonnet', 'haiku', 'opus', FABLE])
 const WRITE_SHELL_ROLES = new Set(['advisedExecutor'])
 // Comando de check liberado ao executor: texto exato, sem metacaractere de shell nem curinga de permissão.
 const ALLOW_COMMAND = /^[A-Za-z0-9_./@=+:,-]+( [A-Za-z0-9_./@=+:,-]+)*$/
@@ -167,6 +173,8 @@ function validateSchema(value, schema, at = '$') {
 
 function errorFromCli(host, code, message, stderr = '', extra = {}) {
   const detail = `${message}\n${stderr}`
+  // Limite de uso da conta (semanal, diário ou de sessão): a run precisa dizer isso, não um CLI_FAILED genérico.
+  if (/(weekly|daily|monthly|usage|session) limit|rate limit|limit reached|resets? (at|in) /i.test(detail)) return new HostError('USAGE_LIMIT', `${host}: limite de uso atingido (${message.trim().slice(0, 200)})`, { stderr, ...extra })
   if (/auth|login|credential|unauthorized|api key|subscription.{0,30}(disabled|access)|organization.{0,30}disabled/i.test(detail)) return new HostError('AUTH_FAILED', `${host}: autenticação falhou`, { stderr, ...extra })
   if (/model.{0,30}(not found|unavailable|unknown)|does not exist/i.test(detail)) return new HostError('MODEL_UNAVAILABLE', `${host}: modelo indisponível`, { stderr, ...extra })
   return new HostError(code, `${host}: ${message}`, { stderr, ...extra })
@@ -211,9 +219,13 @@ function samePath(left, right) { return path.resolve(left) === path.resolve(righ
  * planner e planReviewer são sempre read-only. writeScope é rejeitado até haver enforcement real. A disponibilidade
  * de modelo permanece desconhecida até o CLI executar e reportar o identificador.
  */
-export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, advisedExecutorModel = null }) {
+export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, advisedExecutorModel = null, power = false }) {
   if (!MODEL_BY_ROLE[host]) throw new TypeError(`Host desconhecido: ${host}`)
-  if (advisedExecutorModel !== null && (host !== 'claude' || !ADVISED_EXECUTOR_MODELS.has(advisedExecutorModel))) throw new TypeError('advisedExecutorModel aceita somente sonnet ou haiku, no host claude')
+  if (power && host !== 'claude') throw new TypeError('power vale só no host claude')
+  const models = power ? POWER_MODEL_BY_ROLE : MODEL_BY_ROLE[host]
+  const executorModels = power ? POWER_EXECUTOR_MODELS : ADVISED_EXECUTOR_MODELS
+  const advisors = power ? POWER_ADVISOR_BY_ROLE : ADVISOR_BY_ROLE[host] ?? {}
+  if (advisedExecutorModel !== null && (host !== 'claude' || !executorModels.has(advisedExecutorModel))) throw new TypeError(`advisedExecutorModel aceita somente ${[...executorModels].join(', ')}, no host claude`)
   if (!cwd || !runDir) throw new TypeError('cwd e runDir são obrigatórios')
   let eventSeq = 0
 
@@ -224,9 +236,9 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
   function prepare(request, id) {
     if (!request || typeof request !== 'object' || Array.isArray(request)) throw new HostError('INVALID_REQUEST', 'Solicitação inválida')
     const role = request.role
-    const model = role === 'advisedExecutor' ? request.executorModel ?? advisedExecutorModel ?? MODEL_BY_ROLE[host][role] : MODEL_BY_ROLE[host]?.[role]
-    // Roteamento por complexidade: cada trecho do plano escolhe o modelo do executor contínuo (sonnet ou haiku).
-    if (request.executorModel !== undefined && (role !== 'advisedExecutor' || host !== 'claude' || !ADVISED_EXECUTOR_MODELS.has(request.executorModel))) throw new HostError('INVALID_EXECUTOR_MODEL', 'executorModel vale só no advisedExecutor do claude, com sonnet ou haiku')
+    const model = role === 'advisedExecutor' ? request.executorModel ?? advisedExecutorModel ?? models[role] : models?.[role]
+    // Roteamento por complexidade: cada trecho ou raia do plano escolhe o modelo do executor contínuo.
+    if (request.executorModel !== undefined && (role !== 'advisedExecutor' || host !== 'claude' || !executorModels.has(request.executorModel))) throw new HostError('INVALID_EXECUTOR_MODEL', `executorModel vale só no advisedExecutor do claude, entre ${[...executorModels].join(', ')}`)
     if (!model) throw new HostError('UNKNOWN_ROLE', `Papel desconhecido: ${request.role}`)
     if (request.model && request.model !== model) throw new HostError('MODEL_MISMATCH', `Modelo do papel ${request.role} deve ser ${model}`)
     if (typeof request.prompt !== 'string' || !request.prompt.trim()) throw new HostError('INVALID_PROMPT', 'prompt deve ser texto não vazio')
@@ -248,7 +260,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const readTools = 'Read,Glob,Grep'
     // Laço de feedback do executor de escrita: Bash só nos comandos aprovados (o dontAsk nega qualquer outro comando).
     const shell = WRITE_SHELL_ROLES.has(role) && !readonly ? (request.allowCommands || []) : []
-    const advisor = ADVISOR_BY_ROLE[host]?.[role] || null
+    const advisor = advisors[role] || null
     if (host === 'claude') return {
       role, model, readonly, schema: request.schema, wireSchema: strict,
       command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : ['Read,Glob,Grep,Edit(./**)', ...shell.map(c => `Bash(${c})`)].join(','), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
@@ -263,7 +275,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const readOnlyEnforcement = host === 'claude'
       ? 'Claude Code usa permission-mode dontAsk e limita as ferramentas a Read, Glob e Grep; não oferece ferramenta de escrita nem shell. Papéis de escrita só gravam dentro do cwd (Edit(./**)).'
       : readOnlyEnforced ? 'Codex CLI usa -s read-only para restringir gravações no sandbox do sistema de arquivos.' : null
-    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(MODEL_BY_ROLE[host]), structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex' }
+    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(models), power, structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex' }
   }
 
   async function spawnRequest(request) {

@@ -1,6 +1,6 @@
 ---
 description: Monta e revisa o plano do graph-eng (passos, complexidade e quem executa cada um), sem tocar no código.
-argument-hint: "<tarefa> [--effort low|medium|max] [--haiku-max low|medium|off] [--executor sonnet|haiku]"
+argument-hint: "<tarefa> [--effort low|medium|max] [--haiku-max low|medium|off] [--executor sonnet|haiku] [--power] [--fable-min high|off]"
 ---
 
 Crie um arquivo JSON temporário por ferramenta de arquivo com `{"host":"claude","argv":["plan", ...]}`.
@@ -8,9 +8,9 @@ Crie um arquivo JSON temporário por ferramenta de arquivo com `{"host":"claude"
 Monte `argv` assim:
 
 1. O segundo elemento é o texto de `$ARGUMENTS` inteiro como um único valor de texto JSON, com aspas e barras escapadas. Não divida, não interprete e não acrescente nada.
-2. Se `$ARGUMENTS` contiver `--effort <valor>`, `--haiku-max <valor>` ou `--executor <valor>`, separe cada par em dois elementos (ex.: `"--effort"` e `"<valor>"`) e mantenha o restante da tarefa como um único elemento.
+2. Se `$ARGUMENTS` contiver `--effort <valor>`, `--haiku-max <valor>`, `--executor <valor>` ou `--fable-min <valor>`, separe cada par em dois elementos (ex.: `"--effort"` e `"<valor>"`) e mantenha o restante da tarefa como um único elemento. `--power` não tem valor: vira um elemento só.
 3. Se a tarefa começar com hífen, coloque `"--"` antes dela.
 
 Depois rode `node "${CLAUDE_PLUGIN_ROOT}/bin/grapheng.mjs" --invocation <caminho-do-json>`. Passe o caminho como argumento separado e nunca concatene conteúdo variável no comando.
 
-Com `"status":"planned"`, mostre o plano de forma curta: objetivo, cada passo com a complexidade (`low`, `medium` ou `high`), o modelo que vai executá-lo (campo `routing`), os critérios de pronto e as notas da revisão. Diga que o plano ficou salvo em `.graph-runs/advisor-plan.json` e que `/graph-eng:implemente` sem tarefa executa esse plano. Se vier `"status":"blocked"`, mostre o motivo exato sem tratá-lo como sucesso. Não escolha modelo nem limite: quem define isso é o runner.
+Com `"status":"planned"`, mostre o plano de forma curta: objetivo, cada passo com a complexidade (`low`, `medium` ou `high`), o modelo que vai executá-lo (campo `routing`), os critérios de pronto e as notas da revisão. Com `--power`, o `routing` é uma lista de ondas, cada uma com as raias (modelo e passos) que rodam em paralelo: mostre onda por onda, com os arquivos de cada passo. Diga que o plano ficou salvo em `.graph-runs/advisor-plan.json` e que `/graph-eng:implemente` sem tarefa executa esse plano. Se vier `"status":"blocked"`, mostre o motivo exato sem tratá-lo como sucesso. Não escolha modelo nem limite: quem define isso é o runner.

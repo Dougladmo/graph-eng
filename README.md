@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="stars"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.3.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="version 1.3.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.4.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="version 1.4.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat-square" alt="MIT license"></a>
   <a href="#commands"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="Claude Code plugin"></a>
   <a href="#commands"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="Codex plugin"></a>
@@ -49,7 +49,7 @@
 | 🧪 **Real gate** | `npm test` and `npm run build`, run by the supervisor, decide DONE. |
 | 💰 **Cheaper and faster** | Same grade as a single strong-model agent for about a quarter of the cost, in less than half the time ([benchmark](#benchmark)). |
 
-Current version: **1.3.0** · see the [CHANGELOG](CHANGELOG.md).
+Current version: **1.4.0** · see the [CHANGELOG](CHANGELOG.md). New: [Power Mode](#power-mode).
 
 ## Installation
 
@@ -77,7 +77,7 @@ Requirements: `node` 22 on the `PATH`, and a repository with a `test` script in 
 Paste this into Claude Code, inside your repository, and swap in your task:
 
 ```
-Use graph-eng 1.3 (advisor flow) for this task. First run /graph-eng:plan with it and show me the plan; after I approve, run /graph-eng:implemente with no arguments.
+Use graph-eng 1.4 (advisor flow) for this task. First run /graph-eng:plan with it and show me the plan; after I approve, run /graph-eng:implemente with no arguments.
 
 Task: <describe what you want built or changed>
 ```
@@ -116,6 +116,25 @@ flowchart TD
 
 Consecutive steps on the same model share one session. The advisor budget is shared across sessions.
 
+## Power Mode
+
+`--power` turns on the mode where the **strongest** model of the family (Fable 5.2) thinks and the others type, in parallel:
+
+| Role | Default | Power |
+| --- | --- | --- |
+| Planner | 📝 mid | 🔥 **strongest**, `high` effort |
+| Plan review | 🧠 strong | 🧠 strong |
+| Advisor | 🧠 strong | 🔥 **strongest** (6 calls per run, 2 per lane) |
+| `high` steps and gate repairs | 📝 mid | 🧠 **strong** (or the strongest, with `--fable-min high`) |
+| `medium` steps | 📝 mid | 📝 mid |
+| `low` steps | ⚙️ cheap | ⚙️ cheap |
+
+The plan comes out in **waves**: each step names its files and the wave it runs in. Inside a wave, the steps become **lanes** by model, which run at the same time on different files; waves run in order, and the gate runs once at the end. The runner checks the file footprint before running: a clash inside a wave opens a new wave. The complete design, the Minecraft example and the benchmark plan are in [docs/power-mode.md](docs/power-mode.md) (Portuguese).
+
+```
+/graph-eng:implemente build the Minecraft clone described in task.md --power
+```
+
 ## Commands
 
 | Command | What it does | Touches code? |
@@ -137,9 +156,11 @@ Always in the separated form (`--effort max`, never `--effort=max`).
 | --- | --- | --- | --- |
 | `--effort` | `low`, `medium`, `max` | `medium` | Reasoning effort for every call in the run. |
 | `--haiku-max` | `low`, `medium`, `off` | `low` on Claude | Highest step complexity that goes to the cheap model. `off` keeps every step on the mid model. |
-| `--executor` | `sonnet`, `haiku` | none | One model for every step. Turns routing off and does not combine with `--haiku-max`. |
+| `--executor` | `sonnet`, `haiku` | none | One model for every step. Turns routing off and does not combine with `--haiku-max` or `--power`. |
+| `--power` | — | off | Turns on [Power Mode](#power-mode). |
+| `--fable-min` | `high`, `off` | `off` | With `high`, the `high` steps go to the strongest model. Requires `--power`. |
 
-`--haiku-max` and `--executor` only exist on the Claude host; on Codex the flow does not route. With `implemente` and no task, routing comes from the saved plan, so pass these two flags to `plan`.
+`--haiku-max`, `--executor`, `--power` and `--fable-min` only exist on the Claude host; on Codex the flow does not route. With `implemente` and no task, routing comes from the saved plan, so pass these flags to `plan`.
 
 Examples:
 
@@ -191,6 +212,8 @@ Every run leaves its evidence in `.graph-runs/<runId>/advisor-run.json`: plan, r
 | 🧠 Advisor | strong | 0 (not called) |
 
 The strong model cost under 10% of the run. Raw evidence for every run is in [docs/benchmarks/](docs/benchmarks/).
+
+**Power Mode:** the Minecraft runs with `--power` have not been done yet (they wait for the account's usage reset). The variants and hypotheses are in [docs/power-mode.md](docs/power-mode.md); to run one, `bash test/fixtures/benchmark-minecraft/bench.sh <dest> --power`.
 
 ### Why the graph engine was removed
 
