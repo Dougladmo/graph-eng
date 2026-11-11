@@ -15,7 +15,7 @@ Os agentes recebem só `workspace/` (com `task.md`, que é o prompt). O resto fi
 1. Copie o repositório sem `node_modules`, `.git` e `.graph-runs`, ponha o teste oculto em `acc/` sem o `.txt` e rode
    `node --test --test-concurrency=2 test/*.test.ts acc/*.test.ts`.
 2. `npx tsc --noEmit` (tipos estritos) e `npm run build` no repositório.
-3. Smoke visual: `npm run dev`, abrir no navegador, começar, andar, esquivar, atacar um hollow (leve, combo, pesado,
+3. Smoke visual: `npm run dev`, abrir no navegador, conferir a ambientação (árvores, folhas caindo, pedras, grama, cavaleiro com armadura, espada e escudo, minotauro), começar, andar, esquivar, atacar um hollow (leve, combo, pesado,
    salto), guardar, usar o frasco, lock-on, descansar na fogueira, atravessar a névoa e lutar com o chefe. Anotar o
    que funciona e os erros do console.
 4. Qualidade do código: tamanho e estrutura do `src/`, maior função, comentários, `any`/casts, cobertura da spec de

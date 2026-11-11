@@ -380,18 +380,38 @@ type GameState = {
 - O `move` enviado ao motor é relativo à câmera: W anda para onde a câmera olha.
 
 ### Personagens e cenário (sem asset externo)
-- Jogador: cápsula com uma espada (caixa fina) presa a um pivô no ombro. A espada gira com o `t` da ação: arco
-  horizontal no leve, de cima para baixo no pesado e no ataque em salto, brilho no riposte. O corpo inclina na
-  esquiva e sobe `y` no salto. Guarda levanta a espada na frente.
-- Hollows: cápsulas cinzentas e corcundas com uma lâmina; o chefe ("Sentinela da Névoa") é uma cápsula de 2.6 m
-  com chifres e um martelo, mais escura; na fase 2 ganha emissão vermelha. `windup` inclina para trás, `attack`
-  desce a arma, `stagger` cambaleia, `dead` tomba e some em 2 s.
-- Pátio: chão de pedra com textura procedural (canvas), quatro pilares, muros nas bordas do `rect`, a fogueira
+Quero o visual de um souls-like, não um protótipo de cápsulas: tudo montado com primitivas do three.js (caixas,
+cápsulas, esferas, cones, cilindros, icosaedros), materiais `MeshStandardMaterial` com cor e rugosidade, texturas
+procedurais em canvas. Leve o suficiente para 60 fps num laptop: `InstancedMesh` para o que se repete (pedras,
+tufos, folhas), no máximo umas 200 malhas vivas, sombra só nos personagens e nas árvores.
+
+- Jogador: um cavaleiro. Corpo em cápsula com peitoral e ombreiras de metal escuro (caixas e esferas achatadas),
+  elmo com viseira (cone ou cilindro com fenda), cinto, botas e uma capa curta (plano que balança um pouco ao
+  andar). Espada longa (lâmina fina clara, guarda e punho) presa a um pivô no ombro direito e um escudo redondo
+  (cilindro achatado) no braço esquerdo. A espada gira com o `t` da ação: arco horizontal no leve, de cima para
+  baixo no pesado e no ataque em salto, brilho no riposte. O corpo inclina na esquiva e sobe `y` no salto. A guarda
+  levanta o escudo na frente.
+- Hollows: humanoides magros e corcundas (tronco fino, cabeça pequena, braços compridos) em cinza e trapos escuros,
+  com uma lâmina enferrujada; olhos com leve emissão. `windup` inclina para trás, `attack` desce a arma, `stagger`
+  cambaleia, `dead` tomba e some em 2 s.
+- Chefe: um minotauro ("Minotauro da Névoa"), 2.6 m: tronco largo e peludo (cápsula escura), cabeça de touro com
+  focinho e dois chifres grandes (cones curvos ou cones inclinados), pernas grossas, machado de duas mãos (haste
+  comprida e lâmina larga); olhos com emissão âmbar. Na fase 2 a emissão vira vermelha e sai vapor das narinas
+  (partículas). Mesmos estados dos hollows (`windup`, `attack`, `stagger`, `dead`), com a investida abaixando a
+  cabeça e os chifres na frente.
+- Pátio (ambientação): chão de pedra com textura procedural (canvas) e manchas de terra e grama; tufos de grama
+  baixos (planos cruzados, `InstancedMesh`); pedras soltas de tamanhos variados (icosaedros achatados,
+  `InstancedMesh`) espalhadas e encostadas nos muros; entre 6 e 10 árvores de outono nos cantos e atrás dos muros
+  (tronco cônico com dois ou três galhos, copa em esferas ou cones de folhas alaranjadas e marrons); folhas caindo
+  devagar (partículas) sobre o pátio; muros de pedra com musgo nas bordas do `rect`, quatro pilares, a fogueira
   (espada fincada em brasas, luz pontual tremulante e partículas subindo) e a porta de névoa (plano semitransparente
-  com névoa animada entre dois batentes, em `FOG_GATE`).
-- Sala do chefe: círculo de pedra com muro ao redor, mais escura, com neblina e tochas nos muros (luzes pontuais).
+  com névoa animada entre dois batentes de pedra, em `FOG_GATE`). Céu escuro de fim de tarde com neblina ao longe
+  (`scene.fog`) e uma lua ou brilho fraco no horizonte.
+- Sala do chefe: círculo de pedra com muro de rocha ao redor, mais escura, raízes e galhos secos atravessando o
+  muro, ossos e crânios (esferas e cilindros claros) espalhados no chão, neblina e tochas nos muros (luzes
+  pontuais).
 - Rastro de sangue: marca luminosa no chão onde o jogador morreu, só na sala do rastro.
-- Luz: ambiente + direcional; sombras nos personagens.
+- Luz: ambiente + direcional (sol baixo, alaranjado); sombras nos personagens e nas árvores.
 
 ### Controles
 - WASD anda (relativo à câmera); Shift segurado corre; Espaço esquiva (ou passo atrás parado); F pula.

@@ -43,8 +43,9 @@ Para guardar a evidência, copie o `.graph-runs/<runId>/advisor-run.json` e o `b
 ## Cenário 2: souls-like (ASHEN GATE)
 
 Um MVP de souls-like em TypeScript estrito, React, three.js e motion, a partir do esqueleto em
-[`test/fixtures/benchmark-soulslike/`](../../test/fixtures/benchmark-soulslike/): pátio com fogueira, três hollows,
-porta de névoa e sala de chefe com duas fases; estamina, esquiva com i-frames, combo leve, pesado, ataque em salto,
+[`test/fixtures/benchmark-soulslike/`](../../test/fixtures/benchmark-soulslike/): pátio ambientado (árvores de outono,
+folhas caindo, pedras, grama, muros com musgo) com fogueira, três hollows, porta de névoa e sala de um minotauro
+com duas fases; o jogador é um cavaleiro com armadura, espada e escudo; estamina, esquiva com i-frames, combo leve, pesado, ataque em salto,
 guarda com contra-ataque, poise, riposte, frasco, lock-on, morte com rastro de runas. O motor é puro
 (`src/engine/`) e testado com `node --test` em `.ts`; o `task.md` fixa o contrato de cada módulo com constantes e
 regras exatas. A nota vem de:
@@ -63,6 +64,18 @@ bash test/fixtures/benchmark-soulslike/bench.sh /tmp/souls-padrao
 bash test/fixtures/benchmark-soulslike/bench.sh /tmp/souls-power --power
 bash test/fixtures/benchmark-soulslike/bench.sh /tmp/souls-power-max --power max
 ```
+
+## Power Mode (1.4): souls-like com ambientação, segunda rodada
+
+Depois da primeira rodada, o `task.md` ganhou a seção visual pedida (árvores, folhas, pedras, grama, cavaleiro com armadura, capa, espada e escudo, chefe minotauro) e fixou o hash da seed, o mulberry32 e a estamina do inimigo. Mesmo motor, mesmos 66 ocultos, uma run de cada no código `d6af277`, as duas do Power Mode com `GRAPHENG_POWER_SPLIT=sonnet/sonnet`. Evidência, capturas e análise em [`runs/soulslike-20261111-ambientacao/`](runs/soulslike-20261111-ambientacao/) ([`qualidade.md`](runs/soulslike-20261111-ambientacao/qualidade.md)).
+
+| Variante | Status | Ocultos (66) | Custo | Tempo | Sessões perdidas / conserto | Linhas | Spec UI (37) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| padrão | done | 65/66 | US$ 2,04 | 641 s | 0 / 0 | 2767 | 33 |
+| `--power` | done | 66/66 | US$ 3,37 | 856 s | 0 / 0 | 3621 | 35 |
+| `--power max` | done | 66/66 | US$ 4,12 | 913 s | 0 / 0 | 3752 | 36 |
+
+Nesta rodada o Power Mode passou tudo e a padrão perdeu um teste (o contrário da primeira rodada, então a diferença de um teste é variação entre runs, não efeito do modo). As oito raias devolveram `DONE` sem conserto. O Power Mode custou 1,7 e 2,0 vezes o padrão, levou 1,3 e 1,4 vezes o tempo, e escreveu 30 a 36 % mais código, quase todo cenário a mais (2 e 3 itens a mais da spec de interface, funções mais longas menores, 2,3 vezes mais comentários). Somando as duas rodadas do souls-like às cinco do Minecraft: o Power Mode nunca foi mais barato nem mais rápido; na nota e nas features fica igual ou um pouco acima; na robustez, só o `--power max` com o médio nos executores entregou sempre sem conserto.
 
 ## Power Mode (1.4): souls-like, uma run de cada variante
 
