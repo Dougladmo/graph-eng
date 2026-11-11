@@ -1,0 +1,981 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { hashSeed, createRng, randomStep } from '../src/engine/rng.ts'
+import { add, sub, scale, dot, length, distance, normalize, yawOf, fromYaw, yawTo, yawDelta, turnTowards, withinArc } from '../src/engine/vec.ts'
+import {
+  PLAYER_MAX_HP, PLAYER_MAX_STAMINA, PLAYER_MAX_POISE, STAMINA_REGEN, STAMINA_REGEN_DELAY, SPRINT_COST, POISE_DECAY,
+  FLASK_MAX, FLASK_HEAL, WALK_SPEED, SPRINT_SPEED, GUARD_SPEED,
+  createVitals, createPlayerVitals, canAct, spendStamina, regen, takeDamage, heal,
+} from '../src/engine/stats.ts'
+import { ATTACKS, ROLL, JUMP, FLASK, RIPOSTE, GUARD, STAGGER, LIGHT_COMBO_START } from '../src/engine/attacks.ts'
+import { IDLE_ACTION, createPlayer, stepPlayer, isInvulnerable, activeAttack } from '../src/engine/player.ts'
+import type { Player, PlayerInput } from '../src/engine/player.ts'
+import {
+  ENEMY_PROFILES, ENEMY_ATTACKS, CHARGE_SPEED, TRACK_RATE, BOSS_PHASE2_HP, PHASE2_SPEED, PHASE2_WINDUP, CHARGE_DISTANCE,
+  createEnemy, respawnEnemy, enemyRadius, stepEnemy,
+} from '../src/engine/enemies.ts'
+import type { Enemy } from '../src/engine/enemies.ts'
+import {
+  COURTYARD, BOSS_ROOM, BONFIRE, START_POS, FOG_GATE, BOSS_ROOM_ENTRY, BOSS_SPAWN, HOLLOW_SPAWNS,
+  INTERACT_RANGE, LOCK_RANGE, PLAYER_RADIUS, getRoom, pushOut, resolveRoom,
+} from '../src/engine/arena.ts'
+import { createGame, stepGame, IDLE_INPUT, DEATH_DELAY, RUNES_PICKUP_RANGE } from '../src/engine/game.ts'
+import type { GameState, Input } from '../src/engine/game.ts'
+
+const DT = 0.05
+const idle: PlayerInput = { move: { x: 0, z: 0 }, sprint: false, roll: false, jump: false, light: false, heavy: false, guard: false, flask: false }
+const ctx = { targetPos: null, room: COURTYARD }
+const near = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} ≠ ${b}`)
+const nearVec = (a: { x: number; z: number }, b: { x: number; z: number }, eps = 1e-6) => { near(a.x, b.x, eps); near(a.z, b.z, eps) }
+const run = (p: Player, input: PlayerInput, n: number, c = ctx) => { for (let i = 0; i < n; i++) p = stepPlayer(p, input, DT, c); return p }
+const press = (p: Player, input: Partial<PlayerInput>, c = ctx) => stepPlayer(p, { ...idle, ...input }, DT, c)
+const target = { pos: { x: 0, z: 0 }, alive: true }
+const runEnemy = (e: Enemy, n: number, t = target, rng = 1, room = COURTYARD) => { for (let i = 0; i < n; i++) e = stepEnemy(e, t, DT, rng, room).enemy; return e }
+const play = (g: GameState, input: Partial<Input>) => stepGame(g, { ...IDLE_INPUT, ...input }, DT)
+const playN = (g: GameState, input: Partial<Input>, n: number) => { for (let i = 0; i < n; i++) g = play(g, input); return g }
+const started = (seed = 'seed') => play(createGame(seed), { interact: true })
+const enemy = (g: GameState, id: number) => { const e = g.enemies.find(x => x.id === id); assert.ok(e, `inimigo ${id}`); return e }
+const events = (g: GameState, type: string) => g.events.filter(e => e.type === type)
+const withPlayer = (g: GameState, patch: Partial<Player>): GameState => ({ ...g, player: { ...g.player, ...patch } })
+const withEnemy = (g: GameState, id: number, patch: Partial<Enemy>): GameState => ({ ...g, enemies: g.enemies.map(e => (e.id === id ? { ...e, ...patch } : e)) })
+const between = (n: number, lo: number, hi: number) => assert.ok(n >= lo && n <= hi, `${n} fora de [${lo}, ${hi}]`)
+const untilPlayer = (p: Player, input: PlayerInput, pred: (p: Player) => boolean, max: number, c = ctx) => {
+  let n = 0
+  while (!pred(p) && n < max) { p = stepPlayer(p, input, DT, c); n++ }
+  return { p, n }
+}
+const untilEnemy = (e: Enemy, pred: (e: Enemy) => boolean, max: number, t = target, rng = 1, room = COURTYARD) => {
+  let n = 0
+  while (!pred(e) && n < max) { e = stepEnemy(e, t, DT, rng, room).enemy; n++ }
+  return { e, n }
+}
+const untilGame = (g: GameState, input: Partial<Input>, pred: (g: GameState) => boolean, max: number) => {
+  let n = 0
+  while (!pred(g) && n < max) { g = play(g, input); n++ }
+  return { g, n }
+}
+const deadAction = { ...IDLE_ACTION, kind: 'dead' as const }
+const staggerAction = { ...IDLE_ACTION, kind: 'stagger' as const }
+
+test('rng: hashSeed é FNV-1a de 32 bits sobre o texto e trata número como texto', () => {
+  assert.equal(hashSeed('abc'), 440920331)
+  assert.equal(hashSeed(42), hashSeed('42'))
+  assert.equal(hashSeed('seed'), 1346747564)
+})
+
+test('rng: randomStep é o mulberry32 e createRng encadeia o estado', () => {
+  assert.deepEqual(randomStep(0), { value: 0.26642920868471265, next: 1831565813 })
+  const first = randomStep(hashSeed('seed'))
+  near(first.value, 0.9498909888789058, 1e-15)
+  const r = createRng('seed')
+  near(r(), first.value, 1e-15)
+  near(r(), randomStep(first.next).value, 1e-15)
+})
+
+test('vec: aritmética básica e normalize do vetor nulo', () => {
+  assert.deepEqual(add({ x: 1, z: 2 }, { x: 3, z: -5 }), { x: 4, z: -3 })
+  assert.deepEqual(sub({ x: 1, z: 2 }, { x: 3, z: -5 }), { x: -2, z: 7 })
+  assert.deepEqual(scale({ x: 1, z: -2 }, 3), { x: 3, z: -6 })
+  assert.equal(dot({ x: 1, z: 2 }, { x: 3, z: 4 }), 11)
+  assert.equal(length({ x: 3, z: 4 }), 5)
+  assert.equal(distance({ x: 1, z: 1 }, { x: 4, z: 5 }), 5)
+  nearVec(normalize({ x: 0, z: -2 }), { x: 0, z: -1 })
+  assert.deepEqual(normalize({ x: 0, z: 0 }), { x: 0, z: 0 })
+})
+
+test('vec: yawOf e fromYaw são inversos, yawTo aponta de um ponto ao outro', () => {
+  for (const yaw of [0, 0.7, Math.PI / 2, -2.5]) near(yawOf(fromYaw(yaw)), yaw)
+  near(yawOf({ x: 1, z: 0 }), Math.PI / 2)
+  near(yawOf({ x: 0, z: -1 }), Math.PI)
+  near(yawTo({ x: 1, z: 1 }, { x: 1, z: 5 }), 0)
+  near(yawTo({ x: 0, z: 0 }, { x: -3, z: 0 }), -Math.PI / 2)
+})
+
+test('vec: yawDelta fica em (−π, π] e turnTowards limita o giro', () => {
+  near(yawDelta(3, -3), 0.28318530717958623)
+  near(yawDelta(-3, 3), -0.28318530717958623)
+  near(yawDelta(0, Math.PI), Math.PI)
+  near(turnTowards(0, 1, 0.25), 0.25)
+  near(turnTowards(0, -1, 0.25), -0.25)
+  near(turnTowards(0, 0.1, 0.25), 0.1)
+  near(turnTowards(3, -3, 0.1), 3.1)
+})
+
+test('vec: withinArc aceita o próprio ponto e respeita a borda do ângulo', () => {
+  assert.equal(withinArc({ x: 1, z: 1 }, 2, { x: 1, z: 1 }, 0, 10), true)
+  const at = (deg: number) => ({ x: Math.sin((deg * Math.PI) / 180), z: Math.cos((deg * Math.PI) / 180) })
+  assert.equal(withinArc({ x: 0, z: 0 }, 0, at(44.9), 1.5, 90), true)
+  assert.equal(withinArc({ x: 0, z: 0 }, 0, at(-44.9), 1.5, 90), true)
+  assert.equal(withinArc({ x: 0, z: 0 }, 0, at(45.1), 1.5, 90), false)
+  assert.equal(withinArc({ x: 0, z: 0 }, Math.PI, at(180), 1.5, 90), true)
+  assert.equal(withinArc({ x: 0, z: 0 }, 0, at(0), 0.99, 360), false)
+})
+
+test('stats: constantes e vitais iniciais', () => {
+  assert.deepEqual([PLAYER_MAX_HP, PLAYER_MAX_STAMINA, PLAYER_MAX_POISE, STAMINA_REGEN, STAMINA_REGEN_DELAY], [400, 100, 40, 25, 0.6])
+  assert.deepEqual([SPRINT_COST, POISE_DECAY, FLASK_MAX, FLASK_HEAL, WALK_SPEED, SPRINT_SPEED, GUARD_SPEED], [12, 15, 3, 180, 4, 6.5, 2])
+  assert.deepEqual(createVitals(120, 0, 30), { hp: 120, maxHp: 120, stamina: 0, maxStamina: 0, poise: 0, maxPoise: 30, regenDelay: 0 })
+  assert.deepEqual(createPlayerVitals(), { hp: 400, maxHp: 400, stamina: 100, maxStamina: 100, poise: 0, maxPoise: 40, regenDelay: 0 })
+})
+
+test('stats: estamina não fica negativa e canAct exige estamina', () => {
+  const v = spendStamina(createPlayerVitals(), 130)
+  assert.equal(v.stamina, 0)
+  assert.equal(v.regenDelay, STAMINA_REGEN_DELAY)
+  assert.equal(canAct(v), false)
+  assert.equal(canAct({ ...v, stamina: 0.1 }), true)
+})
+
+test('stats: a regeneração espera o atraso, respeita o teto e o poise decai sempre', () => {
+  let v = { ...spendStamina(createPlayerVitals(), 50), poise: 30 }
+  v = regen(v, 0.4, true)
+  assert.equal(v.stamina, 50)
+  near(v.regenDelay, 0.2)
+  near(v.poise, 24)
+  v = regen(v, 0.2, true)
+  assert.equal(v.regenDelay, 0)
+  near(v.stamina, 55)
+  near(v.poise, 21)
+  v = regen(v, 1, true)
+  near(v.stamina, 80)
+  near(v.poise, 6)
+  assert.equal(regen({ ...v, stamina: 95 }, 1, true).stamina, 100)
+  const blocked = regen({ ...spendStamina(createPlayerVitals(), 50), poise: 30 }, 1, false)
+  assert.equal(blocked.stamina, 50)
+  assert.equal(blocked.regenDelay, STAMINA_REGEN_DELAY)
+  near(blocked.poise, 15)
+})
+test('stats: takeDamage acumula poise até quebrar e a vida para em zero', () => {
+  const v = createPlayerVitals()
+  const first = takeDamage(v, 100, 20)
+  assert.equal(first.broke, false)
+  assert.equal(first.vitals.hp, 300)
+  assert.equal(first.vitals.poise, 20)
+  const second = takeDamage(first.vitals, 500, 20)
+  assert.equal(second.broke, true)
+  assert.equal(second.vitals.hp, 0)
+  assert.equal(second.vitals.poise, 0)
+  assert.equal(heal({ ...v, hp: 300 }, 180).hp, 400)
+  assert.equal(heal({ ...v, hp: 100 }, 180).hp, 280)
+})
+
+test('attacks: a tabela de perfis e as constantes das ações', () => {
+  assert.deepEqual(ATTACKS.light1, { duration: 0.55, hitStart: 0.2, hitEnd: 0.3, damage: 45, poiseDamage: 10, range: 1.8, arcDeg: 100, stamina: 20, lunge: 0.6 })
+  assert.deepEqual(ATTACKS.light2, { duration: 0.6, hitStart: 0.22, hitEnd: 0.32, damage: 55, poiseDamage: 12, range: 1.8, arcDeg: 110, stamina: 20, lunge: 0.8 })
+  assert.deepEqual(ATTACKS.heavy, { duration: 1.0, hitStart: 0.45, hitEnd: 0.6, damage: 90, poiseDamage: 25, range: 2.2, arcDeg: 120, stamina: 35, lunge: 0.5 })
+  assert.deepEqual(ATTACKS.jumpAttack, { duration: 0.6, hitStart: 0.25, hitEnd: 0.35, damage: 110, poiseDamage: 30, range: 2.0, arcDeg: 120, stamina: 30, lunge: 0 })
+  assert.deepEqual(ROLL, { duration: 0.6, iframeStart: 0.08, iframeEnd: 0.4, moveTime: 0.45, speed: 7, stamina: 25 })
+  assert.deepEqual(JUMP, { duration: 0.7, height: 1.2, stamina: 10, attackWindow: 0.45 })
+  assert.deepEqual(FLASK, { duration: 1.2, healAt: 0.8 })
+  assert.deepEqual(RIPOSTE, { damage: 200, duration: 0.9, range: 2.0, arcDeg: 90 })
+  assert.deepEqual(GUARD, { damageFactor: 0.3, staminaFactor: 0.5, arcDeg: 180, counterWindow: 0.5, counterDamage: 1.5, counterPoise: 2 })
+  assert.deepEqual(STAGGER, { player: 1.0, hollow: 1.5, boss: 2.0 })
+  assert.equal(LIGHT_COMBO_START, 0.35)
+})
+
+test('jogador: createPlayer parte parado, com três frascos e sem alvo', () => {
+  const p = createPlayer({ x: 1, z: 2 }, 0.5)
+  assert.deepEqual(p.pos, { x: 1, z: 2 })
+  assert.equal(p.yaw, 0.5)
+  assert.equal(p.y, 0)
+  assert.equal(p.flasks, 3)
+  assert.deepEqual(p.action, IDLE_ACTION)
+  assert.deepEqual([p.guarding, p.sprinting, p.lockOn, p.guardCounter], [false, false, null, 0])
+  assert.deepEqual(p.vitals, createPlayerVitals())
+})
+
+test('jogador: anda a 4 m/s na direção de move (normalizada) e vira para ela', () => {
+  let p = createPlayer({ x: 0, z: 0 }, 0)
+  p = run(p, { ...idle, move: { x: 3, z: 0 } }, 10)
+  nearVec(p.pos, { x: 2, z: 0 })
+  near(p.yaw, Math.PI / 2)
+  p = run(createPlayer({ x: 0, z: 0 }, 0), { ...idle, move: { x: 1, z: 1 } }, 10)
+  near(distance(p.pos, { x: 0, z: 0 }), 2)
+  near(p.yaw, Math.PI / 4)
+  assert.equal(p.vitals.stamina, 100)
+})
+
+test('jogador: correr anda a 6.5 m/s, gasta 12 de estamina por segundo e não regenera', () => {
+  let p = createPlayer({ x: 0, z: 0 }, 0)
+  p = run(p, { ...idle, move: { x: 0, z: 1 }, sprint: true }, 20)
+  assert.equal(p.sprinting, true)
+  near(p.pos.z, 6.5)
+  near(p.vitals.stamina, 88)
+  const still = press(createPlayer({ x: 0, z: 0 }, 0), { sprint: true })
+  assert.equal(still.sprinting, false)
+  assert.equal(still.vitals.stamina, 100)
+})
+
+test('jogador: guardar anda a 2 m/s e vence a corrida', () => {
+  let p = createPlayer({ x: 0, z: 0 }, 0)
+  p = run(p, { ...idle, move: { x: 0, z: 1 }, guard: true, sprint: true }, 10)
+  assert.equal(p.guarding, true)
+  assert.equal(p.sprinting, false)
+  near(p.pos.z, 1)
+  assert.equal(p.vitals.stamina, 100)
+  assert.equal(press(p, {}).guarding, false)
+})
+
+test('jogador: esquiva parado é um passo atrás e vira o jogador', () => {
+  let p = createPlayer({ x: 0, z: 0 }, 0)
+  p = press(p, { roll: true })
+  assert.equal(p.action.kind, 'roll')
+  assert.equal(p.action.t, 0)
+  nearVec(p.action.dir, { x: 0, z: -1 })
+  near(Math.abs(p.yaw), Math.PI)
+  assert.deepEqual(p.pos, { x: 0, z: 0 })
+  const done = untilPlayer(p, idle, q => q.action.kind === 'idle', 20)
+  between(done.n, 12, 13)
+  near(done.p.pos.z, -3.15)
+})
+test('jogador: os i-frames valem só em [0.08, 0.40) e a esquiva exige estamina', () => {
+  let p = press(createPlayer({ x: 0, z: 0 }, 0), { roll: true, move: { x: 0, z: 1 } })
+  assert.equal(isInvulnerable(p), false)
+  p = press(p, {})
+  near(p.action.t, 0.05)
+  assert.equal(isInvulnerable(p), false)
+  p = press(p, {})
+  near(p.action.t, 0.1)
+  assert.equal(isInvulnerable(p), true)
+  p = run(p, idle, 5)
+  near(p.action.t, 0.35)
+  assert.equal(isInvulnerable(p), true)
+  p = run(p, idle, 2)
+  near(p.action.t, 0.45)
+  assert.equal(p.action.kind, 'roll')
+  assert.equal(isInvulnerable(p), false)
+  const tired = { ...createPlayer({ x: 0, z: 0 }, 0), vitals: spendStamina(createPlayerVitals(), 100) }
+  assert.equal(press(tired, { roll: true }).action.kind, 'idle')
+  assert.equal(isInvulnerable({ ...tired, action: deadAction }), true)
+})
+test('jogador: a esquiva cancela o ataque só depois da janela de acerto', () => {
+  let p = press(createPlayer({ x: 0, z: 0 }, 0), { light: true })
+  p = run(p, idle, 4)
+  near(p.action.t, 0.2)
+  const early = press(p, { roll: true })
+  assert.equal(early.action.kind, 'attack')
+  near(early.action.t, 0.25)
+  assert.equal(early.vitals.stamina, 80)
+  p = run(p, idle, 2)
+  near(p.action.t, 0.3)
+  const rolled = press(p, { roll: true, move: { x: 1, z: 0 } })
+  assert.equal(rolled.action.kind, 'roll')
+  assert.equal(rolled.vitals.stamina, 100 - ATTACKS.light1.stamina - ROLL.stamina)
+})
+test('jogador: o combo leve só encadeia a partir de 0.35 s do primeiro golpe', () => {
+  let p = press(createPlayer({ x: 0, z: 0 }, 0), { light: true })
+  p = run(p, idle, 5)
+  near(p.action.t, 0.25)
+  const early = press(p, { light: true })
+  assert.equal(early.action.attack, 'light1')
+  near(early.action.t, 0.3)
+  p = run(p, idle, 3)
+  near(p.action.t, 0.4)
+  const second = press(p, { light: true })
+  assert.equal(second.action.attack, 'light2')
+  assert.equal(second.action.t, 0)
+  assert.equal(second.vitals.stamina, 60)
+  const alone = untilPlayer(press(createPlayer({ x: 0, z: 0 }, 0), { light: true }), idle, q => q.action.kind === 'idle', 20)
+  between(alone.n, 11, 12)
+})
+test('jogador: o pesado tem a janela de acerto em [0.45, 0.60) e avança 0.5 m até ela', () => {
+  let p = press(createPlayer({ x: 0, z: 0 }, 0), { heavy: true })
+  assert.equal(p.action.attack, 'heavy')
+  assert.equal(p.vitals.stamina, 65)
+  assert.deepEqual(p.pos, { x: 0, z: 0 })
+  p = run(p, idle, 8)
+  near(p.action.t, 0.4)
+  assert.equal(activeAttack(p), null)
+  p = run(p, idle, 2)
+  near(p.action.t, 0.5)
+  near(p.pos.z, 0.5)
+  assert.deepEqual(activeAttack(p), ATTACKS.heavy)
+  p = run(p, idle, 3)
+  near(p.action.t, 0.65)
+  assert.equal(activeAttack(p), null)
+  near(p.pos.z, 0.5)
+  p = run(p, { ...idle, move: { x: 1, z: 0 } }, 5)
+  near(p.action.t, 0.9)
+  nearVec(p.pos, { x: 0, z: 0.5 })
+  const done = untilPlayer(p, idle, q => q.action.kind === 'idle', 5)
+  between(done.n, 2, 3)
+  nearVec(done.p.pos, { x: 0, z: 0.5 })
+})
+test('jogador: o leve avança 0.6 m até o começo da janela, exatamente', () => {
+  let p = press(createPlayer({ x: 0, z: 0 }, Math.PI / 2), { light: true })
+  p = run(p, idle, 2)
+  near(p.action.t, 0.1)
+  near(p.pos.x, 0.3)
+  p = run(p, idle, 3)
+  near(p.action.t, 0.25)
+  near(p.pos.x, 0.6)
+  near(p.pos.z, 0)
+  p = run(p, idle, 5)
+  near(p.pos.x, 0.6)
+})
+test('jogador: o salto faz uma parábola de 1.2 m, pousa em 0.7 s e deixa andar', () => {
+  const forward = { ...idle, move: { x: 0, z: 1 } }
+  let p = press(createPlayer({ x: 0, z: 0 }, 0), { jump: true, move: { x: 0, z: 1 } })
+  assert.equal(p.action.kind, 'jump')
+  assert.equal(p.vitals.stamina, 90)
+  near(p.pos.z, 0.2)
+  assert.equal(p.y, 0)
+  p = run(p, forward, 7)
+  near(p.action.t, 0.35)
+  near(p.y, 1.2)
+  near(p.pos.z, 1.6)
+  const landed = untilPlayer(p, forward, q => q.action.kind === 'idle', 12)
+  between(landed.n, 7, 8)
+  assert.equal(landed.p.y, 0)
+  near(landed.p.pos.z, 0.2 * (8 + landed.n))
+})
+test('jogador: o ataque em salto só sai na janela do salto e desce até o chão', () => {
+  let p = press(createPlayer({ x: 0, z: 0 }, 0), { jump: true })
+  p = run(p, idle, 8)
+  near(p.action.t, 0.4)
+  const y = p.y
+  p = press(p, { light: true })
+  assert.equal(p.action.kind, 'jumpAttack')
+  assert.equal(p.vitals.stamina, 60)
+  near(p.y, y - (JUMP.height / ATTACKS.jumpAttack.duration) * DT)
+  p = run(p, idle, 6)
+  near(p.action.t, 0.3)
+  assert.deepEqual(activeAttack(p), ATTACKS.jumpAttack)
+  const landed = untilPlayer(p, idle, q => q.action.kind === 'idle', 10)
+  between(landed.n, 6, 7)
+  assert.equal(landed.p.y, 0)
+  let late = run(press(createPlayer({ x: 0, z: 0 }, 0), { jump: true }), idle, 10)
+  near(late.action.t, 0.5)
+  late = press(late, { light: true })
+  assert.equal(late.action.kind, 'jump')
+})
+test('jogador: o frasco cura 180 em 0.8 s, uma vez, e acaba em 1.2 s', () => {
+  let p: Player = { ...createPlayer({ x: 0, z: 0 }, 0), vitals: { ...createPlayerVitals(), hp: 100 } }
+  p = press(p, { flask: true })
+  assert.equal(p.action.kind, 'flask')
+  assert.equal(p.flasks, 2)
+  p = run(p, { ...idle, move: { x: 1, z: 0 } }, 15)
+  near(p.action.t, 0.75)
+  assert.equal(p.vitals.hp, 100)
+  assert.deepEqual(p.pos, { x: 0, z: 0 })
+  p = run(p, idle, 2)
+  near(p.action.t, 0.85)
+  assert.equal(p.vitals.hp, 280)
+  const done = untilPlayer(p, idle, q => q.action.kind === 'idle', 12)
+  between(done.n, 7, 8)
+  assert.equal(done.p.vitals.hp, 280)
+  const empty = press({ ...done.p, flasks: 0 }, { flask: true })
+  assert.equal(empty.action.kind, 'idle')
+  const tired = press({ ...done.p, vitals: spendStamina(done.p.vitals, 100) }, { flask: true })
+  assert.equal(tired.action.kind, 'flask')
+})
+test('jogador: a estamina espera 0.6 s depois do gasto e volta a 25 por segundo', () => {
+  let p = press(createPlayer({ x: 0, z: 0 }, 0), { roll: true, move: { x: 0, z: 1 } })
+  assert.equal(p.vitals.stamina, 75)
+  p = untilPlayer(p, idle, q => q.action.kind === 'idle', 20).p
+  assert.equal(p.vitals.stamina, 75)
+  near(p.vitals.regenDelay, STAMINA_REGEN_DELAY - DT)
+  p = run(p, idle, 10)
+  assert.equal(p.vitals.stamina, 75)
+  near(p.vitals.regenDelay, DT)
+  p = run(p, idle, 10)
+  near(p.vitals.stamina, 86.25, 1.3)
+  assert.equal(run(p, idle, 60).vitals.stamina, 100)
+})
+test('jogador: sem estamina ainda anda, mas não ataca nem corre', () => {
+  const tired: Player = { ...createPlayer({ x: 0, z: 0 }, 0), vitals: spendStamina(createPlayerVitals(), 100) }
+  const walked = press(tired, { move: { x: 0, z: 1 }, sprint: true, light: true, heavy: true })
+  assert.equal(walked.action.kind, 'idle')
+  assert.equal(walked.sprinting, false)
+  near(walked.pos.z, 0.2)
+})
+
+test('jogador: com lock-on olha para o alvo sempre, inclusive na esquiva', () => {
+  const goal = { x: 10, z: 0 }
+  const locked = { targetPos: goal, room: COURTYARD }
+  let p = press(createPlayer({ x: 0, z: 0 }, 0), { move: { x: 0, z: 1 } }, locked)
+  near(p.pos.z, 0.2)
+  near(p.yaw, Math.PI / 2)
+  p = press(p, { roll: true, move: { x: 0, z: 1 } }, locked)
+  near(p.yaw, yawTo({ x: 0, z: 0.2 }, goal))
+  nearVec(p.action.dir, { x: 0, z: 1 })
+  p = untilPlayer(p, idle, q => q.action.kind === 'idle', 20, locked).p
+  near(p.pos.z, 3.35)
+  near(p.yaw, yawTo(p.pos, goal))
+  assert.ok(Math.abs(p.yaw - Math.PI / 2) < 0.5)
+})
+test('jogador: a ação termina na duração, zera guardCounter e o contador só cai parado', () => {
+  let p: Player = { ...createPlayer({ x: 0, z: 0 }, 0), guardCounter: 0.5 }
+  p = press(p, {})
+  near(p.guardCounter, 0.45)
+  p = press(p, { heavy: true })
+  near(p.guardCounter, 0.4)
+  p = run(p, idle, 10)
+  near(p.guardCounter, 0.4)
+  const done = untilPlayer(p, idle, q => q.action.kind === 'idle', 15)
+  between(done.n, 9, 11)
+  assert.equal(done.p.guardCounter, 0)
+  const light = press({ ...createPlayer({ x: 0, z: 0 }, 0), guardCounter: 0.5 }, { light: true })
+  assert.equal(light.guardCounter, 0)
+})
+test('jogador: atordoado e morto ignoram a entrada; o atordoamento acaba em 1 s', () => {
+  let p: Player = { ...createPlayer({ x: 0, z: 0 }, 0), action: staggerAction }
+  p = run(p, { ...idle, move: { x: 1, z: 0 }, light: true, roll: true }, 10)
+  assert.deepEqual(p.pos, { x: 0, z: 0 })
+  assert.equal(p.action.kind, 'stagger')
+  near(p.action.t, 0.5)
+  const done = untilPlayer(p, idle, q => q.action.kind === 'idle', 15)
+  between(done.n, 10, 11)
+  const dead = run({ ...createPlayer({ x: 0, z: 0 }, 0), action: deadAction }, { ...idle, move: { x: 1, z: 0 }, flask: true }, 40)
+  assert.equal(dead.action.kind, 'dead')
+  assert.equal(dead.flasks, 3)
+  assert.deepEqual(dead.pos, { x: 0, z: 0 })
+})
+test('jogador: um passo grande vira subpassos de até 0.05 s com o toque só no primeiro', () => {
+  const forward = { x: 0, z: 1 }
+  const big = stepPlayer(createPlayer({ x: 0, z: 0 }, 0), { ...idle, light: true, move: forward }, 0.2, ctx)
+  let small = press(createPlayer({ x: 0, z: 0 }, 0), { light: true, move: forward })
+  small = run(small, { ...idle, move: forward }, 3)
+  assert.equal(big.action.attack, 'light1')
+  near(big.action.t, 0.15)
+  near(big.action.t, small.action.t)
+  nearVec(big.pos, small.pos)
+  near(big.vitals.stamina, small.vitals.stamina)
+  const roll = stepPlayer(createPlayer({ x: 0, z: 0 }, 0), { ...idle, roll: true }, 1, ctx)
+  assert.equal(roll.action.kind, 'idle')
+  near(roll.pos.z, -3.15)
+  assert.equal(roll.vitals.stamina, 75)
+})
+test('jogador: a arena prende o jogador durante a esquiva', () => {
+  let p = createPlayer({ x: 11, z: 0 }, Math.PI / 2)
+  p = run(p, { ...idle, roll: true, move: { x: 1, z: 0 } }, 1)
+  p = run(p, idle, 11)
+  near(p.pos.x, 12 - PLAYER_RADIUS)
+})
+
+test('inimigos: perfis, ataques e constantes', () => {
+  assert.deepEqual(ENEMY_PROFILES.hollow, { hp: 120, poise: 30, radius: 0.45, speed: 3, aggroRange: 9, staggerTime: 1.5, runes: 100, intro: 0 })
+  assert.deepEqual(ENEMY_PROFILES.boss, { hp: 1500, poise: 80, radius: 1.0, speed: 3.5, aggroRange: 40, staggerTime: 2.0, runes: 5000, intro: 2.0 })
+  assert.deepEqual(ENEMY_ATTACKS.hollow.slash, { windup: 0.5, active: 0.3, recover: 0.8, damage: 60, poiseDamage: 20, range: 1.8, arcDeg: 100, shape: 'arc', startRange: 2.0 })
+  assert.deepEqual(ENEMY_ATTACKS.boss.slash, { windup: 0.6, active: 0.3, recover: 0.9, damage: 110, poiseDamage: 25, range: 2.8, arcDeg: 120, shape: 'arc', startRange: 4.0 })
+  assert.deepEqual(ENEMY_ATTACKS.boss.slam, { windup: 1.0, active: 0.3, recover: 1.2, damage: 160, poiseDamage: 40, range: 3.0, arcDeg: 360, shape: 'radius', startRange: 4.0 })
+  assert.deepEqual(ENEMY_ATTACKS.boss.charge, { windup: 0.4, active: 0.7, recover: 1.0, damage: 90, poiseDamage: 20, range: 1.4, arcDeg: 0, shape: 'charge', startRange: Infinity })
+  assert.deepEqual(ENEMY_ATTACKS.boss.shockwave, { windup: 0.8, active: 0.2, recover: 1.5, damage: 120, poiseDamage: 30, range: 5.0, arcDeg: 360, shape: 'radius', startRange: Infinity })
+  assert.equal(ENEMY_ATTACKS.hollow.slam, undefined)
+  assert.deepEqual([CHARGE_SPEED, TRACK_RATE, BOSS_PHASE2_HP, PHASE2_SPEED, PHASE2_WINDUP, CHARGE_DISTANCE], [12, 2.5, 750, 4.5, 0.75, 5])
+})
+
+test('inimigos: createEnemy, enemyRadius e respawnEnemy', () => {
+  const e = createEnemy(7, 'boss', 'bossRoom', { x: 1, z: 2 }, 1.5)
+  assert.deepEqual(e, { id: 7, kind: 'boss', room: 'bossRoom', home: { x: 1, z: 2 }, homeYaw: 1.5, pos: { x: 1, z: 2 }, yaw: 1.5, vitals: createVitals(1500, 0, 80), state: 'idle', t: 0, attack: null, hitDone: false, phase: 1 })
+  assert.equal(enemyRadius(e), 1.0)
+  assert.equal(enemyRadius(createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 0 }, 0)), 0.45)
+  const moved: Enemy = { ...e, pos: { x: 5, z: 5 }, yaw: 0, vitals: { ...e.vitals, hp: 10, poise: 50 }, state: 'chase', t: 3, attack: 'slam', hitDone: true, phase: 2 }
+  assert.deepEqual(respawnEnemy(moved), e)
+})
+
+test('inimigos: o hollow persegue a 3 m/s, olha para o alvo e para encostado', () => {
+  let e = createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 8 }, 0)
+  e = runEnemy(e, 1)
+  assert.equal(e.state, 'chase')
+  e = runEnemy(e, 10)
+  near(e.pos.z, 6.5)
+  near(Math.abs(e.yaw), Math.PI)
+  const close = runEnemy(createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 2.5 }, 0), 1)
+  const stuck: Enemy = { ...createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 0.9 }, 0), state: 'chase' }
+  const stopped = stepEnemy(stuck, { pos: { x: 0, z: 0 }, alive: true }, DT, 1, COURTYARD).enemy
+  near(stopped.pos.z, 0.85)
+  assert.equal(close.state, 'chase')
+})
+
+test('inimigos: o hollow golpeia a até 2 m, acerta uma vez no arco e se recupera', () => {
+  let e = runEnemy(createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 1.9 }, Math.PI), 1)
+  assert.equal(e.state, 'chase')
+  e = runEnemy(e, 1)
+  assert.equal(e.state, 'windup')
+  assert.equal(e.attack, 'slash')
+  assert.equal(e.t, 0)
+  assert.equal(e.hitDone, false)
+  near(e.pos.z, 1.75)
+  const armed = untilEnemy(e, x => x.state === 'attack', 15)
+  between(armed.n, 10, 11)
+  assert.equal(armed.e.t, 0)
+  let step = stepEnemy(armed.e, target, DT, 1, COURTYARD)
+  assert.deepEqual(step.hit, { damage: 60, poiseDamage: 20, origin: step.enemy.pos })
+  assert.equal(step.enemy.hitDone, true)
+  step = stepEnemy(step.enemy, target, DT, 1, COURTYARD)
+  assert.equal(step.hit, null)
+  const recovering = untilEnemy(step.enemy, x => x.state === 'recover', 10)
+  between(recovering.n, 3, 5)
+  const chasing = untilEnemy(recovering.e, x => x.state === 'chase', 20)
+  between(chasing.n, 16, 17)
+})
+test('inimigos: o golpe erra quem está atrás e o windup vira devagar para o alvo', () => {
+  const behind: Enemy = { ...createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 1.5 }, 0), state: 'attack', attack: 'slash' }
+  const miss = stepEnemy(behind, target, DT, 1, COURTYARD)
+  assert.equal(miss.hit, null)
+  const front: Enemy = { ...behind, yaw: Math.PI }
+  assert.notEqual(stepEnemy(front, target, DT, 1, COURTYARD).hit, null)
+  const winding: Enemy = { ...createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 1.5 }, 0), state: 'windup', attack: 'slash' }
+  const turned = stepEnemy(winding, target, DT, 1, COURTYARD).enemy
+  near(Math.abs(turned.yaw), TRACK_RATE * DT)
+  const attacking: Enemy = { ...winding, state: 'attack', yaw: 1 }
+  near(stepEnemy(attacking, target, DT, 1, COURTYARD).enemy.yaw, 1)
+})
+
+test('inimigos: alvo morto não acorda ninguém e devolve o perseguidor ao idle', () => {
+  const deadTarget = { pos: { x: 0, z: 0 }, alive: false }
+  const quiet = runEnemy(createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 2 }, 0), 5, deadTarget)
+  assert.equal(quiet.state, 'idle')
+  const chasing: Enemy = { ...createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 5 }, 0), state: 'chase' }
+  assert.equal(stepEnemy(chasing, deadTarget, DT, 1, COURTYARD).enemy.state, 'idle')
+  const recovering: Enemy = { ...chasing, state: 'recover', attack: 'slash', t: 0.8 }
+  assert.equal(stepEnemy(recovering, deadTarget, DT, 1, COURTYARD).enemy.state, 'idle')
+})
+
+test('inimigos: o chefe acorda a 40 m, faz a entrada por 2 s e depois persegue a 3.5 m/s', () => {
+  let b = createEnemy(10, 'boss', 'bossRoom', { x: 0, z: 34 }, Math.PI)
+  const far = { pos: { x: 0, z: -10 }, alive: true }
+  assert.equal(runEnemy(b, 1, far, 1, BOSS_ROOM).state, 'idle')
+  const entry = { pos: BOSS_ROOM_ENTRY, alive: true }
+  b = runEnemy(b, 1, entry, 1, BOSS_ROOM)
+  assert.equal(b.state, 'intro')
+  b = runEnemy(b, 39, entry, 1, BOSS_ROOM)
+  assert.equal(b.state, 'intro')
+  b = runEnemy(b, 1, entry, 1, BOSS_ROOM)
+  assert.equal(b.state, 'chase')
+  const step = stepEnemy(b, entry, DT, 1, BOSS_ROOM)
+  near(step.enemy.pos.z, 34 - 3.5 * DT)
+  assert.equal(step.enemy.state, 'windup')
+  assert.equal(step.enemy.attack, 'charge')
+  assert.equal(step.rng, 1)
+})
+
+test('inimigos: a investida do chefe anda a 12 m/s e acerta a até 1.4 m, uma vez', () => {
+  const b: Enemy = { ...createEnemy(10, 'boss', 'bossRoom', { x: 0, z: 30 }, Math.PI), state: 'windup', attack: 'charge' }
+  const t = { pos: { x: 0, z: 22 }, alive: true }
+  const armed = untilEnemy(b, x => x.state === 'attack', 12, t, 1, BOSS_ROOM)
+  between(armed.n, 8, 9)
+  assert.equal(armed.e.t, 0)
+  let step = stepEnemy(armed.e, t, DT, 1, BOSS_ROOM)
+  near(step.enemy.pos.z, 29.4)
+  assert.equal(step.hit, null)
+  let hit = null
+  let n = 0
+  while (!hit && n < 14) {
+    step = stepEnemy(step.enemy, t, DT, 1, BOSS_ROOM)
+    hit = step.hit
+    n++
+  }
+  assert.deepEqual(hit, { damage: 90, poiseDamage: 20, origin: step.enemy.pos })
+  assert.ok(distance(step.enemy.pos, t.pos) <= 1.4)
+  assert.equal(step.enemy.state, 'attack')
+  const recovering = untilEnemy(step.enemy, x => x.state === 'recover', 16, t, 1, BOSS_ROOM)
+  between(recovering.n, 1, 5)
+  assert.equal(recovering.e.hitDone, true)
+})
+test('inimigos: de perto o chefe sorteia entre slash e slam e consome um randomStep', () => {
+  const t = { pos: { x: 0, z: 28 }, alive: true }
+  const b: Enemy = { ...createEnemy(10, 'boss', 'bossRoom', { x: 0, z: 31 }, Math.PI), state: 'chase' }
+  for (const rng of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+    const step = stepEnemy(b, t, DT, rng, BOSS_ROOM)
+    const r = randomStep(rng)
+    assert.equal(step.rng, r.next)
+    assert.equal(step.enemy.state, 'windup')
+    near(step.enemy.pos.z, 30.825)
+    assert.equal(step.enemy.attack, r.value < 0.6 ? 'slash' : 'slam')
+  }
+  const mid: Enemy = { ...b, pos: { x: 0, z: 32.6 } }
+  const walk = stepEnemy(mid, t, DT, 1, BOSS_ROOM)
+  assert.equal(walk.enemy.state, 'chase')
+  assert.equal(walk.rng, 1)
+})
+test('inimigos: na fase 2 o chefe anda a 4.5 m/s, arma em 75% do tempo e sorteia de longe', () => {
+  const t = { pos: { x: 0, z: 28 }, alive: true }
+  const far: Enemy = { ...createEnemy(10, 'boss', 'bossRoom', { x: 0, z: 38 }, Math.PI), state: 'chase', phase: 2 }
+  for (const rng of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const step = stepEnemy(far, t, DT, rng, BOSS_ROOM)
+    const r = randomStep(rng)
+    assert.equal(step.rng, r.next)
+    near(step.enemy.pos.z, 38 - 4.5 * DT)
+    assert.equal(step.enemy.attack, r.value < 0.5 ? 'charge' : 'shockwave')
+  }
+  const close: Enemy = { ...far, pos: { x: 0, z: 31 } }
+  for (const rng of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const r = randomStep(rng)
+    assert.equal(stepEnemy(close, t, DT, rng, BOSS_ROOM).enemy.attack, r.value < 0.45 ? 'slash' : r.value < 0.75 ? 'slam' : 'shockwave')
+  }
+  const slam2 = untilEnemy({ ...close, state: 'windup', attack: 'slam', phase: 2 }, x => x.state === 'attack', 25, t, 1, BOSS_ROOM)
+  between(slam2.n, 15, 16)
+  const slam1 = untilEnemy({ ...close, state: 'windup', attack: 'slam', phase: 1 }, x => x.state === 'attack', 25, t, 1, BOSS_ROOM)
+  between(slam1.n, 20, 21)
+})
+test('inimigos: o atordoamento dura 1.5 s (hollow) ou 2 s (chefe) e volta a perseguir', () => {
+  const h: Enemy = { ...createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 3 }, 0), state: 'stagger' }
+  between(untilEnemy(h, x => x.state === 'chase', 40).n, 30, 31)
+  const b: Enemy = { ...createEnemy(10, 'boss', 'bossRoom', { x: 0, z: 31 }, 0), state: 'stagger' }
+  const t = { pos: { x: 0, z: 28 }, alive: true }
+  between(untilEnemy(b, x => x.state === 'chase', 50, t, 1, BOSS_ROOM).n, 40, 41)
+  const riposted: Enemy = { ...h, state: 'recover', attack: null }
+  between(untilEnemy(riposted, x => x.state === 'chase', 30).n, 20, 21)
+  assert.equal(runEnemy({ ...h, state: 'dead' }, 100).state, 'dead')
+})
+test('inimigos: um passo grande vira subpassos e guarda o acerto de qualquer um deles', () => {
+  const e: Enemy = { ...createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 1.5 }, Math.PI), state: 'windup', attack: 'slash', t: 0.45 }
+  const big = stepEnemy(e, target, 0.2, 1, COURTYARD)
+  assert.notEqual(big.hit, null)
+  assert.equal(big.enemy.hitDone, true)
+  let small = { enemy: e, rng: 1, hit: null as unknown }
+  for (let i = 0; i < 4; i++) small = { ...stepEnemy(small.enemy, target, DT, 1, COURTYARD), hit: small.hit }
+  assert.equal(big.enemy.state, small.enemy.state)
+  near(big.enemy.t, small.enemy.t)
+})
+
+test('arena: pontos fixos e salas', () => {
+  assert.deepEqual(COURTYARD.rect, { minX: -12, maxX: 12, minZ: -10, maxZ: 14 })
+  assert.deepEqual(COURTYARD.pillars, [{ x: -5, z: 2, r: 0.8 }, { x: 5, z: 2, r: 0.8 }, { x: -5, z: 8, r: 0.8 }, { x: 5, z: 8, r: 0.8 }])
+  assert.deepEqual(BOSS_ROOM.circle, { x: 0, z: 28, r: 11 })
+  assert.deepEqual([BONFIRE, START_POS, FOG_GATE, BOSS_ROOM_ENTRY, BOSS_SPAWN], [{ x: 0, z: -6 }, { x: 0, z: -4 }, { x: 0, z: 14 }, { x: 0, z: 18 }, { x: 0, z: 34 }])
+  assert.deepEqual(HOLLOW_SPAWNS, [{ x: -4, z: 6 }, { x: 4, z: 7 }, { x: 0, z: 11 }])
+  assert.deepEqual([INTERACT_RANGE, LOCK_RANGE, PLAYER_RADIUS], [2.0, 12, 0.4])
+  assert.equal(getRoom('courtyard'), COURTYARD)
+  assert.equal(getRoom('bossRoom'), BOSS_ROOM)
+})
+
+test('arena: pushOut empurra para fora do círculo e deixa quem está fora', () => {
+  const pillar = { x: 5, z: 2, r: 0.8 }
+  assert.deepEqual(pushOut({ x: 7, z: 2 }, 0.4, pillar), { x: 7, z: 2 })
+  nearVec(pushOut({ x: 5.5, z: 2 }, 0.4, pillar), { x: 6.2, z: 2 })
+  nearVec(pushOut({ x: 5, z: 1.5 }, 0.4, pillar), { x: 5, z: 0.8 })
+  nearVec(pushOut({ x: 5, z: 2 }, 0.4, pillar), { x: 6.2, z: 2 })
+})
+
+test('arena: resolveRoom prende nos quatro muros, no círculo e nos pilares', () => {
+  assert.deepEqual(resolveRoom(COURTYARD, { x: -20, z: -20 }, 0.4), { x: -11.6, z: -9.6 })
+  assert.deepEqual(resolveRoom(COURTYARD, { x: 20, z: 20 }, 0.4), { x: 11.6, z: 13.6 })
+  assert.deepEqual(resolveRoom(COURTYARD, { x: 0, z: 0 }, 0.4), { x: 0, z: 0 })
+  nearVec(resolveRoom(COURTYARD, { x: -5, z: 7.5 }, 0.4), { x: -5, z: 6.8 })
+  nearVec(resolveRoom(BOSS_ROOM, { x: 15, z: 28 }, 1.0), { x: 10, z: 28 })
+  assert.deepEqual(resolveRoom(BOSS_ROOM, { x: 3, z: 30 }, 1.0), { x: 3, z: 30 })
+})
+
+test('jogo: createGame monta o pátio, os três hollows e o chefe', () => {
+  const g = createGame('seed')
+  assert.equal(g.seed, 1346747564)
+  assert.equal(g.rng, g.seed)
+  assert.equal(createGame(1346747564).seed, hashSeed('1346747564'))
+  assert.deepEqual([g.time, g.phase, g.room, g.runes, g.bloodstain, g.bossDefeated, g.deathTimer, g.events], [0, 'title', 'courtyard', 0, null, false, 0, []])
+  assert.deepEqual(g.player, createPlayer(START_POS, 0))
+  assert.deepEqual(g.enemies.map(e => [e.id, e.kind, e.room, e.pos, e.yaw]), [
+    [1, 'hollow', 'courtyard', { x: -4, z: 6 }, Math.PI],
+    [2, 'hollow', 'courtyard', { x: 4, z: 7 }, Math.PI],
+    [3, 'hollow', 'courtyard', { x: 0, z: 11 }, Math.PI],
+    [10, 'boss', 'bossRoom', { x: 0, z: 34 }, Math.PI],
+  ])
+  assert.deepEqual([DEATH_DELAY, RUNES_PICKUP_RANGE], [3.0, 1.0])
+})
+
+test('jogo: na tela inicial só um pressionamento começa; andar, guardar e lock-on não', () => {
+  const g = createGame('seed')
+  const still = playN(g, { move: { x: 0, z: 1 }, guard: true, sprint: true, lockOn: true }, 3)
+  assert.equal(still.phase, 'title')
+  near(still.time, 0.15)
+  assert.deepEqual(still.player.pos, START_POS)
+  for (const key of ['light', 'heavy', 'roll', 'jump', 'flask', 'interact'] as const) assert.equal(play(g, { [key]: true }).phase, 'playing')
+  const first = play(g, { light: true })
+  assert.deepEqual(first.player.action, IDLE_ACTION)
+  assert.deepEqual(first.events, [])
+})
+
+test('jogo: eventos são só do passo atual', () => {
+  const g = withEnemy(started(), 1, { pos: { x: 0, z: -2.5 } })
+  const hit = playN(g, { light: true }, 5)
+  assert.ok(hit.events.some(e => e.type === 'enemyHit'))
+  assert.deepEqual(play(hit, {}).events, [])
+})
+
+test('jogo: lock-on pega o inimigo vivo mais perto a até 12 m e alterna', () => {
+  let g = started()
+  g = play(g, { lockOn: true })
+  assert.equal(g.player.lockOn, 1)
+  near(g.player.yaw, yawTo(g.player.pos, { x: -4, z: 6 }))
+  g = play(g, { lockOn: true })
+  assert.equal(g.player.lockOn, null)
+  const farAway = withPlayer(started(), { pos: { x: -11, z: -9 } })
+  assert.equal(play(farAway, { lockOn: true }).player.lockOn, null)
+  const dead = withEnemy(started(), 1, { state: 'dead' })
+  assert.equal(play(dead, { lockOn: true }).player.lockOn, 2)
+})
+
+test('jogo: lock-on cai quando o alvo morre e o inimigo some do lock', () => {
+  let g = withEnemy(started(), 1, { pos: { x: 0, z: -2.5 }, vitals: createVitals(120, 0, 30) })
+  g = play(g, { lockOn: true })
+  assert.equal(g.player.lockOn, 1)
+  g = withEnemy(g, 1, { vitals: { ...enemy(g, 1).vitals, hp: 40 } })
+  g = playN(g, { light: true }, 5)
+  assert.equal(enemy(g, 1).state, 'dead')
+  assert.equal(g.player.lockOn, null)
+  assert.equal(g.runes, 100)
+  assert.deepEqual(events(g, 'enemyDied'), [{ type: 'enemyDied', id: 1, runes: 100 }])
+})
+
+test('jogo: o ataque do jogador acerta uma vez por golpe, no arco e com o raio do inimigo', () => {
+  const reach = ATTACKS.light1.lunge + ATTACKS.light1.range + ENEMY_PROFILES.hollow.radius
+  const g = withEnemy(started(), 1, { pos: { x: 0, z: START_POS.z + reach - 0.01 }, state: 'stagger' })
+  const first = untilGame(play(g, { light: true }), {}, s => enemy(s, 1).vitals.hp < 120, 8)
+  between(first.n, 3, 4)
+  assert.equal(enemy(first.g, 1).vitals.hp, 75)
+  assert.equal(enemy(first.g, 1).vitals.poise, 10)
+  assert.deepEqual(events(first.g, 'enemyHit'), [{ type: 'enemyHit', id: 1, damage: 45, riposte: false }])
+  assert.deepEqual(first.g.player.action.hitIds, [1])
+  const again = play(first.g, {})
+  assert.equal(enemy(again, 1).vitals.hp, 75)
+  assert.deepEqual(events(again, 'enemyHit'), [])
+  const tooFar = withEnemy(started(), 1, { pos: { x: 0, z: START_POS.z + reach + 0.01 }, state: 'stagger' })
+  assert.equal(enemy(playN(tooFar, { light: true }, 8), 1).vitals.hp, 120)
+  const behind = withEnemy(started(), 1, { pos: { x: 0, z: -5.5 }, state: 'stagger' })
+  assert.equal(enemy(playN(behind, { light: true }, 8), 1).vitals.hp, 120)
+})
+test('jogo: o contra-ataque de guarda multiplica o pesado e atordoa o hollow', () => {
+  const base = withEnemy(started(), 1, { pos: { x: 0, z: -2.5 }, state: 'chase' })
+  let g = withPlayer(base, { guardCounter: 0.5 })
+  g = playN(g, { heavy: true }, 12)
+  assert.equal(enemy(g, 1).vitals.hp, 0)
+  assert.equal(enemy(g, 1).state, 'dead')
+  g = withEnemy(withPlayer(base, { guardCounter: 0.5 }), 1, { vitals: createVitals(1000, 0, 45) })
+  g = playN(g, { heavy: true }, 12)
+  assert.equal(enemy(g, 1).vitals.hp, 865)
+  assert.equal(enemy(g, 1).vitals.poise, 0)
+  assert.equal(enemy(g, 1).state, 'stagger')
+  const light = playN(withPlayer(base, { guardCounter: 0.5 }), { light: true }, 6)
+  assert.equal(enemy(light, 1).vitals.hp, 75)
+  const plain = playN(withEnemy(base, 1, { vitals: createVitals(1000, 0, 45) }), { heavy: true }, 12)
+  assert.equal(enemy(plain, 1).vitals.hp, 910)
+  assert.equal(enemy(plain, 1).vitals.poise, 25)
+  assert.notEqual(enemy(plain, 1).state, 'stagger')
+})
+test('jogo: o riposte acerta o inimigo atordoado na frente e consome o leve', () => {
+  let g = withEnemy(started(), 1, { pos: { x: 0, z: -2.5 }, state: 'stagger', t: 0.3, vitals: createVitals(120, 0, 30) })
+  g = play(g, { light: true })
+  assert.equal(g.player.action.kind, 'riposte')
+  assert.equal(g.player.vitals.stamina, 100)
+  assert.equal(enemy(g, 1).state, 'dead')
+  assert.deepEqual(events(g, 'enemyHit'), [{ type: 'enemyHit', id: 1, damage: 200, riposte: true }])
+  assert.equal(g.runes, 100)
+  g = playN(g, { move: { x: 1, z: 0 } }, 16)
+  assert.equal(g.player.action.kind, 'riposte')
+  assert.deepEqual(g.player.pos, START_POS)
+  assert.equal(playN(g, {}, 2).player.action.kind, 'idle')
+  let boss = { ...withPlayer(started(), { pos: { x: 0, z: 20 } }), room: 'bossRoom' as const }
+  boss = withEnemy(boss, 10, { pos: { x: 0, z: 21.5 }, state: 'stagger', t: 1 })
+  boss = play(boss, { light: true })
+  assert.equal(enemy(boss, 10).vitals.hp, 1300)
+  assert.equal(enemy(boss, 10).state, 'recover')
+  near(enemy(boss, 10).t, DT)
+  assert.deepEqual(events(boss, 'enemyHit'), [{ type: 'enemyHit', id: 10, damage: 200, riposte: true }])
+  const behind = withEnemy(started(), 1, { pos: { x: 0, z: -5.5 }, state: 'stagger' })
+  assert.equal(play(behind, { light: true }).player.action.kind, 'attack')
+  const far = withEnemy(started(), 1, { pos: { x: 0, z: -1.9 }, state: 'stagger' })
+  assert.equal(play(far, { light: true }).player.action.kind, 'attack')
+})
+test('jogo: tomar um golpe de frente guardando bloqueia e arma o contra-ataque', () => {
+  const g = withEnemy(withPlayer(started(), { yaw: 0 }), 1, { pos: { x: 0, z: -2.5 }, yaw: Math.PI, state: 'windup', attack: 'slash', t: 0.5 })
+  let blocked = play(g, { guard: true })
+  blocked = play(blocked, { guard: true })
+  assert.deepEqual(events(blocked, 'playerHit'), [{ type: 'playerHit', damage: 18, blocked: true }])
+  assert.equal(blocked.player.vitals.hp, 382)
+  assert.equal(blocked.player.vitals.stamina, 70)
+  assert.equal(blocked.player.vitals.poise, 0)
+  assert.equal(blocked.player.guardCounter, 0.5)
+  let open = play(g, {})
+  open = play(open, {})
+  assert.deepEqual(events(open, 'playerHit'), [{ type: 'playerHit', damage: 60, blocked: false }])
+  assert.equal(open.player.vitals.hp, 340)
+  assert.equal(open.player.vitals.stamina, 100)
+  assert.equal(open.player.vitals.poise, 20)
+  assert.equal(open.player.guardCounter, 0)
+  const backwards = withPlayer(g, { yaw: Math.PI })
+  let back = play(backwards, { guard: true })
+  back = play(back, { guard: true })
+  assert.deepEqual(events(back, 'playerHit'), [{ type: 'playerHit', damage: 60, blocked: false }])
+})
+
+test('jogo: bloquear sem estamina quebra a guarda e atordoa', () => {
+  let g = withEnemy(withPlayer(started(), { yaw: 0, vitals: { ...createPlayerVitals(), stamina: 20 } }), 1, { pos: { x: 0, z: -2.5 }, yaw: Math.PI, state: 'windup', attack: 'slash', t: 0.5 })
+  g = play(g, { guard: true })
+  g = play(g, { guard: true })
+  assert.equal(g.player.vitals.stamina, 0)
+  assert.equal(g.player.action.kind, 'stagger')
+  assert.equal(g.player.guarding, false)
+  assert.deepEqual(events(g, 'guardBreak'), [{ type: 'guardBreak' }])
+  assert.equal(g.player.vitals.hp, 382)
+})
+
+test('jogo: esquivar no tempo evita o golpe; dois golpes cheios atordoam o jogador', () => {
+  const g = withEnemy(withPlayer(started(), { yaw: 0 }), 1, { pos: { x: 0, z: -2.5 }, yaw: Math.PI, state: 'windup', attack: 'slash', t: 0.4 })
+  let dodged = play(g, { roll: true, move: { x: 1, z: 0 } })
+  dodged = playN(dodged, {}, 2)
+  assert.ok(dodged.player.action.t >= ROLL.iframeStart)
+  assert.deepEqual(events(dodged, 'dodged'), [{ type: 'dodged' }])
+  assert.equal(dodged.player.vitals.hp, 400)
+  let hit = withPlayer(g, { vitals: { ...createPlayerVitals(), poise: 25 } })
+  hit = play(hit, { light: true })
+  hit = play(hit, {})
+  hit = play(hit, {})
+  assert.equal(hit.player.action.kind, 'stagger')
+  assert.equal(hit.player.vitals.poise, 0)
+  assert.equal(hit.player.vitals.hp, 340)
+  assert.deepEqual(events(hit, 'playerStaggered'), [{ type: 'playerStaggered' }])
+})
+
+test('jogo: a morte espera 3 s, renasce na fogueira e deixa o rastro com as runas', () => {
+  let g = withPlayer(started(), { pos: { x: 2, z: 3 }, vitals: { ...createPlayerVitals(), hp: 30 } })
+  g = { ...g, runes: 250 }
+  g = withEnemy(g, 1, { pos: { x: 2, z: 4.5 }, yaw: Math.PI, state: 'windup', attack: 'slash', t: 0.5 })
+  g = play(g, {})
+  g = play(g, {})
+  assert.equal(g.phase, 'dead')
+  assert.equal(g.player.action.kind, 'dead')
+  assert.equal(g.player.vitals.hp, 0)
+  assert.equal(g.deathTimer, DEATH_DELAY)
+  assert.deepEqual(events(g, 'playerDied'), [{ type: 'playerDied' }])
+  const deathPos = g.player.pos
+  g = playN(g, { move: { x: 1, z: 0 }, light: true }, 58)
+  assert.equal(g.phase, 'dead')
+  assert.deepEqual(g.player.pos, deathPos)
+  const back = untilGame(g, {}, s => s.phase === 'playing', 5)
+  between(back.n, 2, 3)
+  g = back.g
+  assert.deepEqual(g.player, createPlayer(START_POS, 0))
+  assert.equal(g.runes, 0)
+  assert.deepEqual(g.bloodstain, { room: 'courtyard', pos: deathPos, runes: 250 })
+  assert.deepEqual(enemy(g, 1), createEnemy(1, 'hollow', 'courtyard', { x: -4, z: 6 }, Math.PI))
+  assert.deepEqual(events(g, 'respawn'), [{ type: 'respawn' }])
+})
+
+test('jogo: o rastro é recolhido a até 1 m e some; morrer sem runas mantém o rastro antigo', () => {
+  let g = { ...started(), bloodstain: { room: 'courtyard' as const, pos: { x: 0, z: -2 }, runes: 250 } }
+  g = playN(g, { move: { x: 0, z: 1 } }, 5)
+  assert.ok(distance(g.player.pos, { x: 0, z: -2 }) <= 1)
+  assert.equal(g.runes, 250)
+  assert.equal(g.bloodstain, null)
+  assert.deepEqual(events(g, 'runesRecovered'), [{ type: 'runesRecovered', runes: 250 }])
+  let other = { ...started(), bloodstain: { room: 'bossRoom' as const, pos: START_POS, runes: 9 }, runes: 0 }
+  other = withPlayer(other, { vitals: { ...createPlayerVitals(), hp: 1 } })
+  other = withEnemy(other, 1, { pos: { x: 0, z: -2.5 }, yaw: Math.PI, state: 'attack', attack: 'slash' })
+  other = play(other, {})
+  assert.equal(other.phase, 'dead')
+  other = playN(other, {}, 62)
+  assert.equal(other.phase, 'playing')
+  assert.deepEqual(other.bloodstain, { room: 'bossRoom', pos: START_POS, runes: 9 })
+})
+
+test('jogo: descansar na fogueira restaura tudo, renasce os hollows e levanta com E ou esquiva', () => {
+  let g = withPlayer(started(), { vitals: { ...createPlayerVitals(), hp: 50, stamina: 10 }, flasks: 0, lockOn: 1 })
+  g = withEnemy(g, 1, { pos: { x: 3, z: 3 }, state: 'chase', vitals: createVitals(5, 0, 30) })
+  g = play(g, { interact: true })
+  assert.equal(g.phase, 'resting')
+  assert.deepEqual(g.player.vitals, createPlayerVitals())
+  assert.equal(g.player.flasks, 3)
+  assert.equal(g.player.lockOn, null)
+  assert.deepEqual(enemy(g, 1), createEnemy(1, 'hollow', 'courtyard', { x: -4, z: 6 }, Math.PI))
+  assert.deepEqual(events(g, 'rest'), [{ type: 'rest' }])
+  const frozen = playN(g, { move: { x: 1, z: 0 }, light: true }, 5)
+  assert.equal(frozen.phase, 'resting')
+  assert.deepEqual(frozen.player.pos, g.player.pos)
+  assert.equal(play(g, { interact: true }).phase, 'playing')
+  assert.equal(play(g, { roll: true }).phase, 'playing')
+  const far = play(withPlayer(started(), { pos: { x: 0, z: -3.9 } }), { interact: true })
+  assert.equal(far.phase, 'playing')
+})
+
+test('jogo: a porta de névoa leva à sala do chefe, que faz a entrada e vem', () => {
+  let g = withPlayer(started(), { pos: { x: 0.5, z: 12.5 }, lockOn: 3 })
+  g = play(g, { interact: true })
+  assert.equal(g.room, 'bossRoom')
+  assert.deepEqual(g.player.pos, BOSS_ROOM_ENTRY)
+  assert.equal(g.player.yaw, 0)
+  assert.equal(g.player.lockOn, null)
+  assert.deepEqual(events(g, 'enterBossRoom'), [{ type: 'enterBossRoom' }])
+  g = play(g, {})
+  assert.equal(enemy(g, 10).state, 'intro')
+  const hollow = enemy(g, 3)
+  const awake = untilGame(g, {}, s => enemy(s, 10).state !== 'intro', 50)
+  between(awake.n, 40, 41)
+  assert.equal(enemy(awake.g, 10).state, 'chase')
+  assert.deepEqual(enemy(awake.g, 3), hollow)
+  const next = play(awake.g, {})
+  assert.equal(enemy(next, 10).state, 'windup')
+  assert.equal(enemy(next, 10).attack, 'charge')
+  const stillCourtyard = play(withPlayer(started(), { pos: { x: 0, z: 11.9 } }), { interact: true })
+  assert.equal(stillCourtyard.room, 'courtyard')
+  const inBossRoom = play({ ...withPlayer(started(), { pos: FOG_GATE }), room: 'bossRoom' }, { interact: true })
+  assert.deepEqual(inBossRoom.events.filter(e => e.type === 'enterBossRoom' || e.type === 'rest'), [])
+})
+test('jogo: o chefe entra na fase 2 com metade da vida', () => {
+  let g = { ...withPlayer(started(), { pos: { x: 0, z: 20 } }), room: 'bossRoom' as const }
+  g = withEnemy(g, 10, { pos: { x: 0, z: 22.4 }, state: 'chase', vitals: createVitals(1500, 0, 80) })
+  g = withEnemy(g, 10, { vitals: { ...enemy(g, 10).vitals, hp: 790 } })
+  g = playN(g, { light: true }, 5)
+  assert.equal(enemy(g, 10).vitals.hp, 745)
+  assert.equal(enemy(g, 10).phase, 2)
+  assert.deepEqual(events(g, 'bossPhase2'), [{ type: 'bossPhase2' }])
+  assert.deepEqual(events(play(g, {}), 'bossPhase2'), [])
+})
+
+test('jogo: matar o chefe é a vitória; depois do descanso ele continua morto', () => {
+  let g = { ...withPlayer(started(), { pos: { x: 0, z: 20 } }), room: 'bossRoom' as const, runes: 10 }
+  g = withEnemy(g, 10, { pos: { x: 0, z: 22.4 }, state: 'chase', vitals: { ...createVitals(1500, 0, 80), hp: 40 } })
+  g = playN(g, { light: true }, 5)
+  assert.equal(g.phase, 'victory')
+  assert.equal(g.bossDefeated, true)
+  assert.equal(enemy(g, 10).state, 'dead')
+  assert.equal(g.runes, 5010)
+  assert.deepEqual(events(g, 'enemyDied'), [{ type: 'enemyDied', id: 10, runes: 5000 }])
+  assert.deepEqual(events(g, 'victory'), [{ type: 'victory' }])
+  g = playN(g, {}, 12)
+  assert.equal(g.player.action.kind, 'idle')
+  g = playN(g, { move: { x: 1, z: 0 } }, 10)
+  assert.equal(g.phase, 'victory')
+  near(g.player.pos.x, 2)
+  const rested = play({ ...g, phase: 'playing', room: 'courtyard', player: createPlayer(START_POS, 0) }, { interact: true })
+  assert.equal(rested.phase, 'resting')
+  assert.equal(enemy(rested, 10).state, 'dead')
+})
+
+test('jogo: o jogador não atravessa inimigos vivos', () => {
+  let g = withEnemy(started(), 1, { pos: { x: 0, z: -3 }, state: 'idle' })
+  g = playN(g, { move: { x: 0, z: 1 } }, 10)
+  near(distance(g.player.pos, { x: 0, z: -3 }), 0.85)
+  const dead = withEnemy(started(), 1, { pos: { x: 0, z: -3 }, state: 'dead' })
+  assert.ok(playN(dead, { move: { x: 0, z: 1 } }, 10).player.pos.z > -2.5)
+})
+
+test('jogo: um passo grande vale o mesmo que os subpassos de 0.05 s', () => {
+  const g = withEnemy(started(), 1, { pos: { x: 0, z: -2.5 }, state: 'chase' })
+  const big = stepGame(g, { ...IDLE_INPUT, light: true }, 0.25)
+  const small = playN(play(g, { light: true }), {}, 4)
+  assert.deepEqual({ ...big, events: [] }, { ...small, events: [] })
+  assert.ok(big.events.some(e => e.type === 'enemyHit'))
+})
+
+test('jogo: a mesma seed e a mesma entrada dão a mesma luta; seeds diferentes divergem', () => {
+  const script = (seed: string) => {
+    let g = { ...withPlayer(started(seed), { pos: { x: 0, z: 20 } }), room: 'bossRoom' as const }
+    g = withEnemy(g, 10, { pos: { x: 0, z: 23 }, state: 'chase' })
+    const attacks: string[] = []
+    for (let i = 0; i < 200; i++) {
+      g = play(g, i % 20 === 0 ? { light: true } : { move: { x: 1, z: 0 } })
+      const b = enemy(g, 10)
+      if (b.state === 'windup' && b.t <= DT && b.attack) attacks.push(b.attack)
+    }
+    return { g, attacks }
+  }
+  const a = script('alpha')
+  const b = script('alpha')
+  assert.deepEqual(a.g, b.g)
+  assert.ok(a.attacks.length >= 2)
+  assert.ok(a.g.rng !== createGame('alpha').rng)
+  const c = script('beta')
+  assert.notEqual(c.g.rng, a.g.rng)
+})

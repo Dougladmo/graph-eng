@@ -1,0 +1,55 @@
+// Contrato em task.md. Motor puro: sem three, react, motion nem DOM.
+
+export type Vec2 = { x: number; z: number }
+
+export function add(a: Vec2, b: Vec2): Vec2 {
+  throw new Error(`não implementado: add(${a.x},${b.x})`)
+}
+
+export function sub(a: Vec2, b: Vec2): Vec2 {
+  throw new Error(`não implementado: sub(${a.x},${b.x})`)
+}
+
+export function scale(v: Vec2, k: number): Vec2 {
+  throw new Error(`não implementado: scale(${v.x},${k})`)
+}
+
+export function dot(a: Vec2, b: Vec2): number {
+  throw new Error(`não implementado: dot(${a.x},${b.x})`)
+}
+
+export function length(v: Vec2): number {
+  throw new Error(`não implementado: length(${v.x})`)
+}
+
+export function distance(a: Vec2, b: Vec2): number {
+  throw new Error(`não implementado: distance(${a.x},${b.x})`)
+}
+
+export function normalize(v: Vec2): Vec2 {
+  throw new Error(`não implementado: normalize(${v.x})`)
+}
+
+export function yawOf(v: Vec2): number {
+  throw new Error(`não implementado: yawOf(${v.x})`)
+}
+
+export function fromYaw(yaw: number): Vec2 {
+  throw new Error(`não implementado: fromYaw(${yaw})`)
+}
+
+export function yawTo(from: Vec2, to: Vec2): number {
+  throw new Error(`não implementado: yawTo(${from.x},${to.x})`)
+}
+
+export function yawDelta(from: number, to: number): number {
+  throw new Error(`não implementado: yawDelta(${from},${to})`)
+}
+
+export function turnTowards(yaw: number, target: number, maxDelta: number): number {
+  throw new Error(`não implementado: turnTowards(${yaw},${target},${maxDelta})`)
+}
+
+export function withinArc(origin: Vec2, yaw: number, target: Vec2, range: number, arcDeg: number): boolean {
+  throw new Error(`não implementado: withinArc(${origin.x},${yaw},${target.x},${range},${arcDeg})`)
+}

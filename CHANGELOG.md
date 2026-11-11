@@ -13,6 +13,7 @@ Power Mode: cada papel sobe um degrau na família, os passos rodam em paralelo, 
 - **`routing` e sessões no `advisor-run.json`:** no Power Mode, `routing` lista as ondas com as raias de cada uma, e cada sessão traz `wave`, `steps`, `model` e `ms`. O plano salvo pelo `plan` guarda `power` e `powerMax`, e `implemente` sem tarefa reaplica os dois.
 - **`USAGE_LIMIT`:** o limite de uso da conta (semanal, diário ou de sessão) voltava como `CLI_FAILED` genérico; agora a chamada falha com `USAGE_LIMIT` e o texto do CLI, e a run bloqueia com `advisor_call_failed` dizendo isso.
 - **`test/fixtures/benchmark-minecraft/bench.sh`:** roda o benchmark Minecraft de ponta a ponta (cria o repositório, roda `implemente` com as flags pedidas, dá a nota com os 55 testes ocultos e o build, e resume custo, tempo e sessões).
+- **`test/fixtures/benchmark-soulslike/`:** segundo benchmark, um MVP de souls-like ("ASHEN GATE") em TypeScript estrito, React, three.js e motion: motor puro com contrato exato no `task.md` (estamina, esquiva com i-frames, combo, pesado, ataque em salto, guarda com contra-ataque, poise, riposte, frasco, lock-on, fogueira, rastro de runas, porta de névoa e chefe com duas fases), 66 testes ocultos, motor de referência e `bench.sh` com `tsc` estrito no corretor.
 - **`GRAPHENG_POWER_SPLIT=<medium>/<high>`** (experimento do benchmark): troca o modelo dos passos medium e high do Power Mode (`sonnet` ou `opus`), para medir as divisões de executor entre rodadas. A run grava `powerSplit`.
 
 ### Changed

@@ -1,0 +1,96 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { hashSeed, createRng, randomStep } from '../src/engine/rng.ts'
+import { fromYaw, yawDelta, withinArc } from '../src/engine/vec.ts'
+import { createPlayerVitals, spendStamina, regen, takeDamage, STAMINA_REGEN_DELAY } from '../src/engine/stats.ts'
+import { ATTACKS, ROLL } from '../src/engine/attacks.ts'
+import { createPlayer, stepPlayer, isInvulnerable, activeAttack } from '../src/engine/player.ts'
+import { createEnemy, stepEnemy, ENEMY_PROFILES } from '../src/engine/enemies.ts'
+import { COURTYARD, BOSS_ROOM, resolveRoom, START_POS } from '../src/engine/arena.ts'
+import { createGame, stepGame, IDLE_INPUT } from '../src/engine/game.ts'
+import type { PlayerInput } from '../src/engine/player.ts'
+
+const idle: PlayerInput = { move: { x: 0, z: 0 }, sprint: false, roll: false, jump: false, light: false, heavy: false, guard: false, flask: false }
+const ctx = { targetPos: null, room: COURTYARD }
+const near = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} ≠ ${b}`)
+
+test('rng: determinístico e no intervalo', () => {
+  assert.equal(hashSeed('abc'), hashSeed('abc'))
+  assert.notEqual(hashSeed('abc'), hashSeed('abd'))
+  const a = createRng(7), b = createRng(7)
+  for (let i = 0; i < 5; i++) assert.equal(a(), b())
+  const step = randomStep(123)
+  assert.ok(step.value >= 0 && step.value < 1)
+  assert.deepEqual(randomStep(123), step)
+})
+
+test('vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo', () => {
+  near(fromYaw(0).z, 1)
+  near(fromYaw(Math.PI / 2).x, 1)
+  near(yawDelta(0.1, -0.1), -0.2)
+  assert.equal(withinArc({ x: 0, z: 0 }, 0, { x: 0, z: 1.5 }, 2, 90), true)
+  assert.equal(withinArc({ x: 0, z: 0 }, 0, { x: 0, z: 2.5 }, 2, 90), false)
+  assert.equal(withinArc({ x: 0, z: 0 }, 0, { x: 1.5, z: 0 }, 2, 90), false)
+})
+
+test('stats: gastar estamina atrasa a regeneração; poise acumulado quebra', () => {
+  const spent = spendStamina(createPlayerVitals(), 30)
+  assert.equal(spent.stamina, 70)
+  assert.equal(spent.regenDelay, STAMINA_REGEN_DELAY)
+  assert.equal(regen(spent, 0.5, true).stamina, 70)
+  const hit = takeDamage(createPlayerVitals(), 10, 40)
+  assert.equal(hit.broke, true)
+  assert.equal(hit.vitals.poise, 0)
+})
+
+test('jogador: a esquiva tem i-frames e se desloca 3.15 m', () => {
+  let p = createPlayer(START_POS, 0)
+  p = stepPlayer(p, { ...idle, roll: true, move: { x: 0, z: 1 } }, 0.05, ctx)
+  assert.equal(p.action.kind, 'roll')
+  assert.equal(p.vitals.stamina, 100 - ROLL.stamina)
+  for (let i = 0; i < 3; i++) p = stepPlayer(p, idle, 0.05, ctx)
+  assert.equal(isInvulnerable(p), true)
+  for (let i = 0; i < 12; i++) p = stepPlayer(p, idle, 0.05, ctx)
+  assert.equal(p.action.kind, 'idle')
+  near(p.pos.z, START_POS.z + 3.15, 1e-6)
+})
+
+test('jogador: o ataque leve tem janela de acerto', () => {
+  let p = createPlayer(START_POS, 0)
+  p = stepPlayer(p, { ...idle, light: true }, 0.05, ctx)
+  assert.equal(p.action.attack, 'light1')
+  assert.equal(activeAttack(p), null)
+  for (let i = 0; i < 4; i++) p = stepPlayer(p, idle, 0.05, ctx)
+  assert.deepEqual(activeAttack(p), ATTACKS.light1)
+})
+
+test('inimigo: o hollow só persegue dentro do alcance de agressão', () => {
+  const far = createEnemy(1, 'hollow', 'courtyard', { x: 0, z: 10 }, Math.PI)
+  const quiet = stepEnemy(far, { pos: { x: 0, z: 0 }, alive: true }, 0.05, 1, COURTYARD)
+  assert.equal(quiet.enemy.state, 'idle')
+  const close = stepEnemy(far, { pos: { x: 0, z: 5 }, alive: true }, 0.05, 1, COURTYARD)
+  assert.equal(close.enemy.state, 'chase')
+  assert.equal(ENEMY_PROFILES.hollow.aggroRange, 9)
+})
+
+test('arena: os muros e os pilares prendem o jogador', () => {
+  assert.deepEqual(resolveRoom(COURTYARD, { x: 20, z: 0 }, 0.4), { x: 11.6, z: 0 })
+  const pushed = resolveRoom(COURTYARD, { x: 5, z: 2.3 }, 0.4)
+  near(pushed.z, 2 + 0.8 + 0.4)
+  near(resolveRoom(BOSS_ROOM, { x: 0, z: 50 }, 0.4).z, 28 + 11 - 0.4)
+})
+
+test('jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado', () => {
+  const g = createGame('seed')
+  assert.equal(g.phase, 'title')
+  assert.equal(g.enemies.length, 4)
+  let a = stepGame(g, { ...IDLE_INPUT, light: true }, 1 / 60)
+  let b = stepGame(createGame('seed'), { ...IDLE_INPUT, light: true }, 1 / 60)
+  assert.equal(a.phase, 'playing')
+  for (let i = 0; i < 120; i++) {
+    a = stepGame(a, { ...IDLE_INPUT, move: { x: 0, z: 1 } }, 1 / 60)
+    b = stepGame(b, { ...IDLE_INPUT, move: { x: 0, z: 1 } }, 1 / 60)
+  }
+  assert.deepEqual(a, b)
+  assert.ok(a.player.pos.z > START_POS.z + 7)
+})

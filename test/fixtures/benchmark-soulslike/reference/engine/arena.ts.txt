@@ -1,0 +1,61 @@
+import { distance, normalize, sub, add, scale, type Vec2 } from './vec.ts'
+
+export type RoomId = 'courtyard' | 'bossRoom'
+export type Circle = { x: number; z: number; r: number }
+export type Rect = { minX: number; maxX: number; minZ: number; maxZ: number }
+export type Room = { id: RoomId; rect: Rect | null; circle: Circle | null; pillars: Circle[] }
+
+export const COURTYARD: Room = {
+  id: 'courtyard',
+  rect: { minX: -12, maxX: 12, minZ: -10, maxZ: 14 },
+  circle: null,
+  pillars: [{ x: -5, z: 2, r: 0.8 }, { x: 5, z: 2, r: 0.8 }, { x: -5, z: 8, r: 0.8 }, { x: 5, z: 8, r: 0.8 }],
+}
+
+export const BOSS_ROOM: Room = { id: 'bossRoom', rect: null, circle: { x: 0, z: 28, r: 11 }, pillars: [] }
+
+export const BONFIRE: Vec2 = { x: 0, z: -6 }
+export const START_POS: Vec2 = { x: 0, z: -4 }
+export const FOG_GATE: Vec2 = { x: 0, z: 14 }
+export const BOSS_ROOM_ENTRY: Vec2 = { x: 0, z: 18 }
+export const BOSS_SPAWN: Vec2 = { x: 0, z: 34 }
+export const HOLLOW_SPAWNS: Vec2[] = [{ x: -4, z: 6 }, { x: 4, z: 7 }, { x: 0, z: 11 }]
+export const INTERACT_RANGE = 2.0
+export const LOCK_RANGE = 12
+export const PLAYER_RADIUS = 0.4
+
+export function getRoom(id: RoomId): Room {
+  return id === 'courtyard' ? COURTYARD : BOSS_ROOM
+}
+
+export function pushOut(pos: Vec2, radius: number, obstacle: Circle): Vec2 {
+  const center = { x: obstacle.x, z: obstacle.z }
+  const minDist = obstacle.r + radius
+  const dist = distance(pos, center)
+  if (dist >= minDist) return pos
+  const dir = dist === 0 ? { x: 1, z: 0 } : normalize(sub(pos, center))
+  return add(center, scale(dir, minDist))
+}
+
+function clampRect(rect: Rect, pos: Vec2, radius: number): Vec2 {
+  return {
+    x: Math.min(rect.maxX - radius, Math.max(rect.minX + radius, pos.x)),
+    z: Math.min(rect.maxZ - radius, Math.max(rect.minZ + radius, pos.z)),
+  }
+}
+
+function clampCircle(circle: Circle, pos: Vec2, radius: number): Vec2 {
+  const center = { x: circle.x, z: circle.z }
+  const limit = circle.r - radius
+  const dist = distance(pos, center)
+  if (dist <= limit) return pos
+  return add(center, scale(normalize(sub(pos, center)), limit))
+}
+
+export function resolveRoom(room: Room, pos: Vec2, radius: number): Vec2 {
+  let next = pos
+  if (room.rect) next = clampRect(room.rect, next, radius)
+  if (room.circle) next = clampCircle(room.circle, next, radius)
+  for (const pillar of room.pillars) next = pushOut(next, radius, pillar)
+  return next
+}

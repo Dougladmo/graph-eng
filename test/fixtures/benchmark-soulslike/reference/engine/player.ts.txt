@@ -1,0 +1,179 @@
+import { add, fromYaw, length, normalize, scale, yawOf, yawTo, type Vec2 } from './vec.ts'
+import { GUARD_SPEED, SPRINT_COST, SPRINT_SPEED, WALK_SPEED, FLASK_HEAL, FLASK_MAX, canAct, createPlayerVitals, heal, regen, spendStamina, type Vitals } from './stats.ts'
+import { ATTACKS, FLASK, JUMP, LIGHT_COMBO_START, RIPOSTE, ROLL, STAGGER, type AttackName, type AttackProfile } from './attacks.ts'
+import { PLAYER_RADIUS, resolveRoom, type Room } from './arena.ts'
+
+export type ActionKind = 'idle' | 'roll' | 'attack' | 'jump' | 'jumpAttack' | 'flask' | 'riposte' | 'stagger' | 'dead'
+
+export type PlayerAction = {
+  kind: ActionKind
+  t: number
+  attack: AttackName | null
+  dir: Vec2
+  hitIds: number[]
+  healed: boolean
+}
+
+export type Player = {
+  pos: Vec2
+  y: number
+  yaw: number
+  vitals: Vitals
+  flasks: number
+  action: PlayerAction
+  guarding: boolean
+  sprinting: boolean
+  lockOn: number | null
+  guardCounter: number
+}
+
+export type PlayerInput = {
+  move: Vec2
+  sprint: boolean
+  roll: boolean
+  jump: boolean
+  light: boolean
+  heavy: boolean
+  guard: boolean
+  flask: boolean
+}
+
+export type PlayerContext = { targetPos: Vec2 | null; room: Room }
+
+export const IDLE_ACTION: PlayerAction = { kind: 'idle', t: 0, attack: null, dir: { x: 0, z: 0 }, hitIds: [], healed: false }
+
+const MAX_STEP = 0.05
+const ZERO: Vec2 = { x: 0, z: 0 }
+
+export function createPlayer(pos: Vec2, yaw: number): Player {
+  return { pos, y: 0, yaw, vitals: createPlayerVitals(), flasks: FLASK_MAX, action: IDLE_ACTION, guarding: false, sprinting: false, lockOn: null, guardCounter: 0 }
+}
+
+function action(kind: ActionKind, attack: AttackName | null = null, dir: Vec2 = ZERO): PlayerAction {
+  return { kind, t: 0, attack, dir, hitIds: [], healed: false }
+}
+
+function durationOf(a: PlayerAction): number {
+  switch (a.kind) {
+    case 'idle': return Infinity
+    case 'roll': return ROLL.duration
+    case 'attack': return a.attack ? ATTACKS[a.attack].duration : 0
+    case 'jump': return JUMP.duration
+    case 'jumpAttack': return ATTACKS.jumpAttack.duration
+    case 'flask': return FLASK.duration
+    case 'riposte': return RIPOSTE.duration
+    case 'stagger': return STAGGER.player
+    case 'dead': return Infinity
+  }
+}
+
+function startAction(p: Player, input: PlayerInput, locked: boolean): Player {
+  const a = p.action
+  const moving = length(input.move) > 0
+  if (input.flask && a.kind === 'idle' && p.flasks > 0) {
+    return { ...p, flasks: p.flasks - 1, action: action('flask'), guardCounter: 0 }
+  }
+  if (!canAct(p.vitals)) return p
+  const rollCancel = a.kind === 'attack' && a.attack !== null && a.t >= ATTACKS[a.attack].hitEnd
+  if (input.roll && (a.kind === 'idle' || rollCancel)) {
+    const dir = moving ? normalize(input.move) : scale(fromYaw(p.yaw), -1)
+    return { ...p, yaw: locked ? p.yaw : yawOf(dir), action: action('roll', null, dir), vitals: spendStamina(p.vitals, ROLL.stamina), guardCounter: 0 }
+  }
+  if (input.jump && a.kind === 'idle') {
+    return { ...p, action: action('jump'), vitals: spendStamina(p.vitals, JUMP.stamina), guardCounter: 0 }
+  }
+  if (input.heavy && a.kind === 'idle') {
+    return { ...p, action: action('attack', 'heavy'), vitals: spendStamina(p.vitals, ATTACKS.heavy.stamina) }
+  }
+  if (input.light) {
+    if (a.kind === 'idle') return { ...p, action: action('attack', 'light1'), vitals: spendStamina(p.vitals, ATTACKS.light1.stamina), guardCounter: 0 }
+    if (a.kind === 'attack' && a.attack === 'light1' && a.t >= LIGHT_COMBO_START) {
+      return { ...p, action: action('attack', 'light2'), vitals: spendStamina(p.vitals, ATTACKS.light2.stamina), guardCounter: 0 }
+    }
+    if (a.kind === 'jump' && a.t < JUMP.attackWindow) {
+      return { ...p, action: action('jumpAttack'), vitals: spendStamina(p.vitals, ATTACKS.jumpAttack.stamina), guardCounter: 0 }
+    }
+  }
+  return p
+}
+
+function elapsedWithin(t: number, dt: number, limit: number): number {
+  return Math.min(t, limit) - Math.min(Math.max(0, t - dt), limit)
+}
+
+function move(p: Player, input: PlayerInput, dt: number, room: Room): Player {
+  const a = p.action
+  let pos = p.pos
+  let y = p.y
+  let vitals = p.vitals
+  switch (a.kind) {
+    case 'idle': {
+      const speed = p.guarding ? GUARD_SPEED : p.sprinting ? SPRINT_SPEED : WALK_SPEED
+      pos = add(pos, scale(normalize(input.move), speed * dt))
+      if (p.sprinting) vitals = spendStamina(vitals, SPRINT_COST * dt)
+      break
+    }
+    case 'roll':
+      pos = add(pos, scale(a.dir, ROLL.speed * elapsedWithin(a.t, dt, ROLL.moveTime)))
+      break
+    case 'attack': {
+      const profile = a.attack ? ATTACKS[a.attack] : null
+      if (profile) pos = add(pos, scale(fromYaw(p.yaw), (profile.lunge / profile.hitStart) * elapsedWithin(a.t, dt, profile.hitStart)))
+      break
+    }
+    case 'jump': {
+      pos = add(pos, scale(normalize(input.move), WALK_SPEED * dt))
+      const u = a.t / JUMP.duration
+      y = JUMP.height * 4 * u * (1 - u)
+      break
+    }
+    case 'jumpAttack':
+      y = Math.max(0, y - (JUMP.height / ATTACKS.jumpAttack.duration) * dt)
+      break
+    default:
+      break
+  }
+  return { ...p, pos: resolveRoom(room, pos, PLAYER_RADIUS), y, vitals }
+}
+
+function stepOnce(player: Player, input: PlayerInput, dt: number, ctx: PlayerContext): Player {
+  let p: Player = { ...player, action: { ...player.action, t: player.action.t + dt } }
+  if (p.action.kind === 'idle') p = { ...p, guardCounter: Math.max(0, p.guardCounter - dt) }
+  if (p.action.t >= durationOf(p.action)) p = { ...p, action: IDLE_ACTION, y: 0, guardCounter: 0 }
+  const locked = ctx.targetPos !== null
+  const controllable = p.action.kind !== 'dead' && p.action.kind !== 'stagger'
+  if (controllable) p = startAction(p, input, locked)
+  const idle = p.action.kind === 'idle'
+  const guarding = idle && input.guard
+  const sprinting = idle && input.sprint && length(input.move) > 0 && canAct(p.vitals) && !input.guard
+  p = { ...p, guarding, sprinting }
+  if (locked && ctx.targetPos) p = { ...p, yaw: yawTo(p.pos, ctx.targetPos) }
+  else if (idle && length(input.move) > 0) p = { ...p, yaw: yawOf(input.move) }
+  p = move(p, controllable ? input : { ...input, move: ZERO }, dt, ctx.room)
+  if (p.action.kind === 'flask' && !p.action.healed && p.action.t >= FLASK.healAt) {
+    p = { ...p, vitals: heal(p.vitals, FLASK_HEAL), action: { ...p.action, healed: true } }
+  }
+  return { ...p, vitals: regen(p.vitals, dt, idle && !sprinting) }
+}
+
+export function stepPlayer(player: Player, input: PlayerInput, dt: number, ctx: PlayerContext): Player {
+  const steps = Math.max(1, Math.ceil(dt / MAX_STEP))
+  const sub = dt / steps
+  const held: PlayerInput = { ...input, roll: false, jump: false, light: false, heavy: false, flask: false }
+  let p = player
+  for (let i = 0; i < steps; i++) p = stepOnce(p, i === 0 ? input : held, sub, ctx)
+  return p
+}
+
+export function isInvulnerable(player: Player): boolean {
+  const a = player.action
+  if (a.kind === 'dead') return true
+  return a.kind === 'roll' && a.t >= ROLL.iframeStart && a.t < ROLL.iframeEnd
+}
+
+export function activeAttack(player: Player): AttackProfile | null {
+  const a = player.action
+  const profile = a.kind === 'attack' && a.attack ? ATTACKS[a.attack] : a.kind === 'jumpAttack' ? ATTACKS.jumpAttack : null
+  if (!profile) return null
+  return a.t >= profile.hitStart && a.t < profile.hitEnd ? profile : null
+}

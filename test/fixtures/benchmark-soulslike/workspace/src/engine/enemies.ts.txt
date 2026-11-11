@@ -1,0 +1,92 @@
+// Contrato em task.md. Motor puro: sem three, react, motion nem DOM.
+import type { Vec2 } from './vec.ts'
+import type { Vitals } from './stats.ts'
+import type { Room, RoomId } from './arena.ts'
+
+export type EnemyKind = 'hollow' | 'boss'
+export type EnemyState = 'idle' | 'intro' | 'chase' | 'windup' | 'attack' | 'recover' | 'stagger' | 'dead'
+export type EnemyAttackName = 'slash' | 'slam' | 'charge' | 'shockwave'
+export type EnemyAttackShape = 'arc' | 'radius' | 'charge'
+
+export type Enemy = {
+  id: number
+  kind: EnemyKind
+  room: RoomId
+  home: Vec2
+  homeYaw: number
+  pos: Vec2
+  yaw: number
+  vitals: Vitals
+  state: EnemyState
+  t: number
+  attack: EnemyAttackName | null
+  hitDone: boolean
+  phase: 1 | 2
+}
+
+export type EnemyHit = { damage: number; poiseDamage: number; origin: Vec2 }
+export type EnemyTarget = { pos: Vec2; alive: boolean }
+
+export type EnemyProfile = {
+  hp: number
+  poise: number
+  radius: number
+  speed: number
+  aggroRange: number
+  staggerTime: number
+  runes: number
+  intro: number
+}
+
+export type EnemyAttack = {
+  windup: number
+  active: number
+  recover: number
+  damage: number
+  poiseDamage: number
+  range: number
+  arcDeg: number
+  shape: EnemyAttackShape
+  startRange: number
+}
+
+export const ENEMY_PROFILES: Record<EnemyKind, EnemyProfile> = {
+  hollow: { hp: 120, poise: 30, radius: 0.45, speed: 3, aggroRange: 9, staggerTime: 1.5, runes: 100, intro: 0 },
+  boss: { hp: 1500, poise: 80, radius: 1.0, speed: 3.5, aggroRange: 40, staggerTime: 2.0, runes: 5000, intro: 2.0 },
+}
+
+export const ENEMY_ATTACKS: Record<EnemyKind, Partial<Record<EnemyAttackName, EnemyAttack>>> = {
+  hollow: {
+    slash: { windup: 0.5, active: 0.3, recover: 0.8, damage: 60, poiseDamage: 20, range: 1.8, arcDeg: 100, shape: 'arc', startRange: 2.0 },
+  },
+  boss: {
+    slash: { windup: 0.6, active: 0.3, recover: 0.9, damage: 110, poiseDamage: 25, range: 2.8, arcDeg: 120, shape: 'arc', startRange: 4.0 },
+    slam: { windup: 1.0, active: 0.3, recover: 1.2, damage: 160, poiseDamage: 40, range: 3.0, arcDeg: 360, shape: 'radius', startRange: 4.0 },
+    charge: { windup: 0.4, active: 0.7, recover: 1.0, damage: 90, poiseDamage: 20, range: 1.4, arcDeg: 0, shape: 'charge', startRange: Infinity },
+    shockwave: { windup: 0.8, active: 0.2, recover: 1.5, damage: 120, poiseDamage: 30, range: 5.0, arcDeg: 360, shape: 'radius', startRange: Infinity },
+  },
+}
+
+export const CHARGE_SPEED = 12
+export const TRACK_RATE = 2.5
+export const BOSS_PHASE2_HP = 750
+export const PHASE2_SPEED = 4.5
+export const PHASE2_WINDUP = 0.75
+export const CHARGE_DISTANCE = 5
+export const RIPOSTE_RECOVER = 1.0
+
+export function createEnemy(id: number, kind: EnemyKind, room: RoomId, pos: Vec2, yaw: number): Enemy {
+  throw new Error(`não implementado: createEnemy(${id},${kind},${room},${pos.x},${yaw})`)
+}
+
+export function respawnEnemy(enemy: Enemy): Enemy {
+  throw new Error(`não implementado: respawnEnemy(${enemy.id})`)
+}
+
+export function enemyRadius(enemy: Enemy): number {
+  throw new Error(`não implementado: enemyRadius(${enemy.id})`)
+}
+
+export function stepEnemy(enemy: Enemy, target: EnemyTarget, dt: number, rng: number, room: Room): { enemy: Enemy; rng: number; hit: EnemyHit | null } {
+  throw new Error(`não implementado: stepEnemy(${enemy.id},${target.alive},${dt},${rng},${room.id})`)
+}
