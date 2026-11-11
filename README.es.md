@@ -213,7 +213,7 @@ Cada run deja su evidencia en `.graph-runs/<runId>/advisor-run.json`: plan, revi
 
 El modelo fuerte costó menos del 10% de la run. La evidencia cruda de cada run está en [docs/benchmarks/](docs/benchmarks/).
 
-**Power Mode:** las runs de Minecraft con `--power` y `--power max` todavía no se hicieron (esperan el reset de uso de la cuenta, el 12/11/2026). El plan son 5 rondas por variante (por defecto, `--power`, `--power max`), ajustando graph-eng entre rondas. Las variantes y las hipótesis están en [docs/power-mode.md](docs/power-mode.md); para correr una, `bash test/fixtures/benchmark-minecraft/bench.sh <destino> --power max`.
+**Power Mode (5 rondas por variante, 11/11/2026):** las 15 runs pasaron los 55 tests ocultos y el build. La configuración por defecto entregó un juego jugable en 5 de 5 rondas por US$ 1,34 a 1,83 en 8 a 11 min. El Power Mode tal como fue diseñado (modelo fuerte en los pasos `high`) costó de 4 a 7 veces más, tardó de 2 a 3 veces más y `--power max` no entregó un juego jugable en 2 de 2 rondas. Con el modelo medio en todos los pasos del ejecutor (`GRAPHENG_POWER_SPLIT`, ver [docs/benchmarks/](docs/benchmarks/)), `--power max` entregó en las dos rondas por US$ 2,75 a 3,15 en 10 a 12 min, con código del tamaño y la forma del de por defecto. Misma nota, mismas features: la configuración por defecto sigue siendo la recomendación. La tabla completa, el análisis de calidad del código y los próximos pasos están en [docs/benchmarks/README.md](docs/benchmarks/README.md) y [docs/power-mode.md](docs/power-mode.md) (en portugués).
 
 ### Por qué se quitó el motor de grafo
 

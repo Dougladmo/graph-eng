@@ -1,0 +1,541 @@
+{
+  "flow": "advisor",
+  "power": true,
+  "powerMax": true,
+  "powerSplit": {
+    "medium": "opus",
+    "high": "opus"
+  },
+  "haikuMax": "low",
+  "status": "done",
+  "plan": {
+    "goal": "Entregar o clone jogável de Minecraft (React 18 + three.js + Vite): motor puro em src/engine/ seguindo o contrato da spec à risca (testado com node --test, inclusive testes ocultos) e a interface completa (menu, mundo em chunks, controles, HUD, inventário/crafting, dia e noite, save) ligada em src/main.jsx. Sem alterar package.json, vite.config.js, index.html nem test/; sem dependências novas; texturas geradas em código.",
+    "steps": [
+      {
+        "step": "Tabelas base do motor. blocks.js: tabela de blocos/itens, getBlock/getItem (RangeError em id desconhecido, hardness Infinity para água e bedrock, maxStack 1 para picaretas, placeable só para blocos exceto AIR/WATER), isSolid/isTransparent. mining.js: canHarvest, breakTime (dureza*(1.5|5)/velocidade; velocidade 2/4 só em bloco que exige picareta; toolId null), dropsFor. Criar atlas.js (puro): layout do atlas compartilhado por mesher e render — ATLAS_COLS/ATLAS_ROWS, tileFor(id, faceIndex) com a ordem de faces [+X,-X,+Y,-Y,+Z,-Z] (grama topo/lado/base, tronco topo/lado, tiles para STICK, picaretas e COAL) e tileUV(tile) devolvendo {u0,v0,u1,v1} em [0,1].",
+        "complexity": "medium",
+        "files": [
+          "src/engine/blocks.js",
+          "src/engine/mining.js",
+          "src/engine/atlas.js"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "noise.js: hashSeed (número ou string → uint32, 'abc' ≠ 'abd'), createRng (PRNG com seed em [0,1)), createNoise2D (ruído de valor/gradiente com fBm normalizado em [-1,1], contínuo: delta < 0.05 a 0.01 de distância, campos diferentes por seed, funciona com coordenadas negativas). daynight.js: DAY_LENGTH e skyState (t em [0,1) também para negativos, sunAngle = 2πt, daylight contínuo com exatamente 1 em t=0.25 e 0.15 em t=0.75, isNight em (0.5, 1)).",
+        "complexity": "medium",
+        "files": [
+          "src/engine/noise.js",
+          "src/engine/daynight.js"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "world.js completo: chunkIndex; generateChunk (altura por coluna em coordenada de mundo, limitada a [12,40], sem emenda; camadas grama/terra/areia/pedra/água; minérios com limites de y e ao menos um COAL_ORE garantido por chunk; árvores só sobre GRASS com tronco em x,z locais 2..13, 4–6 LOG, folhas só em AIR e dentro do chunk e de y ≤ 63; RNG por chunk derivado de seed+cx+cz); createWorld (cache de chunks, flat, mapa de edições); getBlockAt/setBlockAt (negativos com floor, y<0 → BEDROCK, y≥64 → AIR, RangeError, edição removida ao voltar ao valor gerado); getSurfaceHeight; serializeWorld/deserializeWorld (ordem de chaves exata, edições ordenadas por x,y,z, round-trip idêntico, Error em versão ≠ 1). Expor um contador/versionamento simples de chunk sujo é opcional; não mudar as assinaturas.",
+        "complexity": "high",
+        "files": [
+          "src/engine/world.js"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "inventory.js (tudo puro, sem mutar o argumento): createInventory, addItem (completa pilhas existentes em ordem, depois vazios, respeita maxStack de getItem, leftover), removeFromSlot, selectSlot (RangeError fora de 0..8 ou não inteiro), scrollSelection com volta (inclusive delta negativo e > 9), moveStack (mover/juntar/trocar; from === to não muda), selectedItem. crafting.js: craft (normaliza a grade pelo bounding box das células ocupadas; receitas com forma deslocáveis, sem forma para tábuas e vidro; picaretas só em 3x3; item extra invalida; grade que não é 2x2/3x3 quadrada → null) e consumeIngredients (pura).",
+        "complexity": "medium",
+        "files": [
+          "src/engine/inventory.js",
+          "src/engine/crafting.js"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "mesher.js: buildChunkMesh(world, cx, cz) com culling exato (face emitida sse vizinho é AIR ou transparente de id diferente; vizinho lido via getBlockAt, inclusive em outro chunk, y<0 = BEDROCK, y>63 = AIR), 4 vértices + 6 índices por face em sentido anti-horário visto de fora, posições em coordenadas de mundo, normais para fora, UVs via atlas.js, separação opaque/transparent, saída em Float32Array/Uint32Array (também quando vazio). raycast.js: DDA de Amanatides & Woo com direção não normalizada, ignora AIR e WATER, face/distance do ponto de entrada, origem dentro de sólido → face [0,0,0] e distance 0, null além de maxDistance ou com direção nula, origens negativas e componentes zero.",
+        "complexity": "high",
+        "files": [
+          "src/engine/mesher.js",
+          "src/engine/raycast.js"
+        ],
+        "wave": 3
+      },
+      {
+        "step": "physics.js: createPlayer, collidesAt, canPlaceBlock e stepPlayer puro — subpassos ≤ 0.05; direção por yaw com diagonal normalizada; walk/sprint (só para a frente)/sneak sem inércia; gravidade com limite terminal; pulo só com onGround (sobe 1 bloco, não 2); colisão AABB eixo a eixo Y→X→Z com pouso exato no topo do bloco (position[1] inteiro exato, onGround true, velocity[1] 0), teto zera velocity[1]; sneak não sai da borda (testar por eixo se sobra apoio sólido); água (gravidade 1/4, queda máx. 3/s, jump sobe a 3/s); voo (sem gravidade, jump/sneak a WALK_SPEED, com colisão). Preservar yaw/pitch/flying e não mutar o jogador de entrada.",
+        "complexity": "high",
+        "files": [
+          "src/engine/physics.js"
+        ],
+        "wave": 3
+      },
+      {
+        "step": "Componentes React de apresentação + CSS, sem three, controlados por props/callbacks: MainMenu (título, seed aleatória editável, Novo mundo, Continuar só com hasSave, slider 2–8 padrão 4), Hud (mira, overlay de água, nome do item por 2 s), Hotbar (ícone + quantidade, slot selecionado), InventoryScreen (36 slots + grade de crafting 2x2 ou 3x3 conforme prop, slot de resultado, pilha no cursor: clicar pega/solta usando moveStack/craft/consumeIngredients do motor, devolver itens da grade ao fechar), PauseMenu (Continuar, Salvar, Sair para o menu), DebugOverlay (FPS, XYZ, chunk, direção, bloco mirado, seed, hora). Ícones chegam pela prop icons (mapa id → data URL), renderizados com image-rendering: pixelated.",
+        "complexity": "medium",
+        "files": [
+          "src/ui/MainMenu.jsx",
+          "src/ui/Hud.jsx",
+          "src/ui/Hotbar.jsx",
+          "src/ui/InventoryScreen.jsx",
+          "src/ui/PauseMenu.jsx",
+          "src/ui/DebugOverlay.jsx",
+          "src/ui/ItemIcon.jsx",
+          "src/ui/styles.css"
+        ],
+        "wave": 3
+      },
+      {
+        "step": "Camada de render three.js. textures.js: atlas 16x16 por tile desenhado em canvas seguindo engine/atlas.js (ruído procedural determinístico por tile, grama topo/lado/base, anéis no tronco, minérios, vidro, itens), CanvasTexture com NearestFilter, mapa de ícones id → data URL e os estágios de rachadura. ChunkRenderer.js: carrega/descarrega chunks em volta do jogador até a distância escolhida, fila por proximidade com orçamento de poucas malhas por frame, BufferGeometry a partir de buildChunkMesh, material opaco + água semitransparente + recorte (alphaTest) para vidro/folhas, remesh do chunk e dos vizinhos de borda ao editar bloco, dispose de geometrias. Sky.js: cor do céu, sol e lua, luz ambiente e direcional e neblina a partir de skyState e da distância de renderização. Selection.js: wireframe do bloco mirado e overlay de rachadura por progresso.",
+        "complexity": "high",
+        "files": [
+          "src/render/textures.js",
+          "src/render/ChunkRenderer.js",
+          "src/render/Sky.js",
+          "src/render/Selection.js"
+        ],
+        "wave": 4
+      },
+      {
+        "step": "Lógica de sessão sem three. save.js: ler/gravar/apagar a chave mc-mvp-save (serializeWorld, posição, yaw/pitch, flying, inventário, hora do dia), tolerante a JSON inválido. input.js: teclado e mouse — pointer lock, olhar com pitch ±89°, WASD/espaço/Shift/Ctrl, W duas vezes para correr, F voo, 1–9 e roda, E, Esc, F3 (preventDefault), botões esquerdo/direito/meio, limpeza de listeners. session.js: createSession (novo ou restaurado, spawn no centro em getSurfaceHeight+1), update(dt) com stepPlayer, relógio do dia, raycast de 5 blocos a partir de EYE_HEIGHT, mineração com breakTime da ferramenta na mão (progresso zera ao soltar ou mudar de alvo; drop via dropsFor + addItem), colocar bloco (getItem.placeable, canPlaceBlock, consome 1), abrir bancada, pick block para a hotbar, autosave a cada 30 s e ao pausar, e eventos de bloco alterado para o render.",
+        "complexity": "high",
+        "files": [
+          "src/game/save.js",
+          "src/game/input.js",
+          "src/game/session.js"
+        ],
+        "wave": 4
+      },
+      {
+        "step": "Integração nos pontos de entrada. GameView.jsx: cria renderer/cena/câmera three, liga session + input + ChunkRenderer + Sky + Selection num loop requestAnimationFrame (dt limitado, resize, dispose completo ao desmontar, compatível com StrictMode), publica para o React apenas o estado de HUD que muda (com throttle) e alterna telas: jogo, inventário 2x2 (E), bancada 3x3, pausa (Esc ou perda do pointer lock, com save), debug (F3). App.jsx: máquina de estados menu ↔ jogo, Novo mundo/Continuar, distância de renderização. main.jsx: monta App e importa o CSS. Fechar rodando npm test e npm run build e corrigindo qualquer falha de integração entre módulos.",
+        "complexity": "high",
+        "files": [
+          "src/game/GameView.jsx",
+          "src/App.jsx",
+          "src/main.jsx"
+        ],
+        "wave": 5
+      }
+    ],
+    "doneWhen": [
+      "npm test passa (os 11 testes visíveis de test/engine.test.js) sem alterar test/",
+      "npm run build termina sem erro",
+      "Cada função de src/engine/ cumpre o contrato da spec, inclusive bordas (RangeError, coordenadas negativas, Infinity, pureza, round-trip de serializeWorld), e nenhum arquivo do motor importa three, react ou DOM",
+      "npm run dev abre o menu (seed aleatória, Novo mundo, Continuar só com save, slider 2–8) e entra num mundo infinito com chunks carregando/descarregando, céu com sol e lua, neblina e ciclo de dia e noite",
+      "Todos os controles funcionam: pointer lock, WASD, pulo/nado, sneak, corrida (Ctrl e W duplo), voo (F), mineração com rachadura e drop, colocação, bancada 3x3, pick block, hotbar por 1–9 e roda, E, Esc, F3",
+      "HUD completo: mira, hotbar com ícones do atlas e quantidades, nome do item por 2 s, overlay de água, contorno do bloco mirado",
+      "Autosave a cada 30 s e ao pausar em localStorage['mc-mvp-save']; Continuar restaura mundo, posição, olhar, inventário e hora",
+      "Cerca de 60 fps com distância 4 e nenhum erro no console; package.json, vite.config.js e index.html intactos"
+    ],
+    "risks": [
+      "Testes ocultos cobram bordas exatas do motor (pouso com y inteiro exato, culling entre transparentes, ordem do JSON, sneak na borda, pulo de 1 mas não 2 blocos); erros de ponto flutuante na física e no DDA são o ponto mais provável de falha",
+      "Passos da mesma onda não se veem: mesher e render dependem do layout de src/engine/atlas.js, e a UI depende das formas de props/sessão; divergências só aparecem na onda 5, que precisa de folga para ajustar",
+      "generateChunk: garantir altura idêntica entre chunks, ao menos um COAL_ORE mesmo em chunk com pouca pedra, e copa/tronco sem sair do chunk nem de y ≤ 63",
+      "node --test executa qualquer *.test.js do repositório: não criar arquivos de teste em src/ nem deixar scripts de verificação soltos; validar com scripts temporários fora do repo",
+      "Desempenho: remalhar via getBlockAt bloco a bloco pode custar caro na distância 8; limitar malhas por frame, evitar setState do React a cada frame e descartar geometrias ao descarregar",
+      "Pointer lock, Esc e StrictMode: o navegador solta o lock no Esc e bloqueia novo lock por ~1 s, e o efeito duplo do React em dev pode duplicar renderer/listeners se a limpeza não for completa"
+    ]
+  },
+  "review": {
+    "verdict": "REVISE",
+    "notes": [
+      "Lacuna mesher → render: `buildChunkMesh` só devolve `{ opaque, transparent }`, mas o ChunkRenderer precisa de dois materiais distintos (água semitransparente sem depthWrite; vidro/folhas com alphaTest). Defina como separar sem mudar o contrato do mesher (não acrescentar nem trocar chaves do retorno): o ChunkRenderer divide as faces de `transparent` em duas geometrias, identificando a água pelo tile de UV de `engine/atlas.js` ou por `getBlockAt` no centro da face menos meia normal.",
+      "Fixe os contratos entre passos paralelos antes das ondas 3 e 4, porque hoje nenhum passo os define: (a) props e callbacks da UI (quem é dono do inventário, da grade de crafting e da pilha no cursor; forma do estado de HUD/debug); (b) API da sessão que o render consome (evento de bloco alterado com x,y,z; alvo e progresso de mineração para o Selection; posição da câmera); (c) forma de `icons` e dos estágios de rachadura. Escreva essas assinaturas no passo 1 (por exemplo, num arquivo de JSDoc em `src/game/`) e faça os passos das ondas 3 e 4 segui-las.",
+      "Pointer lock x telas: o plano pausa em \"Esc ou perda do pointer lock\", mas abrir o inventário (E) ou a bancada solta o lock de propósito, e isso não pode pausar. Especifique a máquina de estados em GameView/input: só a perda de lock no estado \"jogando\" pausa; Esc ou E com inventário/bancada aberto fecha a tela, devolve ao inventário os itens da grade e do cursor, e volta ao jogo; novo lock só por clique, tolerando a rejeição de ~1 s do navegador (catch na promise) para não gerar erro no console. Autosave e Salvar com tela aberta devem incluir os itens da grade e do cursor, para não perdê-los.",
+      "Desempenho de `world.js`, do qual dependem os 60 fps: aplique as edições direto no `Uint8Array` do chunk em cache e use o mapa de edições só para serializar e reverter (guardando o valor gerado original). `getBlockAt` não pode consultar um Map com chave string a cada chamada, porque o mesher faz cerca de 100 mil leituras por chunk. No mesher, leia o array do próprio chunk para células internas e use `getBlockAt` só nas bordas. O ChunkRenderer deve remalhar de imediato (fora da fila) o chunk editado e os vizinhos de borda, para não abrir buraco visível ao minerar.",
+      "generateChunk, bordas que os testes ocultos podem cobrar: minério só substitui `STONE` (nunca terra, areia ou bedrock) e o COAL_ORE garantido sai de uma célula de pedra com y ≤ 40; árvores não podem interferir entre si (espaçamento mínimo, ou o tronco só sobrescreve AIR/LEAVES da própria árvore, sem empilhar troncos além de 6 nem pôr tronco sobre a copa de outra), sempre com exatamente 4 a 6 LOG contíguos sobre GRASS; a grama sob o tronco continua GRASS. Na validação final, cheque essas invariantes em várias seeds e em chunks negativos com script temporário fora do repositório."
+    ]
+  },
+  "sessions": [
+    {
+      "round": 1,
+      "model": "opus",
+      "wave": 1,
+      "steps": [
+        1,
+        2
+      ],
+      "status": "DONE",
+      "summary": "Steps 1 and 2 are done. The four tests these files cover pass (blocks, noise, mining, day/night), and `npm run build` succeeds. The other 7 tests fail because world, mesher, raycast, physics, inventory and crafting are still stubs left for later waves. I could only run `npm test` and `npm run build`, so the noise continuity limit and the exact daylight ends are worked out on paper, not tested.\n\n**Step 1**\n- **`src/engine/blocks.js`**: the full table of blocks and items. `getBlock` and `getItem` return a fresh object each call and throw `RangeError` for unknown ids. Water and bedrock have `Infinity` hardness, pickaxes stack to 1, and `placeable` is true for every block except AIR and WATER. `isSolid` and `isTransparent` use fast lookup arrays and throw `RangeError` for anything that isn't a block, including item ids 100–103. Extra exports: `BLOCK_COUNT`, `BLOCK_IDS`, `ITEM_IDS`, `isBlock`, `isItem`, and `displayName` (Portuguese names for the UI).\n- **`src/engine/mining.js`**: `canHarvest`, `breakTime` and `dropsFor` as specified, with the tool defaulting to `null` (hand). Pickaxe speed (2 or 4) applies to any block that needs a pickaxe, so iron ore with a wooden pickaxe takes 7.5 s and drops nothing.\n- **`src/engine/atlas.js`**: a shared texture atlas of 8×4 tiles, 16 px each, with row 0 at the top of the canvas.\n  - Face order is [+X, −X, +Y, −Y, +Z, −Z]; grass has separate top, side and bottom tiles, and the log top differs from its side.\n  - It includes tiles for the stick, both pickaxes and coal, plus 10 crack stages (tiles 22–31).\n  - Helpers: `tileFor`, `iconTileFor`, `crackTile`, `tileRect`, `tileUV` (UVs in [0,1], assuming three.js's default flipY, with an optional inset) and `tileAtUV`. The renderer can use `tileAtUV` to split water faces from glass and leaves.\n\n**Step 2**\n- **`src/engine/noise.js`**: `hashSeed` turns a number or string into an unsigned 32-bit integer, and `createRng` is a seeded generator in [0,1). `createNoise2D` is a single-octave smoothed value noise on a whole-number grid. Its output is a weighted average of corner values, so it stays in [−1,1]. Points 0.01 apart differ by at most about 0.043, which is why it is one octave: `world.js` has to layer and scale octaves itself. It works with negative coordinates.\n- **`src/engine/daynight.js`**: `skyState` keeps `t` in [0,1), including for negative times. Daylight is exactly 1 at noon and exactly 0.15 at midnight, and night is `t` in (0.5, 1).\n\n**Deviation from the review note:** it asked for the contracts between layers to go in a JSDoc file in `src/game/`. I wasn't allowed to create files outside my steps, so I wrote them as a comment block at the end of `src/engine/atlas.js` instead. It covers the mesher-to-renderer water split, the format of `icons` and the crack stages, the session API (`player`, `target`, `mining`, `onBlockChanged`, camera), and the props for the UI components. Later waves should follow it, or move it into `src/game/` if they prefer.",
+      "sessionId": "c3836bd8-1a81-456f-83c6-05994820263a",
+      "advisorCalls": 0,
+      "ms": 148134
+    },
+    {
+      "round": 1,
+      "model": "opus",
+      "wave": 2,
+      "steps": [
+        3,
+        4
+      ],
+      "status": "DONE",
+      "summary": "Steps 3 and 4 are done. All 4 tests for these steps pass: both world tests, the inventory test and the crafting test. `npm run build` succeeds. `npm test` still fails 3 of its 11 tests (mesher, raycast and physics) because those modules belong to wave 3 and aren't implemented yet. The full contract and the review-note invariants are not tested beyond the visible tests. I couldn't run the planned temporary invariant script across several seeds and negative chunks, because only `npm test` and `npm run build` are allowed here. Those properties come from how the code is written, not from a test.\n\n**world.js**\n- **Terrain:** each column's height depends only on its world x, z and the seed, stays within [12, 40], and is the same no matter which chunk generates it. Layers are grass or sand, 3 dirt or sand below, stone down to y=1, bedrock at y=0 and water up to SEA_LEVEL.\n- **Ores:** coal and iron veins only replace STONE, coal only at y ≤ 40 and iron only at y ≤ 24. If a chunk ends up with no coal, one stone cell at y ≤ 40 is turned into COAL_ORE.\n- **Trees:** trunks are 4–6 LOG on GRASS at local x, z 2–13, placed only into AIR and at least 5 cells apart. All trunks are placed before any leaves. Leaves only fill AIR, inside the chunk and at y ≤ 63.\n- **World storage:** chunks are cached in a Map with numeric keys, plus a last-chunk shortcut. Edits are written straight into the cached Uint8Array and also kept in a per-chunk map with the original generated value, so setting a block back to that value deletes the edit.\n- **Coordinates:** reads use floor, so negative coordinates work. y < 0 reads as BEDROCK and y ≥ 64 as AIR. `setBlockAt` throws RangeError for y outside [0, 63] and for unknown block ids. `getSurfaceHeight` returns -1 if a column has no solid block.\n- **Saving:** `serializeWorld` writes keys in the order version, seed, flat, edits, with edits sorted by x, then y, then z. `deserializeWorld` throws Error for a version other than 1 and applies the saved edits when each chunk is generated, so the round trip gives back the same string.\n- **Extra exports for later waves:** `getChunk(world, cx, cz)` returns a chunk's array with edits applied (useful for the mesher's inner cells). `hasChunk` and `unloadChunk` are also exported, and `world.revision` goes up on every change. No existing signature changed.\n\n**inventory.js:** every function returns a copy and never changes its input. `addItem` fills existing stacks first, then empty slots, respecting `maxStack`, and returns the leftover. `removeFromSlot` sets a slot to null when it reaches 0. `selectSlot` throws RangeError outside 0–8. `scrollSelection` wraps around in both directions. `moveStack` moves, merges up to `maxStack` leaving the rest in the source, or swaps; moving a slot onto itself changes nothing. `selectedItem` returns the selected hotbar stack or null.\n\n**crafting.js:** only square 2x2 or 3x3 grids are accepted. Planks (one LOG) and glass (one SAND plus one COAL) work in any cells. Sticks and the crafting table can be shifted anywhere in the grid, and the pickaxes only work in a 3x3 grid. Any extra item makes the recipe invalid. `consumeIngredients` returns a new grid with one item fewer in each occupied cell.",
+      "sessionId": "b02621b0-89b9-415a-8925-8993b25860bb",
+      "advisorCalls": 0,
+      "ms": 132814
+    },
+    {
+      "round": 1,
+      "model": "opus",
+      "wave": 3,
+      "steps": [
+        5,
+        6,
+        7
+      ],
+      "status": "DONE",
+      "summary": "Steps 5–7 are done. `npm test` passes (11/11) and `npm run build` succeeds. The build does not compile `src/ui/` yet, because the placeholder `src/main.jsx` doesn't import those files; they first get compiled when wave 5 wires them in. I couldn't run any script other than `npm test`/`npm run build`, so the edge cases the visible tests don't reach (landing, the 1- vs 2-block jump, sneak at a ledge, water, flying, raycast faces) were checked only by reading the code, not by running it.\n\n**Step 5, `mesher.js` and `raycast.js`**\n- `buildChunkMesh` follows the contract: 4 vertices and 6 indices per face, anti-clockwise seen from outside, world coordinates, outward normals, and UVs taken from `atlas.js` (`tileUV(tileFor(id, face))`).\n- A face is emitted only when the neighbour is AIR or a transparent block with a different id. Below y=0 counts as BEDROCK and above 63 as AIR. Water, glass and leaves go to `transparent`; everything else to `opaque`. Empty meshes still return typed arrays.\n- For speed it reads the chunk's own array, and on the edges it reads the four side neighbours' arrays through `getChunk`. **Wave 5 needs to know:** meshing a chunk therefore generates and caches its side neighbours, so the world cache reaches one ring past the meshed area, which matters for whoever unloads chunks.\n- `raycast` uses the Amanatides & Woo DDA:\n  - the direction doesn't need to be normalised;\n  - AIR and WATER are skipped;\n  - `face` is the normal of the face hit and `distance` is measured to the entry point;\n  - an origin inside a block returns that block with face [0,0,0] and distance 0;\n  - a zero direction, a target past `maxDistance`, or a ray climbing above the world returns `null`.\n- `distance` is never `-0`.\n\n**Step 6, `physics.js`**\n- `createPlayer`, `collidesAt`, `canPlaceBlock` and `stepPlayer` are done. `stepPlayer` is pure: it copies the player, keeps yaw, pitch and flying, and splits `dt` into substeps of at most 0.05.\n- Movement follows the yaw formulas, with diagonals normalised. Speed is walk, sprint (only when moving forward) or sneak, applied with no inertia. Gravity is capped at terminal velocity.\n- Jump sets `velocity[1]` to exactly `JUMP_VELOCITY` after gravity is applied, and only when on the ground. It peaks at about 1.3–1.5 blocks, so it clears 1 block but not 2.\n- Collision sweeps each axis in order Y, X, Z, cell layer by cell layer, so fast falls can't pass through blocks. Landing puts the feet on an exact integer y with `onGround` true and vertical velocity 0. Hitting a ceiling sets vertical velocity to 0.\n- Sneaking on the ground cuts each axis's movement in 0.01 steps so the player always keeps a solid block under them.\n- In water, gravity is a quarter, the fall is capped at 3/s, and jump rises at 3/s.\n- Flying has no gravity: jump goes up and sneak goes down at `WALK_SPEED`, and collision still applies.\n\n**Step 7, UI in `src/ui/`**\n- **`MainMenu`** (props `hasSave`, `onNew(seed, renderDistance)`, `onContinue(renderDistance)`):\n  - the random seed can be edited or re-rolled;\n  - a seed made only of digits is passed as a number, any other text as a string;\n  - the render-distance slider goes from 2 to 8 and defaults to 4;\n  - \"Continuar\" only appears when there is a save.\n- **`Hud`** (props `inWater`, `itemName`): crosshair, blue water overlay, and the item name shown for 2 s.\n- **`Hotbar`** (props `inventory`, `icons`): icon and count per slot, with the selected slot highlighted.\n- **`InventoryScreen`** (props `inventory`, `craftSize`, `grid`, `cursor`, `icons`, `onChange`, `onClose`), all on the engine's functions:\n  - left click picks up, drops, merges or swaps stacks;\n  - right click takes half a stack or drops one item;\n  - shift-click moves a stack between hotbar and main inventory;\n  - the result slot uses `craft` and `consumeIngredients`, and shift-click on it crafts as many as fit;\n  - it has the cursor stack that follows the mouse, tooltips and a × button.\n- **`PauseMenu`** (props `onResume`, `onSave`, `onQuit`) and **`DebugOverlay`** (FPS, XYZ, block, chunk, direction, target, seed, time of day).\n- **`ItemIcon`** draws icons with pixelated rendering. `styles.css` is imported by the components themselves.\n\n**Additions to the contract written in `atlas.js`, for wave 5:**\n- **`itemNameKey` matters for the spec:** `Hud` only re-shows the name when `itemName` or the optional `itemNameKey` changes. Switching between two slots holding the same item shows nothing unless the owner passes `itemNameKey` (for example the selected slot index), and the spec's \"item name for 2 s on switch\" depends on this.\n- Other optional props: `Hud.showCrosshair`, `PauseMenu.message`, `MainMenu.initialRenderDistance`.\n- `InventoryScreen` handles no keys. Closing on E or Esc and returning the grid and cursor items to the inventory are the owner's job; the × button only calls `onClose`.",
+      "sessionId": "7ba961de-4c90-4a6f-9afa-cc6df138f185",
+      "advisorCalls": 1,
+      "ms": 519756
+    },
+    {
+      "round": 1,
+      "model": "opus",
+      "wave": 4,
+      "steps": [
+        8,
+        9
+      ],
+      "status": "DONE",
+      "summary": "Steps 8 and 9 are done: I wrote src/render/{textures,ChunkRenderer,Sky,Selection}.js and src/game/{save,input,session}.js. `npm test` passes (11/11) and `npm run build` succeeds, but the build does not compile these 7 files yet because nothing imports them until wave 5. I checked every import by hand against the engine's exports. They have not been run in a browser.\n\nWhat each file does:\n- **textures.js**\n  - `createAtlas()` returns `{canvas, texture, icons, dispose}`. It draws every tile in engine/atlas.js procedurally, with a fixed seed per tile: grass top/side/bottom, log rings, ores, glass and leaves with transparent holes, items, and 10 crack stages.\n  - The texture uses NearestFilter, no mipmaps and SRGB.\n  - `icons` maps each item id to a data URL. Blocks get an isometric cube icon, other items a flat one. AIR and WATER have no icon.\n  - `getIcons()` gives the icons without creating a three texture.\n- **ChunkRenderer.js**: `new ChunkRenderer(scene, world, texture, {renderDistance})` with methods `update(x, z)`, `blockChanged(x, y, z)`, `setRenderDistance` and `dispose`.\n  - It loads chunks nearest-first, capped at 3 meshes and 5 ms per frame, and unloads them beyond distance + 1. Chunks far from the player are also dropped from the world's cache through `unloadChunk`.\n  - It uses three materials: opaque, cutout (alphaTest, for glass and leaves) and water (opacity 0.72, depthWrite false, double-sided).\n  - Water faces are split out of `transparent` by the tile under the centre of each face's UVs.\n  - `blockChanged` rebuilds the edited chunk and any bordering neighbours right away, outside the queue.\n- **Sky.js**: `new Sky(scene, {renderDistance})` with `update(seconds, camera)` and `setRenderDistance`. It handles sky colour with sunrise/sunset tint, sun, moon, stars at night, ambient and directional light following `daylight` (scaled by π, fading to zero at the horizon), and fog with far = distance × 16. It places the sun at `min(camera.far × 0.8, 400)`, so wave 5 should set `camera.far` to about 1000.\n- **Selection.js**: `update(target, mining)` draws the outline around the targeted block and a crack overlay whose stage is `floor(progress × 10)`.\n- **save.js**: `SAVE_KEY = 'mc-mvp-save'`, plus `loadSave`, `hasSave`, `writeSave`, `clearSave` and `validateSave`. Invalid JSON is tolerated (treated as no save). A save holds `{version, world, player: {position, yaw, pitch, flying}, inventory, time, savedAt}`.\n- **input.js**: `createInput(element, {onAction, canLock})` returns `state` (held keys and buttons), `locked`, `movement()`, `consumeLook()`, `requestLock()` (a refused lock is caught, so nothing reaches the console), `exitLock`, `reset` and `dispose`. Sprint comes from Ctrl or double-tapping W.\n  - Actions it sends: `hotbar(i)`, `scroll(±1)`, `inventory`, `escape`, `debug`, `toggleFly`, `attack`, `use`, `pick`, `lockChange(bool)`.\n- **session.js**: `createSession({seed} | {save})` builds a Session.\n  - Fields: `player`, `world`, `inventory`, `time`, `target`, `mining` and `seed`.\n  - Methods: `update(dt, input.movement(), input.state)`, `applyLook(dx, dy)` (clamps pitch to ±89°), `toggleFly`, `selectSlot`, `scroll`, `useClick(sneak)`, `pickBlock`, `setInventory`, `eyeInWater`, `selectedName`, `save(auto)`, `setExtraStacksProvider(fn)`.\n  - Events: `on(event, cb)` and `onBlockChanged(cb)`, for `blockChanged`, `inventoryChanged`, `openCrafting`, `selectionChanged` and `saved`.\n  - Helpers: `lookDirection`, `facingName`, `timeOfDayString`.\n  - Behaviour: 5-block raycast from eye height; mining uses the break time of the pickaxe in hand and resets when the button is released or the target changes; drops go to the inventory; autosave every 30 s; a player who falls out of the world respawns.\n\nWiring that GameView (wave 5) must get right:\n1. The `use` action must call `session.useClick(input.state.sneak)`. `update()` only repeats placement while the button is held, so without this the first click places nothing.\n2. During play, Esc arrives as `lockChange(false)`, not as `escape`. Only that event in the playing state should pause, and pausing should call `session.save()`.\n3. While the inventory or bench is open, register `setExtraStacksProvider(() => [...grid cells, cursor])` so autosave and Save keep those items.\n4. Forward `session.onBlockChanged` to `chunkRenderer.blockChanged`.\n5. Each frame, feed `input.consumeLook()` into `session.applyLook`.\n6. Camera: position is `player.position` + `EYE_HEIGHT`, rotation order 'YXZ', with y = yaw and x = pitch.",
+      "sessionId": "2e5c8a40-7b14-4053-bb04-b40d6735e112",
+      "advisorCalls": 1,
+      "ms": 597224
+    },
+    {
+      "round": 1,
+      "model": "opus",
+      "wave": 5,
+      "steps": [
+        10
+      ],
+      "status": "DONE",
+      "summary": "I connected the game to the app entry point. `npm test` passes (11 of 11) and `npm run build` succeeds, with only Vite's warning that the bundle is over 500 kB. I couldn't run `npm run dev` here, so I never opened the game in a browser. The controls, screens and save flow were checked only by reading the code against the other modules.\n\n**`src/game/GameView.jsx`** creates the three.js renderer, scene and camera. It wires in the session, mouse/keyboard input, the chunk loader (`ChunkRenderer`), the sky (`Sky`) and the block highlight (`Selection`), and runs the frame loop (frame time capped at 0.1 s).\n- **Screen states:** playing, inventory (E, 2x2 crafting), crafting table (right-click on a table, 3x3) and paused.\n  - Losing the mouse lock pauses only while playing.\n  - Opening the inventory or table releases the lock without pausing.\n  - Esc or E on those screens closes them, returns the crafting-grid and cursor items to the inventory, and tries to re-lock the mouse. If the browser refuses, a \"Clique para jogar\" prompt appears.\n  - If the inventory is full on close, the screen stays open with the leftover items in the grid, so nothing is lost.\n  - Esc does not resume within 400 ms of a pause, in case the browser also delivers the Esc that released the lock.\n- **Session hookups:** it also handles mouse look, movement, mining, placing blocks, picking a block (middle button), the 1–9 keys and wheel, flying (F) and the F3 debug overlay.\n- **Saving:** it saves when pausing, on Salvar, when quitting and on page close. The 30-second autosave comes from the session. Saves include the grid and cursor items.\n- **React updates:** HUD values are pushed to React on a timer (water overlay every 100 ms, debug every 250 ms), not every frame.\n- **Cleanup:** on unmount it disposes everything (renderer, WebGL context, input listeners, session listeners), so it works under React StrictMode.\n\n**`src/App.jsx`** switches between the menu and the game. It creates the session for Novo mundo or Continuar (`loadSave`) and shows an on-screen error if the save is invalid. \"Continuar\" appears only when a save exists. It passes the render distance from the menu slider and keeps the menu inside the `.mc-root` wrapper so its styles apply.\n\n**`src/main.jsx`** renders `App` in StrictMode and imports `ui/styles.css`.",
+      "sessionId": "c28d378b-cfb8-4eb9-814a-28733f2c6e42",
+      "advisorCalls": 1,
+      "ms": 309308
+    }
+  ],
+  "gate": [
+    {
+      "round": 1,
+      "pass": true,
+      "results": [
+        {
+          "id": "test",
+          "command": "npm test",
+          "exitCode": 0,
+          "ms": 140,
+          "outputTail": "\n> mc-mvp@0.0.0 test\n> node --test\n\nTAP version 13\n# Subtest: blocos: tabela básica\nok 1 - blocos: tabela básica\n  ---\n  duration_ms: 0.469084\n  type: 'test'\n  ...\n# Subtest: ruído: determinístico e no intervalo\nok 2 - ruído: determinístico e no intervalo\n  ---\n  duration_ms: 0.262958\n  type: 'test'\n  ...\n# Subtest: mundo: chunk gerado tem bedrock e é determinístico\nok 3 - mundo: chunk gerado tem bedrock e é determinístico\n  ---\n  duration_ms: 1.555125\n  type: 'test'\n  ...\n# Subtest: mundo: editar e salvar\nok 4 - mundo: editar e salvar\n  ---\n  duration_ms: 0.222292\n  type: 'test'\n  ...\n# Subtest: malha: um bloco sozinho tem 6 faces\nok 5 - malha: um bloco sozinho tem 6 faces\n  ---\n  duration_ms: 1.18675\n  type: 'test'\n  ...\n# Subtest: raycast: acerta o bloco à frente\nok 6 - raycast: acerta o bloco à frente\n  ---\n  duration_ms: 0.153333\n  type: 'test'\n  ...\n# Subtest: física: cai e para no chão\nok 7 - física: cai e para no chão\n  ---\n  duration_ms: 0.5195\n  type: 'test'\n  ...\n# Subtest: inventário: empilha até 64\nok 8 - inventário: empilha até 64\n  ---\n  duration_ms: 0.126291\n  type: 'test'\n  ...\n# Subtest: crafting: tronco vira 4 tábuas\nok 9 - crafting: tronco vira 4 tábuas\n  ---\n  duration_ms: 0.256625\n  type: 'test'\n  ...\n# Subtest: mineração: pedra na mão não dá drop\nok 10 - mineração: pedra na mão não dá drop\n  ---\n  duration_ms: 0.248042\n  type: 'test'\n  ...\n# Subtest: dia e noite: meio-dia é claro\nok 11 - dia e noite: meio-dia é claro\n  ---\n  duration_ms: 0.094375\n  type: 'test'\n  ...\n1..11\n# tests 11\n# suites 0\n# pass 11\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 46.482\n"
+        },
+        {
+          "id": "build",
+          "command": "npm run build",
+          "exitCode": 0,
+          "ms": 272,
+          "outputTail": "\n> mc-mvp@0.0.0 build\n> vite build\n\nvite v8.3.5 building client environment for production...\ntransforming...\n✓ 43 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.39 kB │ gzip:   0.26 kB\ndist/assets/index-3BCqRMIt.css    7.17 kB │ gzip:   2.18 kB\ndist/assets/index-CB96xmpf.js   736.39 kB │ gzip: 200.14 kB\n\n[plugin builtin:vite-reporter] \n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n✓ built in 115ms\n"
+        }
+      ]
+    }
+  ],
+  "advisorCalls": 3,
+  "calls": [
+    {
+      "role": "planner",
+      "ms": 88818,
+      "usage": {
+        "claude-fable-5-2": {
+          "inputTokens": 6,
+          "outputTokens": 8229,
+          "cacheReadInputTokens": 32667,
+          "cacheCreationInputTokens": 20551,
+          "webSearchRequests": 0,
+          "costUSD": 0.6645574000000001,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 2722,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 20551,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "d3631a4b-3ece-47c8-8abd-93425c1a1308",
+      "permissionDenials": 0
+    },
+    {
+      "role": "planReviewer",
+      "ms": 55211,
+      "usage": {
+        "claude-fable-5-2": {
+          "inputTokens": 6,
+          "outputTokens": 4711,
+          "cacheReadInputTokens": 44914,
+          "cacheCreationInputTokens": 20417,
+          "webSearchRequests": 0,
+          "costUSD": 0.5241427999999999,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 3120,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 20417,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "c13d4e9e-5328-401d-a5a5-bfb52490f3ba",
+      "permissionDenials": 0
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 148100,
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 14,
+          "outputTokens": 16885,
+          "cacheReadInputTokens": 208502,
+          "cacheCreationInputTokens": 37827,
+          "webSearchRequests": 0,
+          "costUSD": 0.6820724,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 5197,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 37827,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "c3836bd8-1a81-456f-83c6-05994820263a",
+      "permissionDenials": 0
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 132784,
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 14,
+          "outputTokens": 14988,
+          "cacheReadInputTokens": 232626,
+          "cacheCreationInputTokens": 38382,
+          "webSearchRequests": 0,
+          "costUSD": 0.6533972,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 4936,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 38382,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "b02621b0-89b9-415a-8925-8993b25860bb",
+      "permissionDenials": 0
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 519726,
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 44,
+          "outputTokens": 39388,
+          "cacheReadInputTokens": 1326188,
+          "cacheCreationInputTokens": 77677,
+          "webSearchRequests": 0,
+          "costUSD": 1.6713916,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 12122,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 76611,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        },
+        "claude-fable-5-2": {
+          "inputTokens": 69499,
+          "outputTokens": 17409,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 1.2523520000000001,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 0,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 0,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "7ba961de-4c90-4a6f-9afa-cc6df138f185",
+      "permissionDenials": 1
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 597197,
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 36,
+          "outputTokens": 42325,
+          "cacheReadInputTokens": 983240,
+          "cacheCreationInputTokens": 74974,
+          "webSearchRequests": 0,
+          "costUSD": 1.6406930000000002,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 9716,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 74177,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        },
+        "claude-fable-5-2": {
+          "inputTokens": 71614,
+          "outputTokens": 23137,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 1.498392,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 0,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 0,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "2e5c8a40-7b14-4053-bb04-b40d6735e112",
+      "permissionDenials": 1
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 309272,
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 30,
+          "outputTokens": 15430,
+          "cacheReadInputTokens": 852932,
+          "cacheCreationInputTokens": 67736,
+          "webSearchRequests": 0,
+          "costUSD": 1.0189774,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 4716,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 66997,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        },
+        "claude-fable-5-2": {
+          "inputTokens": 68185,
+          "outputTokens": 15912,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 1.18196,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 0,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 0,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "c28d378b-cfb8-4eb9-814a-28733f2c6e42",
+      "permissionDenials": 1
+    }
+  ],
+  "routing": [
+    {
+      "wave": 1,
+      "lanes": [
+        {
+          "model": "opus",
+          "steps": [
+            1,
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "lanes": [
+        {
+          "model": "opus",
+          "steps": [
+            3,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "lanes": [
+        {
+          "model": "opus",
+          "steps": [
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 4,
+      "lanes": [
+        {
+          "model": "opus",
+          "steps": [
+            8,
+            9
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 5,
+      "lanes": [
+        {
+          "model": "opus",
+          "steps": [
+            10
+          ]
+        }
+      ]
+    }
+  ],
+  "engineMs": 1851680,
+  "cost": {
+    "costUSD": 10.7879358,
+    "input": 1.674963994935019,
+    "cacheWrite": 2.7355608214575513,
+    "cacheRead": 1.3245370458970758,
+    "output": 5.052873937710355,
+    "tokens": {
+      "input": 209448,
+      "cacheWrite": 337564,
+      "cacheRead": 3681069,
+      "output": 198414
+    },
+    "byModel": {
+      "claude-fable-5-2": 5.1214042,
+      "claude-opus-5-5": 5.6665316
+    },
+    "byRole": {
+      "planner": 0.6645574000000001,
+      "planReviewer": 0.5241427999999999,
+      "advisedExecutor": 9.5992356
+    }
+  }
+}

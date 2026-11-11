@@ -30,7 +30,7 @@ Power Mode: cada papel sobe um degrau na família, os passos rodam em paralelo, 
 
 ### Pendente
 
-- Benchmark Minecraft do Power Mode: as runs reais esperam o reset semanal de uso da conta (12/11 às 12h, horário de Belém; a tentativa de 10/11 bloqueou com `USAGE_LIMIT`). O plano são 5 rodadas de cada variante (padrão, `--power`, `--power max`), alternando as três a cada rodada e ajustando o graph-eng entre rodadas. As variantes e hipóteses estão em [docs/power-mode.md](docs/power-mode.md).
+- Benchmark Minecraft do Power Mode, feito em 11/11 (5 rodadas de cada variante, [docs/benchmarks/README.md](docs/benchmarks/README.md)): as 15 runs fecharam 55/55 e build; o padrão custou US$ 1,34 a 1,83 em 473 a 637 s e entregou nas 5; o Power Mode como desenhado (forte nos `high`) custou 4 a 7 vezes mais, levou 2 a 3 vezes mais e o `--power max` não entregou jogo jogável em 2 de 2; com o médio em todos os executores (`GRAPHENG_POWER_SPLIT=sonnet/sonnet`), o `--power max` entregou nas 2 rodadas por US$ 2,75 a 3,15 em 618 a 740 s. Recomendação em [docs/power-mode.md](docs/power-mode.md): o padrão continua o default; a divisão padrão do Power Mode (forte nos `high`) é candidata a mudar. O mesmo protocolo está sendo repetido no benchmark souls-like.
 
 ## 1.3.0 — 2026-10-24
 

@@ -213,7 +213,7 @@ Every run leaves its evidence in `.graph-runs/<runId>/advisor-run.json`: plan, r
 
 The strong model cost under 10% of the run. Raw evidence for every run is in [docs/benchmarks/](docs/benchmarks/).
 
-**Power Mode:** the Minecraft runs with `--power` and `--power max` have not been done yet (they wait for the account's usage reset on 2026-11-12). The plan is 5 rounds per variant (default, `--power`, `--power max`), adjusting graph-eng between rounds. The variants and hypotheses are in [docs/power-mode.md](docs/power-mode.md); to run one, `bash test/fixtures/benchmark-minecraft/bench.sh <dest> --power max`.
+**Power Mode (5 rounds per variant, 2026-11-11):** all 15 runs passed the 55 hidden tests and the build. The default delivered a playable game in 5 of 5 rounds for $1.34 to $1.83 in 8 to 11 min. Power Mode as designed (strong model on the `high` steps) cost 4 to 7 times more, took 2 to 3 times longer, and `--power max` did not deliver a playable game in 2 of 2 rounds. With the mid model on every executor step (`GRAPHENG_POWER_SPLIT`, see [docs/benchmarks/](docs/benchmarks/)), `--power max` delivered in both rounds for $2.75 to $3.15 in 10 to 12 min, with code the size and shape of the default's. Same grade, same features, so the default stays the recommendation; the complete table, the code-quality analysis and the next steps are in [docs/benchmarks/README.md](docs/benchmarks/README.md) and [docs/power-mode.md](docs/power-mode.md) (Portuguese).
 
 ### Why the graph engine was removed
 

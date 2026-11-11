@@ -105,9 +105,24 @@ Na run padrão da 1.3, as sessões do executor foram 80% dos 617 s, em série. C
 
 Cada sessão registra `wave`, `model`, `steps`, `status`, `summary`, `sessionId`, `advisorCalls` e `ms`. O custo continua dividido por modelo e por papel, então dá para ver exatamente quanto o Fable custou.
 
-## O que o benchmark precisa responder
+## O que o benchmark respondeu (Minecraft, 11/11/2026)
 
-As runs reais só podem rodar depois do reset semanal de uso (12/11 às 12h, horário de Belém; a tentativa de 10/11 bloqueou com `USAGE_LIMIT`). Até lá, tudo roda com host falso nos testes. Três variantes, no mesmo esqueleto do Minecraft (`test/fixtures/benchmark-minecraft/bench.sh`), **5 rodadas de cada**, alternando as três a cada rodada (rodada 1 das três, depois rodada 2 das três) para a comparação ficar pareada mesmo que o uso acabe no meio:
+As 5 rodadas de cada variante estão em [docs/benchmarks/README.md](benchmarks/README.md), com a tabela completa, o custo por modelo e a análise de qualidade do código. Em resumo:
+
+| Variante | Entregou | Custo (5 rodadas) | Tempo | Nota |
+| --- | --- | --- | --- | --- |
+| Padrão 1.3 | 5 de 5 | US$ 1,34 a 1,83 | 473 a 637 s | 55/55 sempre |
+| `--power` (forte nos `high`) | 2 de 2 | US$ 7,70 a 9,62 | 1196 a 1617 s | 55/55 |
+| `--power max` (forte nos `high`) | 0 de 2 | US$ 6,78 a 11,15 | 1020 a 1598 s | 55/55 no motor, sem jogo jogável |
+| `--power` / `--power max` (forte nos `high` e `medium`) | 2 de 2 | US$ 10,79 a 12,95 | 1852 a 2079 s | 55/55 |
+| `--power` (médio nos `high` e `medium`) | 2 de 2 | US$ 3,75 a 6,14 | 741 a 1175 s | 55/55, com conserto nas duas |
+| `--power max` (médio nos `high` e `medium`) | 2 de 2 | US$ 2,75 a 3,15 | 618 a 740 s | 55/55, sem conserto |
+
+As hipóteses da tabela abaixo não se confirmaram: o Power Mode nunca ficou abaixo do tempo do padrão, e o custo ficou entre 1,6 e 8 vezes o do padrão, não entre US$ 2 e 4. A nota e a cobertura da spec foram as mesmas; o código com o forte nos executores saiu maior e mais comentado, não melhor. **Recomendação:** o padrão continua o default. Quem quiser o Fable 5.2 no plano e na revisão deve usar `--power max` com o médio em todos os executores (`GRAPHENG_POWER_SPLIT=sonnet/sonnet`), a única configuração do Power Mode que entregou nas duas rodadas sem conserto e no tempo do padrão. A divisão padrão do Power Mode (forte nos `high`) fica como candidata a mudar na próxima versão, junto com os itens 34 e 35 de `melhorias-futuras.md` (raia que devolve `BLOCKED` sem rodar o gate; raia que devolve `DONE` com um arquivo da pegada no stub). O mesmo protocolo está sendo repetido num jogo mais complexo (souls-like, `test/fixtures/benchmark-soulslike/`).
+
+## O que o benchmark precisava responder (plano original)
+
+Três variantes, no mesmo esqueleto do Minecraft (`test/fixtures/benchmark-minecraft/bench.sh`), **5 rodadas de cada**, alternando as três a cada rodada (rodada 1 das três, depois rodada 2 das três) para a comparação ficar pareada mesmo que o uso acabe no meio:
 
 | Variante | Comando | Hipótese |
 | --- | --- | --- |
