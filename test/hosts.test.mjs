@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { FABLE, createHost as createHostImpl } from '../bin/hosts.mjs'
@@ -178,9 +178,24 @@ test('Claude libera escrita do executor só dentro do cwd e mantém papéis de l
   // Regressão (benchmark 11/11): sem Write(./**) o executor tinha todo Write negado e devolvia BLOCKED sem escrever.
   assert.equal(allowed(writer), 'Read,Glob,Grep,Edit(./**),Write(./**)')
   assert.equal(writer.args[writer.args.indexOf('--tools') + 1], 'Read,Glob,Grep,Edit,Write')
-  assert.equal(writer.options.cwd, runDir)
+  assert.equal(writer.options.cwd, realpathSync(runDir))
   assert.equal(allowed(reader), 'Read,Glob,Grep')
   assert.ok(!reader.args.some(arg => /Edit|Write/.test(arg)))
+})
+
+// Regressão (benchmark 11/11, rodada 2): com cwd por symlink (/tmp → /private/tmp) o CLI resolvia Edit(./**) pelo
+// caminho real, o PWD herdado mostrava o symlink, o modelo escrevia em /tmp/... e todo Write era negado.
+test('o CLI roda no caminho real do cwd, com PWD igual, mesmo quando o cwd é um symlink', async t => {
+  const runDir = await tempRun(t)
+  const link = path.join(runDir, 'atalho')
+  await symlink(runDir, link)
+  const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
+  const host = createHost({ host: 'claude', cwd: link, runDir, transport: { spawn: fake.spawn } })
+  await host.wait(await host.spawn({ role: 'advisedExecutor', prompt: 'grave', schema, cwd: link }))
+  const { options } = fake.calls[0]
+  assert.equal(options.cwd, realpathSync(runDir))
+  assert.equal(options.env.PWD, realpathSync(runDir))
+  assert.notEqual(options.cwd, link)
 })
 
 // Regressão de custo (benchmark real de 20/10/2026, US$ 88): cada `claude -p` herdava os MCPs, plugins,

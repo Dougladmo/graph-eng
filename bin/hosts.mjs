@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { createHash, randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { lstat, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -214,6 +215,9 @@ function classifyExitFailure(host, stdout, stderr, exitCode, signal) {
 }
 
 function samePath(left, right) { return path.resolve(left) === path.resolve(right) }
+function realPath(dir) {
+  try { return realpathSync(dir) } catch { return path.resolve(dir) }
+}
 
 /**
  * Adapta Claude Code ou Codex CLI aos papéis do fluxo advisor: planner, planReviewer e advisedExecutor.
@@ -229,6 +233,11 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
   const advisors = power ? POWER_ADVISOR_BY_ROLE : ADVISOR_BY_ROLE[host] ?? {}
   if (advisedExecutorModel !== null && (host !== 'claude' || !executorModels.has(advisedExecutorModel))) throw new TypeError(`advisedExecutorModel aceita somente ${[...executorModels].join(', ')}, no host claude`)
   if (!cwd || !runDir) throw new TypeError('cwd e runDir são obrigatórios')
+  // O CLI roda no caminho real (benchmark 11/11, rodada 2: com cwd por symlink, /tmp → /private/tmp, a regra
+  // Edit(./**) casava com /private/tmp/..., o PWD herdado mostrava /tmp/..., o modelo escrevia em /tmp/... e todo
+  // Write era negado). O PWD vai igual, para o modelo ver o mesmo caminho da regra.
+  const realCwd = realPath(cwd)
+  const childOptions = () => ({ cwd: realCwd, env: { ...childEnv(), PWD: realCwd } })
   let eventSeq = 0
 
   function emit(event, request, handle, extra = {}) {
@@ -299,11 +308,11 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const injectedTransport = transport ?? null
     try {
       child = injectedTransport
-        ? injectedTransport.spawn(built.command, built.args, { cwd, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv() })
+        ? injectedTransport.spawn(built.command, built.args, { ...childOptions(), shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
         : process.platform === 'win32'
-          ? nodeSpawn(built.command, built.args, { cwd, shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'], env: childEnv() })
+          ? nodeSpawn(built.command, built.args, { ...childOptions(), shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'] })
           // O supervisor herda este env filtrado e o repassa ao CLI do agente.
-          : nodeSpawn(process.execPath, [SUPERVISOR_PATH, String(effectiveTimeout)], { cwd, shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'], env: childEnv() })
+          : nodeSpawn(process.execPath, [SUPERVISOR_PATH, String(effectiveTimeout)], { ...childOptions(), shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] })
     } catch (error) {
       await Promise.all([built.schemaFile, built.outputFile].filter(Boolean).map(file => rm(file, { force: true }).catch(() => {})))
       const code = error.code === 'ENOENT' ? 'CLI_MISSING' : 'SPAWN_FAILED'
@@ -438,8 +447,8 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
           try { child.send({ type: 'terminate', reason: handle.pendingTermination ?? 'cancelled' }) } catch {}
         } else {
           try {
-            const spec = commandTransform({ command: built.command, args: built.args, cwd, request })
-            child.send({ type: 'start', command: spec.command, args: spec.args, cwd: spec.cwd ?? cwd, timeoutMs: Math.max(1, effectiveTimeout - (Date.now() - handle.startedAt)) })
+            const spec = commandTransform({ command: built.command, args: built.args, cwd: realCwd, request })
+            child.send({ type: 'start', command: spec.command, args: spec.args, cwd: spec.cwd ?? realCwd, timeoutMs: Math.max(1, effectiveTimeout - (Date.now() - handle.startedAt)) })
           } catch (error) {
             handle.supervisorError ??= error
             try { child.send({ type: 'terminate', reason: 'transport-error' }) } catch {}
