@@ -53,10 +53,12 @@ assinaturas) e testes em `test/`.
 
 ### `rng.ts`: aleatoriedade com seed
 
-- `hashSeed(seed: number | string): number` devolve um inteiro de 32 bits sem sinal. Mesma entrada, mesmo resultado;
-  `'abc'` e `'abd'` dão valores diferentes.
-- `randomStep(state: number): { value: number; next: number }` (**pura**) é um passo de mulberry32: `value` em
-  `[0, 1)` e `next` o estado seguinte. Mesmo estado, mesmo par.
+- `hashSeed(seed: number | string): number` é o FNV-1a de 32 bits sobre o texto da seed (número vira `String(seed)`),
+  sem mistura extra no fim: `h = 0x811c9dc5`; para cada `charCodeAt`, `h ^= c` e `h = Math.imul(h, 0x01000193)`;
+  devolve `h >>> 0`. Mesma entrada, mesmo resultado; `'abc'` e `'abd'` dão valores diferentes.
+- `randomStep(state: number): { value: number; next: number }` (**pura**) é um passo do mulberry32 canônico:
+  `next = (state + 0x6d2b79f5) >>> 0`; `t = next`; `t = Math.imul(t ^ (t >>> 15), t | 1)`;
+  `t ^= t + Math.imul(t ^ (t >>> 7), t | 61)`; `value = ((t ^ (t >>> 14)) >>> 0) / 4294967296`. Mesmo estado, mesmo par.
 - `createRng(seed)` devolve uma função que gera números em `[0, 1)`, a mesma sequência para a mesma seed, usando
   `randomStep` a partir de `hashSeed(seed)`.
 
@@ -223,7 +225,7 @@ type EnemyTarget = { pos: Vec2; alive: boolean }
   (`startRange: Infinity` para `charge` e `shockwave`).
 - `CHARGE_SPEED = 12`, `TRACK_RATE = 2.5` (rad/s), `BOSS_PHASE2_HP = 750`, `PHASE2_SPEED = 4.5`,
   `PHASE2_WINDUP = 0.75` (multiplica o `windup`), `CHARGE_DISTANCE = 5`, `RIPOSTE_RECOVER = 1.0`.
-- `createEnemy(id, kind, room, pos, yaw)`: vitais do perfil, `home`/`homeYaw` iguais a `pos`/`yaw`, `state: 'idle'`,
+- `createEnemy(id, kind, room, pos, yaw)`: vitais `createVitals(hp, 0, poise)` do perfil (inimigo não tem estamina: `stamina` e `maxStamina` são 0), `home`/`homeYaw` iguais a `pos`/`yaw`, `state: 'idle'`,
   `t: 0`, `attack: null`, `hitDone: false`, `phase: 1`.
 - `respawnEnemy(enemy)` (**pura**): volta a `home`, vitais cheias, `idle`, fase 1.
 - `enemyRadius(enemy)`.

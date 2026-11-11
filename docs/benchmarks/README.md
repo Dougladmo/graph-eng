@@ -64,6 +64,18 @@ bash test/fixtures/benchmark-soulslike/bench.sh /tmp/souls-power --power
 bash test/fixtures/benchmark-soulslike/bench.sh /tmp/souls-power-max --power max
 ```
 
+## Power Mode (1.4): souls-like, uma run de cada variante
+
+Feito em 11/11/2026 depois do Minecraft, no código `2159493`, uma run por vez, as duas do Power Mode com `GRAPHENG_POWER_SPLIT=sonnet/sonnet` (a melhor divisão achada no Minecraft). Evidência e análise em [`runs/soulslike-20261111-power/`](runs/soulslike-20261111-power/) ([`qualidade.md`](runs/soulslike-20261111-power/qualidade.md)).
+
+| Variante | Status | Ocultos (66) | Fora dos 4 ambíguos (62) | Custo | Tempo | Sessões perdidas / conserto |
+| --- | --- | --- | --- | --- | --- | --- |
+| padrão | done | 66/66 | 62/62 | US$ 1,57 | 501 s | 0 / 0 |
+| `--power` | done | 62/66 | 61/62 | US$ 7,12 | 1241 s | 2 raias BLOCKED / conserto no forte, 824 s |
+| `--power max` | done | 61/66 | 61/62 | US$ 3,56 | 702 s | 0 / 0 |
+
+Quatro testes ocultos cobravam o hash da seed, o mulberry32 e a estamina do inimigo com valores que o `task.md` não fixava (a padrão acertou por ter escolhido a variante da referência); o `task.md` foi corrigido depois das runs, e a coluna "fora dos 4 ambíguos" é a comparação justa. Mesmo assim, cada run do Power Mode ficou com uma falha real de regra do motor que a padrão não teve, custou 2,3 e 4,5 vezes mais e levou 1,4 e 2,5 vezes mais tempo, com 50 a 60 % mais código de tela para a mesma cobertura da spec (27, 27 e 28 de 30) e sem teste próprio em nenhuma. As duas raias perdidas da `--power` vêm de um `cd` no Bash que encolhe o alcance de `Write(./**)` (`melhorias-futuras.md`, item 36). A conclusão do Minecraft se mantém numa tarefa maior: o padrão continua a configuração certa, e o `--power max` com o médio nos executores é a única forma do Power Mode que não precisou de conserto.
+
 ## Power Mode (1.4): Minecraft, 5 rodadas de cada variante
 
 Feito em 11/11/2026, alternando as três variantes a cada rodada e ajustando o graph-eng entre rodadas (rodadas 1 e 2 no código `3c54042`/`f8cf6be`, com os bugs de `Write` negado; rodadas 3 a 5 no `fe2f95a`, com as correções). Evidência em [`runs/minecraft-20261111-power/`](runs/minecraft-20261111-power/): o JSON de cada run, o `.tap` dos testes ocultos e o [`qualidade.md`](runs/minecraft-20261111-power/qualidade.md) com o tamanho, a maior função, os comentários e a cobertura da spec de interface de cada entrega. "Divisão dos executores" é o `GRAPHENG_POWER_SPLIT` da run (o desenho da 1.4 é o forte nos `high`, o médio nos `medium`, o barato nos `low`).

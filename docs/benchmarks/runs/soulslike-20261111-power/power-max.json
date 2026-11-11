@@ -1,0 +1,439 @@
+{
+  "flow": "advisor",
+  "power": true,
+  "powerMax": true,
+  "powerSplit": {
+    "medium": "sonnet",
+    "high": "sonnet"
+  },
+  "haikuMax": "low",
+  "status": "done",
+  "plan": {
+    "goal": "Entregar o ASHEN GATE jogável no navegador: motor puro e determinístico em src/engine/ seguindo o contrato à risca (os stubs já trazem tipos e constantes; faltam os corpos das funções) e uma interface React + three.js + motion em src/ com cenário, personagens, câmera, controles e HUD gerados em código, com `npm test` e `npm run build` limpos.",
+    "steps": [
+      {
+        "step": "Base do motor: implementar os corpos de rng.ts (hashSeed de 32 bits sem sinal para number|string, randomStep = um passo de mulberry32 puro, createRng encadeando randomStep a partir de hashSeed), vec.ts (add, sub, scale, dot, length, distance, normalize com vetor nulo -> {0,0}, yawOf, fromYaw, yawTo, yawDelta em (-pi, pi], turnTowards, withinArc com distancia zero dentro), stats.ts (createVitals, createPlayerVitals, canAct, spendStamina, regen, takeDamage, heal, todas puras) e arena.ts (getRoom, pushOut com centro -> +X, resolveRoom: rect recuado por radius ou circulo r - radius projetando pelo raio, depois pilares na ordem). Nao mudar tipos nem constantes ja exportados; conferir attacks.ts contra a tabela da tarefa (ja esta preenchido, so corrigir se divergir). Imports com extensao .ts, sem any. resolveRoom(COURTYARD,{x:20,z:0},0.4) tem de dar exatamente {x:11.6,z:0} (deepEqual).",
+        "complexity": "medium",
+        "files": [
+          "src/engine/rng.ts",
+          "src/engine/vec.ts",
+          "src/engine/stats.ts",
+          "src/engine/arena.ts",
+          "src/engine/attacks.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "Encanamento da interface (so depende dos TIPOS do motor, que ja existem nos stubs). (a) src/ui/input.ts: createInputController(target: HTMLElement) -> { sample(cameraYaw: number): Input; clearPresses(): void; consumeLook(): { dx: number; dy: number }; isPointerLocked(): boolean; requestLock(): void; dispose(): void }. Teclas: WASD move, Shift sprint, Espaco roll, F jump, J/botao esquerdo light, K/botao direito heavy, Q guard (segurado), Tab lockOn, R flask, E interact. Pressionamentos sao bordas (ignorar event.repeat) e ficam pendentes ate clearPresses(); seguradas refletem o estado atual. move e relativo a camera: frente = {sin(yaw), cos(yaw)}, direita na tela = {-cos(yaw), sin(yaw)}; normalizar. preventDefault em Tab, Espaco e contextmenu; limpar seguradas no blur. (b) src/render/camera.ts: createCameraRig(camera: THREE.PerspectiveCamera) -> { yaw(): number; update(state: GameState, look: { dx: number; dy: number }, pointerLocked: boolean, dt: number): void }. Distancia 5, altura 2.2, olha 1.2 acima dos pes (somar player.y); pointer lock = orbita livre com pitch entre -20 e 60 graus; sem lock = segue atras do yaw do jogador com suavizacao; com lockOn = atras do jogador apontando para o alvo. (c) src/ui/hudStore.ts: tipo HudSnapshot { phase, room, hp, maxHp, stamina, maxStamina, flasks, runes, boss: { hp, maxHp, phase } | null (so da entrada na sala ate a vitoria), target: { sx, sy, poise, maxPoise, staggered } | null (posicao em pixels na tela), prompt: 'rest' | 'fog' | null } e createHudStore() -> { get, set(snapshot), subscribe, emit(events: GameEvent[]), onEvents(cb) -> unsubscribe }, mais o hook useHud(store) com useSyncExternalStore (set so notifica quando algo muda).",
+        "complexity": "medium",
+        "files": [
+          "src/ui/input.ts",
+          "src/render/camera.ts",
+          "src/ui/hudStore.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "player.ts: createPlayer, stepPlayer, isInvulnerable, activeAttack conforme a secao player.ts, na ordem exata das regras: subpassos de no maximo 0.05 (pressionamentos so no primeiro subpasso, seguradas em todos); t += dt e termino de acao (IDLE_ACTION novo, guardCounter = 0, y = 0); guardCounter decai so em idle; dead/stagger ignoram entrada; inicio de acao com prioridade frasco > esquiva (idle ou attack com t >= hitEnd) > salto > pesado > leve (light1, combo light2 a partir de LIGHT_COMBO_START, jumpAttack com t < JUMP.attackWindow); guarding/sprinting calculados depois do inicio de acao; orientacao (lock-on sempre olha o alvo); movimento por acao com as formulas de t0 = max(0, t - dt) para a esquiva somar exatamente 3.15 m e o ataque exatamente lunge (o passo que inicia a acao fica com t = 0 e nao anda); resolveRoom(ctx.room, pos, 0.4); cura do frasco ao cruzar FLASK.healAt; regen com allow = idle e nao correndo. Pura: nunca mutar player nem compartilhar hitIds/dir com IDLE_ACTION. Comparar t literalmente (sem epsilon). Validar com os testes de jogador em test/engine.test.ts.",
+        "complexity": "high",
+        "files": [
+          "src/engine/player.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "enemies.ts: createEnemy, respawnEnemy (puro: home/homeYaw, vitais cheias, idle, t 0, attack null, hitDone false, fase 1), enemyRadius e stepEnemy conforme a secao enemies.ts: subpassos de no maximo 0.05 acumulando um unico hit; dead imutavel; stagger -> chase em staggerTime; intro -> chase; alvo morto (chase -> idle, windup/attack/recover terminam e caem em idle); idle -> chase no aggroRange (chefe: idle -> intro na primeira vez); chase com yaw imediato, andar sem passar de enemyRadius + 0.4 e escolha de ataque pela distancia nova (hollow slash <= 2.0; chefe fase 1 e 2 com as faixas CHARGE_DISTANCE / 4.0 e os limiares de randomStep 0.6, 0.5, 0.45/0.75, consumindo rng so quando sorteia e devolvendo o estado avancado); windup com turnTowards a TRACK_RATE e duracao x PHASE2_WINDUP na fase 2; attack sem virar, charge andando CHARGE_SPEED, acerto testado a cada passo e emitido uma vez (hitDone) com origin = pos; recover pelo ataque atual ou RIPOSTE_RECOVER quando attack e null; resolveRoom(room, pos, raio) depois de mover. Sem regen de poise. Nao mudar tipos, perfis nem constantes ja exportados.",
+        "complexity": "high",
+        "files": [
+          "src/engine/enemies.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "Cenario three.js sem asset externo. src/render/textures.ts: texturas procedurais em canvas (pedra do chao, pedra de muro, nevoa, brilho radial) como THREE.CanvasTexture, com ruido deterministico. src/render/world.ts: createWorld(scene: THREE.Scene) -> { update(state: GameState, time: number): void; dispose(): void }, lendo as medidas de src/engine/arena.ts (COURTYARD, BOSS_ROOM, BONFIRE, FOG_GATE): patio com chao de pedra, quatro pilares, muros nas bordas do rect, fogueira (espada fincada em brasas, PointLight tremulante, particulas subindo), porta de nevoa (plano semitransparente animado entre dois batentes); sala do chefe circular com muro, mais escura, com tochas (PointLights) e scene.fog ajustada conforme state.room; rastro de sangue luminoso em state.bloodstain so quando a sala do rastro e a atual; luz ambiente + direcional com sombra (shadow map enxuto, poucas luzes com sombra, por causa dos 60 fps).",
+        "complexity": "medium",
+        "files": [
+          "src/render/textures.ts",
+          "src/render/world.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "Personagens three.js em src/render/characters.ts: createPlayerView() -> { root: THREE.Group; update(player: Player, time: number): void } e createEnemyView(kind: EnemyKind) -> { root: THREE.Group; update(enemy: Enemy, time: number, dt: number): void; dispose(): void }. Jogador: capsula com espada (caixa fina) num pivo no ombro; pose guiada por action.kind/t e ATTACKS (arco horizontal no leve, de cima para baixo no heavy e jumpAttack, brilho emissivo no riposte, inclinacao na esquiva, root.position.y = player.y, espada levantada na frente em guarding, cambaleio no stagger, tombado no dead). Hollow: capsula cinzenta corcunda com lamina. Chefe: capsula de 2.6 m, mais escura, chifres e martelo, emissao vermelha quando phase = 2. Estados: windup inclina para tras, attack desce a arma, stagger cambaleia, dead tomba e some em 2 s (escala/opacidade pelo tempo desde a morte, guardado na view; reaparece no respawn). Posicao (pos.x, 0, pos.z) e rotation.y = yaw (yaw 0 olha +Z). castShadow nas malhas.",
+        "complexity": "medium",
+        "files": [
+          "src/render/characters.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "HUD e telas em React com motion, consumindo o HudStore de src/ui/hudStore.ts. src/ui/Hud.tsx ({ store }): barras de HP (vermelha) e estamina (verde) no canto superior esquerdo com rastro amarelo que encolhe atrasado, contador de frascos, runas no canto inferior direito, barra do chefe 'Sentinela da Nevoa' (com acento no texto real) embaixo que pisca no evento bossPhase2, reticulo do lock-on em target.sx/sy com barra de poise acima (atordoado quando cheia), mensagens centrais com fade a partir de store.onEvents ('VOCÊ MORREU' vermelha, 'INIMIGO ABATIDO' dourada por enemyDied de hollow, 'GRANDE INIMIGO ABATIDO' na vitoria), prompts 'Descansar [E]' / 'Atravessar a névoa [E]', tela de descanso 'Fogueira' + 'Levantar [E]' quando phase = resting, flashes de borda (vermelho em playerHit nao bloqueado, azul em bloqueado, branco em enemyHit com riposte). src/ui/TitleScreen.tsx ({ seed, onSeedChange, onStart }): titulo ASHEN GATE, campo de seed editavel, 'Pressione qualquer tecla'; qualquer tecla ou clique chama onStart, menos digitar no campo. src/ui/PauseMenu.tsx ({ onResume, onQuit }): Continuar e Voltar ao titulo. src/ui/styles.css: layout em tela cheia, HUD com pointer-events none, tipografia e cores.",
+        "complexity": "medium",
+        "files": [
+          "src/ui/Hud.tsx",
+          "src/ui/TitleScreen.tsx",
+          "src/ui/PauseMenu.tsx",
+          "src/ui/styles.css"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "game.ts: createGame e stepGame conforme a secao game.ts. createGame: seed = rng = hashSeed(seed), hollows ids 1-3 em HOLLOW_SPAWNS com yaw pi, chefe id 10 em BOSS_SPAWN. stepGame puro: time += dt, subpassos de no maximo 0.05 acumulando events (pressionamentos so no primeiro), events so deste passo. Fases title, resting, dead (deathTimer, renascimento com bloodstain da morte se runes > 0, evento respawn), victory (so stepPlayer) e playing na ordem dos 10 itens: lock-on, riposte (consome o light), stepPlayer, acertos do jogador (range + enemyRadius, contra-ataque de guarda no heavy, hitIds, stagger, morte, runas, vitoria), fase 2, stepEnemy por sala com rng encadeado na ordem dos ids, acertos no jogador (i-frames -> dodged, bloqueio com guardCounter e guardBreak, acerto cheio, stagger com y = 0, morte), empurrao + resolveRoom, interacoes (fogueira, porta de nevoa) e rastro de sangue. Emitir o evento flask quando o frasco comeca. Depois rodar `npm test` inteiro e corrigir o que aparecer em qualquer modulo do motor, incluindo o teste de determinismo (deepEqual) e o de andar 120 passos.",
+        "complexity": "high",
+        "files": [
+          "src/engine/game.ts"
+        ],
+        "wave": 3
+      },
+      {
+        "step": "src/render/GameCanvas.tsx: componente React ({ seed: string; paused: boolean; store: HudStore; onPauseRequest(): void }) que cria WebGLRenderer (sombras ligadas, pixelRatio limitado a 2), cena, camera, createWorld, createPlayerView, uma createEnemyView por inimigo, createCameraRig e createInputController no canvas (clique pede pointer lock). Loop com requestAnimationFrame e acumulador de passo fixo de 1/60 (limitar o atraso acumulado): estado em ref iniciado com createGame(seed) e ja tirado de title com um passo de interact; a cada passo fixo chama stepGame com input.sample(rig.yaw()), limpa os pressionamentos depois do primeiro passo do quadro e repassa state.events para store.emit; sem interpolacao, desenha o ultimo estado. Por quadro: rig.update, views.update, world.update e store.set com o HudSnapshot (alvo do lock-on projetado em pixels com Vector3.project, chefe visivel da entrada na bossRoom ate a vitoria, prompt por distancia a BONFIRE/FOG_GATE com INTERACT_RANGE quando jogando no courtyard). paused congela a simulacao. Esc (keydown) e perda inesperada do pointer lock chamam onPauseRequest e soltam o mouse. Tratar resize e limpar tudo no unmount (compativel com StrictMode).",
+        "complexity": "high",
+        "files": [
+          "src/render/GameCanvas.tsx"
+        ],
+        "wave": 3
+      },
+      {
+        "step": "Fiacao final: src/App.tsx com o fluxo titulo -> jogo -> pausa (seed aleatoria inicial editavel; onStart monta GameCanvas com key = seed e um createHudStore; Esc alterna a pausa; 'Voltar ao título' desmonta o jogo), compondo GameCanvas + Hud + PauseMenu + TitleScreen e importando styles.css; src/main.tsx so renderiza App. Rodar `npm test` e `npm run build`, corrigir erros de tipo/unused em qualquer arquivo de src/ (sem any, as unknown as, ts-ignore), e conferir em `npm run dev` os itens de 'Interface e jogabilidade' ponta a ponta (controles, combo, guarda e contra-ataque, riposte, frasco, fogueira, morte e rastro, porta de nevoa, chefe em duas fases, HUD) sem erro no console.",
+        "complexity": "high",
+        "files": [
+          "src/App.tsx",
+          "src/main.tsx"
+        ],
+        "wave": 4
+      }
+    ],
+    "doneWhen": [
+      "`npm test` passa (testes visíveis de rng, vec, stats, jogador, inimigo, arena e jogo).",
+      "`npm run build` termina sem erro: `tsc --noEmit` estrito limpo e bundle gerado, sem `any`, `as unknown as`, `@ts-ignore` ou `@ts-expect-error`.",
+      "Cada função do motor segue o contrato da tarefa, inclusive bordas (subpassos de 0.05, deslocamento exato da esquiva e do lunge, pureza, determinismo por seed com deepEqual), para resistir aos testes ocultos.",
+      "src/engine/ não importa three, react, motion nem DOM, roda no Node com imports `.ts`, e mantém nomes e formas dos tipos e constantes exportados.",
+      "`npm run dev` abre a tela inicial (ASHEN GATE, seed editável, 'Pressione qualquer tecla') e qualquer tecla ou clique inicia um jogo jogável com passo fixo de 1/60 e câmera em terceira pessoa (órbita com pointer lock, seguir, lock-on).",
+      "Combate completo jogável: estamina, esquiva com i-frames, combo leve, pesado, ataque em salto, guarda e contra-ataque, poise/atordoamento e riposte, frasco, fogueira que restaura e faz renascer, morte com rastro de runas recuperável, porta de névoa e chefe com duas fases até a vitória.",
+      "Cenário, personagens e HUD conforme a especificação (barras com rastro, frascos, runas, barra do chefe, retículo e poise do alvo, mensagens, tela de descanso, flashes, pausa com Esc), tudo gerado em código, sem asset externo, sem erro no console e a cerca de 60 fps.",
+      "package.json, vite.config.ts, tsconfig.json, index.html e test/ intactos; nenhuma dependência nova."
+    ],
+    "risks": [
+      "Testes ocultos cobram o contrato literal do motor: ordem das regras, comparações de `t` sem epsilon, quando o rng é consumido e casos de borda (estamina zerada, distância zero, alvo morto). Qualquer 'melhoria' fora do texto quebra.",
+      "Pureza e determinismo: mutar argumentos ou compartilhar referências (IDLE_ACTION.hitIds/dir, home dos inimigos, constantes da arena) quebra o deepEqual e contamina estados entre passos.",
+      "As etapas de interface das ondas 1 a 3 são escritas contra assinaturas combinadas no plano (input, camera, hudStore, world, characters); se alguém divergir dos nomes ou formas, a fiação da onda 4 precisa ajustar, e o tsc estrito (noUnusedLocals/Parameters, verbatimModuleSyntax com `import type`, erasableSyntaxOnly sem enum nem parameter properties) falha o build por detalhes.",
+      "player.ts e enemies.ts só são testáveis de verdade com a onda 1 pronta, e game.ts integra os dois: erros sutis (dupla contagem de subpassos entre stepGame e stepPlayer/stepEnemy, pressionamentos repetidos em subpassos) só aparecem na onda 3.",
+      "Pointer lock e Esc: o navegador consome o Esc para soltar o mouse, então a pausa precisa reagir também ao pointerlockchange; Tab, Espaço e botão direito precisam de preventDefault, e o StrictMode monta efeitos duas vezes (renderer e listeners duplicados se a limpeza falhar).",
+      "Desempenho e orientação: muitas PointLights com sombra ou atualizações do React a 60 Hz derrubam o fps (limitar sombras e só notificar o store quando o snapshot muda); o eixo direito da câmera olhando +Z é -X no three.js, fácil de inverter no movimento relativo e na pose dos personagens."
+    ]
+  },
+  "review": {
+    "verdict": "REVISE",
+    "notes": [
+      "game.ts, riposte (item 2): o plano não diz o que acontece quando os 200 de dano zeram o HP. Isso ocorre na prática: um ataque em salto deixa o hollow atordoado com 10 de HP, e também vale para o chefe. Use um único helper de 'dano no inimigo' para o riposte e para o item 4: HP 0 → `dead`, runas, `enemyDied`, lock-on limpo, e para o chefe `bossDefeated` + `victory`. O inimigo só vai para `recover` (`t = 0`, `attack = null`, para valer `RIPOSTE_RECOVER`) se sobreviver. 'Vivo' deve significar `state !== 'dead'` em todos os pontos (lock-on, acertos, empurrão).",
+      "Pausa / Esc / pointer lock: como está, o Esc pode disparar duas vezes (keydown no GameCanvas, `pointerlockchange` e o 'Esc alterna' no App), pausando e despausando no mesmo gesto. Deixe um único dono do estado de pausa, no App. `onPauseRequest` deve ser idempotente (só pausa); só o PauseMenu, por Continuar ou Esc com o menu aberto, retoma. Uma saída de pointer lock provocada pelo próprio código (pausa, unmount, voltar ao título) não pode gerar novo pedido de pausa.",
+      "Input, pressionamentos pendentes: o plano mantém as bordas até `clearPresses()`, mas com o jogo pausado nenhum passo roda, então as teclas apertadas durante a pausa disparam todas ao retomar. Chame `clearPresses()`, zere as teclas seguradas e zere o acumulador ao pausar e ao retomar. O clique que só captura o mouse (canvas sem pointer lock) e o clique em 'Continuar' não devem virar ataque leve.",
+      "player.ts: o passo cita o término de ação de forma genérica. Deixe explícita a duração por tipo: `ROLL.duration`, `ATTACKS[attack].duration` (também para `jumpAttack`), `JUMP.duration`, `FLASK.duration`, `RIPOSTE.duration` e `STAGGER.player`; `dead` nunca termina. `riposte`, `stagger` e `dead` são atribuídos pelo game.ts, mas é o `stepPlayer` que avança o `t` e os encerra. Trocar de `light1` para `light2` ou de `jump` para `jumpAttack` cria uma `PlayerAction` nova (`t = 0`, `hitIds` novo); o `jumpAttack` herda o `y` atual do salto.",
+      "HUD a 60 Hz: `sx`/`sy` do alvo e a estamina mudam quase todo quadro, então 'set só notifica quando algo muda' não evita re-render do HUD inteiro a 60 Hz. Tire a posição do retículo e da barra de poise do snapshot reativo (ref com `style.transform` ou um motion value atualizado pelo GameCanvas), ou faça os componentes assinarem fatias do store com selector. Arredonde os valores numéricos antes de comparar."
+    ]
+  },
+  "sessions": [
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 1,
+      "steps": [
+        1,
+        2
+      ],
+      "status": "DONE",
+      "summary": "Steps 1–2 are done. The engine base (rng, vec, stats, arena) is implemented, and the UI plumbing (input.ts, camera.ts, hudStore.ts) is written. attacks.ts already matched the task table and is unchanged. The engine tests for rng, vec, stats and arena pass. The four remaining `npm test` failures exercise player, enemies and game, which are stubs for later waves. A build output filtered to my files showed no type errors; I did not inspect the rest of the build output. Extras: `InputController.reset()` clears presses and held keys for pause/resume, and `hudStore.ts` also exports `useHudSelector`.",
+      "sessionId": "7a92fa69-f5ac-4d14-b34c-97d7c1954657",
+      "advisorCalls": 0,
+      "ms": 90010
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 2,
+      "steps": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "status": "DONE",
+      "summary": "Steps 3–7 are implemented: engine/player.ts, engine/enemies.ts, render/textures.ts, render/world.ts, render/characters.ts, ui/Hud.tsx, ui/TitleScreen.tsx, ui/PauseMenu.tsx and ui/styles.css. `npm run build` passes (tsc strict clean, bundle generated). `npm test` gives 7 of 8 passing; the only failure is the game test, because `createGame` in game.ts is still a stub (wave 3). Nothing was run in a browser, so rendering and HUD are not visually checked. Two engine choices the contract left open: an idle enemy's `t` does not advance (that is how a boss that has never fought is detected for `idle` → `intro`), and `jumpAttack` lowers `y` on every step, including the step where it starts. For HUD performance, the reticle and poise bar are updated directly on the DOM from a store subscription, and the other HUD parts subscribe to slices of the store. PauseMenu ignores an Esc pressed within 250 ms of opening, so the Esc that opened it cannot close it; it resumes only on Continuar or a later Esc. The advisor was not consulted.",
+      "sessionId": "14e26a79-48ed-4a1d-ae1f-ad66470ee85f",
+      "advisorCalls": 0,
+      "ms": 289661
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 3,
+      "steps": [
+        8,
+        9
+      ],
+      "status": "DONE",
+      "summary": "Implementei `src/engine/game.ts` (steps 8) e `src/render/GameCanvas.tsx` (step 9). `npm test` passa (8/8) e `npm run build` termina limpo. Não abri o jogo no navegador (`npm run dev`), então o comportamento visual e o 60 fps não foram verificados; isso fica para a fiação da onda 4, que também vai montar o GameCanvas.\n\n**game.ts**\n- `createGame` e `stepGame` seguem as fases e a ordem dos itens do contrato, com subpassos de 0.05 e eventos acumulados só do passo atual.\n- Os pressionamentos só valem no primeiro subpasso.\n- O dano ao inimigo (golpe normal e riposte) passa por um único helper: `hp = 0` mata, dá runas, emite `enemyDied`, limpa o lock-on e, no chefe, marca `bossDefeated` e `victory`. O inimigo só vai para `recover` se sobreviver ao riposte. \"Vivo\" é sempre `state !== 'dead'`.\n- Decisão minha onde o contrato é omisso: o alcance do riposte usa `RIPOSTE.range` puro, sem somar o raio do inimigo, ao contrário do ataque normal.\n- Se um golpe de inimigo zera o HP do jogador, a morte prevalece sobre o atordoamento.\n\n**GameCanvas.tsx**\n- Passo fixo de 1/60 com acumulador limitado. O estado sai de `title` com um passo de `interact` e `state.events` vai para `store.emit`.\n- A pausa tem um único dono, o App. `onPauseRequest` só pede pausa. O Esc e a perda inesperada do pointer lock chamam esse callback, mas uma saída de lock causada pelo próprio código (pausa, unmount) não gera novo pedido.\n- Ao pausar e ao retomar, `input.reset()` zera pressionamentos, teclas seguradas e o acumulador. O clique que só captura o mouse já não vira ataque no `input.ts`.\n- A limpeza no unmount é compatível com StrictMode.\n- O `HudSnapshot` ainda leva `sx`/`sy` do retículo, então o HUD pode re-renderizar quase todo quadro. Os valores são arredondados no store, mas a nota de tirar a posição do snapshot reativo é do `Hud.tsx`/`hudStore.ts` (outro passo) e não foi aplicada.\n\nFalta a fiação do `App.tsx`.",
+      "sessionId": "8b958fea-8d76-453a-bbfd-23303e39c316",
+      "advisorCalls": 0,
+      "ms": 124627
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 4,
+      "steps": [
+        10
+      ],
+      "status": "DONE",
+      "summary": "Escrevi `src/App.tsx` e `src/main.tsx`. `npm test` passa (8/8) e `npm run build` termina sem erro de tipo; o bundle sai com aviso de chunk acima de 500 kB. Não abri `npm run dev`, então a jogabilidade ponta a ponta no navegador e o console sem erro não foram verificados.\n\n- **Fluxo:** título → jogo → pausa. A seed inicial é aleatória e editável. `onStart` monta `GameCanvas` com `key` novo e um `createHudStore` novo. \"Voltar ao título\" desmonta o jogo.\n- **Pausa:** `App` é o único dono do estado. `onPauseRequest` só pausa, e só o `PauseMenu` retoma (Continuar ou Esc). A limpeza de teclas, a zeragem do acumulador e a saída do pointer lock ao pausar já estavam em `GameCanvas`, que não alterei. Não confirmei no navegador que o clique que captura o mouse ou o de Continuar não vira ataque leve.\n- **Nota de revisão sobre o HUD a 60 Hz:** não alterei `Hud.tsx` nem `GameCanvas.tsx`, que pertencem a outros passos. Não verifiquei se a posição do retículo e a estamina ficaram fora do re-render reativo; `hudStore.ts` exporta `useHudSelector`, que serve a esse fim.\n- **Nota de revisão sobre `player.ts` e `game.ts` (riposte):** não conferi. São de passos de ondas anteriores.\n- `main.tsx` renderiza só `App`, dentro de `StrictMode`.",
+      "sessionId": "65d81c2f-638a-4804-a2df-78c08ea81915",
+      "advisorCalls": 0,
+      "ms": 18621
+    }
+  ],
+  "gate": [
+    {
+      "round": 1,
+      "pass": true,
+      "results": [
+        {
+          "id": "test",
+          "command": "npm test",
+          "exitCode": 0,
+          "ms": 164,
+          "outputTail": "\n> ashen-gate@0.0.0 test\n> node --test test/*.test.ts\n\nTAP version 13\n# Subtest: rng: determinístico e no intervalo\nok 1 - rng: determinístico e no intervalo\n  ---\n  duration_ms: 1.013875\n  type: 'test'\n  ...\n# Subtest: vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo\nok 2 - vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo\n  ---\n  duration_ms: 0.115584\n  type: 'test'\n  ...\n# Subtest: stats: gastar estamina atrasa a regeneração; poise acumulado quebra\nok 3 - stats: gastar estamina atrasa a regeneração; poise acumulado quebra\n  ---\n  duration_ms: 0.086542\n  type: 'test'\n  ...\n# Subtest: jogador: a esquiva tem i-frames e se desloca 3.15 m\nok 4 - jogador: a esquiva tem i-frames e se desloca 3.15 m\n  ---\n  duration_ms: 0.522625\n  type: 'test'\n  ...\n# Subtest: jogador: o ataque leve tem janela de acerto\nok 5 - jogador: o ataque leve tem janela de acerto\n  ---\n  duration_ms: 0.077166\n  type: 'test'\n  ...\n# Subtest: inimigo: o hollow só persegue dentro do alcance de agressão\nok 6 - inimigo: o hollow só persegue dentro do alcance de agressão\n  ---\n  duration_ms: 0.167667\n  type: 'test'\n  ...\n# Subtest: arena: os muros e os pilares prendem o jogador\nok 7 - arena: os muros e os pilares prendem o jogador\n  ---\n  duration_ms: 0.050417\n  type: 'test'\n  ...\n# Subtest: jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado\nok 8 - jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado\n  ---\n  duration_ms: 2.589291\n  type: 'test'\n  ...\n1..8\n# tests 8\n# suites 0\n# pass 8\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 67.967292\n"
+        },
+        {
+          "id": "build",
+          "command": "npm run build",
+          "exitCode": 0,
+          "ms": 1045,
+          "outputTail": "\n> ashen-gate@0.0.0 build\n> tsc --noEmit && vite build\n\nvite v8.3.8 building client environment for production...\ntransforming...\n✓ 463 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.39 kB │ gzip:   0.27 kB\ndist/assets/index-D9zewI8x.css    5.03 kB │ gzip:   1.67 kB\ndist/assets/index-CWWa765Y.js   862.56 kB │ gzip: 240.99 kB\n\n[plugin builtin:vite-reporter] \n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n✓ built in 134ms\n"
+        }
+      ]
+    }
+  ],
+  "advisorCalls": 0,
+  "calls": [
+    {
+      "role": "planner",
+      "ms": 124044,
+      "usage": {
+        "claude-fable-5-2": {
+          "inputTokens": 8,
+          "outputTokens": 11859,
+          "cacheReadInputTokens": 78611,
+          "cacheCreationInputTokens": 31670,
+          "webSearchRequests": 0,
+          "costUSD": 0.9968661999999999,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 4011,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 31670,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "0aa92480-d625-4f49-a002-194fa5bc07a6",
+      "permissionDenials": 0
+    },
+    {
+      "role": "planReviewer",
+      "ms": 53843,
+      "usage": {
+        "claude-fable-5-2": {
+          "inputTokens": 4,
+          "outputTokens": 4778,
+          "cacheReadInputTokens": 31881,
+          "cacheCreationInputTokens": 27756,
+          "webSearchRequests": 0,
+          "costUSD": 0.6416242,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 3375,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 27756,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "f8940cdf-9dfe-4e57-b27c-5e4b0a132f43",
+      "permissionDenials": 0
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 89972,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 18,
+          "outputTokens": 14752,
+          "cacheReadInputTokens": 348673,
+          "cacheCreationInputTokens": 47889,
+          "webSearchRequests": 0,
+          "costUSD": 0.37397930000000007,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 2602,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 47889,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "7a92fa69-f5ac-4d14-b34c-97d7c1954657",
+      "permissionDenials": 1
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 289619,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 36,
+          "outputTokens": 46950,
+          "cacheReadInputTokens": 1056957,
+          "cacheCreationInputTokens": 84251,
+          "webSearchRequests": 0,
+          "costUSD": 0.9122717000000001,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 10637,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 84251,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "14e26a79-48ed-4a1d-ae1f-ad66470ee85f",
+      "permissionDenials": 3
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 124589,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 16,
+          "outputTokens": 20526,
+          "cacheReadInputTokens": 327954,
+          "cacheCreationInputTokens": 61006,
+          "webSearchRequests": 0,
+          "costUSD": 0.4821114,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 4334,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 61006,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "8b958fea-8d76-453a-bbfd-23303e39c316",
+      "permissionDenials": 1
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 18615,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 8,
+          "outputTokens": 1991,
+          "cacheReadInputTokens": 109279,
+          "cacheCreationInputTokens": 31738,
+          "webSearchRequests": 0,
+          "costUSD": 0.1578059,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 142,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 31738,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "65d81c2f-638a-4804-a2df-78c08ea81915",
+      "permissionDenials": 0
+    }
+  ],
+  "routing": [
+    {
+      "wave": 1,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            1,
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            8,
+            9
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 4,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            10
+          ]
+        }
+      ]
+    }
+  ],
+  "engineMs": 702018,
+  "cost": {
+    "costUSD": 3.5646587000000003,
+    "input": 0.00023456196742614933,
+    "cacheWrite": 1.7395115350704062,
+    "cacheRead": 0.4198977076510743,
+    "output": 1.4050148953110937,
+    "tokens": {
+      "input": 90,
+      "cacheWrite": 284310,
+      "cacheRead": 1953355,
+      "output": 100856
+    },
+    "byModel": {
+      "claude-fable-5-2": 1.6384903999999998,
+      "claude-sonnet-5-5": 1.9261683000000003
+    },
+    "byRole": {
+      "planner": 0.9968661999999999,
+      "planReviewer": 0.6416242,
+      "advisedExecutor": 1.9261683000000003
+    }
+  }
+}
