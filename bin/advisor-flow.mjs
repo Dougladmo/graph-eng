@@ -223,7 +223,9 @@ ${data(plan)}
 Return structured output only.`
 }
 
-export function executorPrompt({ task, plan, review, commands, advisorLeft = ADVISOR_MAX_CALLS, gateFailure = null, hostName = 'claude', segment = null, lane = null }) {
+const partOf = s => s.steps ? `steps ${listSteps(s.steps)}` : s.from ? `steps ${s.from}–${s.to}` : 'the whole task'
+
+export function executorPrompt({ task, plan, review, commands, advisorLeft = ADVISOR_MAX_CALLS, gateFailure = null, blocked = null, hostName = 'claude', segment = null, lane = null }) {
   const role = lane
     ? 'You implement your part of this task in one continuous session. The plan is split into waves; inside a wave, sessions run in parallel, each on the files its steps name.'
     : segment
@@ -245,6 +247,7 @@ You can run these commands yourself, exactly as written: ${commands.map(c => `\`
   if (hostName === 'claude') parts.push(advisorLeft > 0 ? `## Advisor
 A stronger advisor model is available through the advisor tool; it sees this whole session. You may consult it at most ${advisorLeft} time(s) in total: before committing to the architecture of the hardest part, and when the same failure survives two fixes. Ask for a short plan, not code. Do not consult it for routine work.` : '## Advisor\nThe advisor budget is spent: do not call the advisor tool.')
   if (gateFailure) parts.push(`## Your previous session did not pass the supervisor gate\n${gateFailure.map(r => `\`${r.command}\` exited ${r.exitCode}. Output tail:\n\`\`\`\n${r.outputTail}\n\`\`\``).join('\n')}\nThe code from that session is in the working tree. Fix it.`)
+  if (blocked?.length) parts.push(`## Earlier sessions reported these parts BLOCKED\n${blocked.map(s => `- ${partOf(s)}: ${s.summary}`).join('\n')}\nTheir code, where any exists, is in the working tree. Do what they left undone; the commands above passing is not enough.`)
   parts.push(segment || lane
     ? 'Return DONE only when your steps are complete and what they cover passes; otherwise BLOCKED with the reason in summary. Return structured output only.'
     : 'Return DONE only when the task is complete and every command above passes; otherwise BLOCKED with the reason in summary. Return structured output only.')
@@ -309,13 +312,14 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
     if (planOnly) return finish('planned')
     const allowCommands = checks.map(commandText)
     let gateFailure = null
+    let blocked = null
     const session = async (round, { segment = null, lane = null, advisorLeft = Math.max(0, advisorMax - record.advisorCalls) } = {}) => {
       const executorModel = lane?.model ?? segment?.model ?? (power ? 'opus' : haikuMax ? 'sonnet' : undefined)
       const part = lane ? ` (onda ${lane.wave}, passos ${listSteps(lane.steps)}, ${lane.model})` : segment ? ` (passos ${segment.from}–${segment.to}, ${segment.model})` : ''
       log(`advisor: sessão do executor ${round}/${maxExecutorSessions}${part} (advisor restante: ${advisorLeft})`)
       const t0 = Date.now()
       const total = record.plan.steps.length
-      const prompt = executorPrompt({ task, plan: record.plan, review: record.review, commands: allowCommands, advisorLeft, gateFailure, hostName, segment: segment && { ...segment, total }, lane: lane && { ...lane, total, waves: waves.length } })
+      const prompt = executorPrompt({ task, plan: record.plan, review: record.review, commands: allowCommands, advisorLeft, gateFailure, blocked, hostName, segment: segment && { ...segment, total }, lane: lane && { ...lane, total, waves: waves.length } })
       const result = await call('advisedExecutor', prompt, EXECUTOR_SCHEMA, { allowCommands, timeoutMs: EXECUTOR_TIMEOUT_MS, ...(executorModel ? { executorModel } : {}) })
       const advisorCalls = hostName === 'claude' ? await countAdvisor(result.sessionId) : 0
       record.advisorCalls += advisorCalls ?? 0
@@ -331,6 +335,8 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
       if (failed) throw failed.reason
       return settled.map(s => s.value)
     }
+    // O gate é necessário, não suficiente (benchmark 11/11: a raia da UI devolveu BLOCKED, o motor passou nos testes
+    // e o jogo não existia). Gate verde com sessão BLOCKED também abre o conserto, com o que ficou por fazer.
     for (let round = 1; round <= maxExecutorSessions; round++) {
       const statuses = []
       if (round === 1 && waves) for (const wave of waves) statuses.push(...await runWave(round, wave))
@@ -340,10 +346,11 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
       const gateResult = await runGateImpl(cwd, checks)
       record.gate.push({ round, ...gateResult })
       const allDone = statuses.every(status => status === 'DONE')
-      if (gateResult.pass) return finish(allDone ? 'done' : 'blocked', allDone ? null : 'advisor_executor_blocked')
-      gateFailure = gateResult.results.filter(r => r.exitCode !== 0)
+      if (gateResult.pass && allDone) return finish('done')
+      if (round === maxExecutorSessions) return finish('blocked', gateResult.pass ? 'advisor_executor_blocked' : 'advisor_gate_failed')
+      gateFailure = gateResult.pass ? null : gateResult.results.filter(r => r.exitCode !== 0)
+      blocked = record.sessions.filter(s => s.round === round && s.status === 'BLOCKED')
     }
-    return finish('blocked', 'advisor_gate_failed')
   } catch (error) {
     record.exception = { code: error.code ?? 'EXCEPTION', message: String(error.message ?? error).slice(0, 500) }
     return finish('blocked', 'advisor_call_failed')

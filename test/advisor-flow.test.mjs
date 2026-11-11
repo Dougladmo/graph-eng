@@ -73,11 +73,24 @@ test('advisor esgotado: a sessão seguinte é proibida de chamar o advisor', () 
   assert.doesNotMatch(prompt, /at most/)
 })
 
-test('executor BLOCKED com gate verde não vira DONE', async t => {
+// Regressão (benchmark 11/11, --power max): a raia da UI devolveu BLOCKED, o gate passou (os testes cobrem só o motor)
+// e a run fechou blocked sem usar a sessão de conserto que ainda tinha; a página mostrava o esqueleto.
+test('executor BLOCKED com gate verde abre o conserto com o que ficou por fazer; esgotadas as sessões, blocked', async t => {
   const cwd = await tempDir(t)
-  const result = await runAdvisorFlow({ host: fakeHost({ executorOutputs: [{ status: 'BLOCKED', summary: 'UI incompleta' }] }), cwd, task: 't', gate: GATE, runGateImpl: passing, countAdvisor: async () => 0 })
-  assert.equal(result.status, 'blocked')
-  assert.equal(result.feedback.reason, 'advisor_executor_blocked')
+  const host = fakeHost({ executorOutputs: [{ status: 'BLOCKED', summary: 'UI incompleta' }, { status: 'DONE', summary: 'UI feita' }] })
+  let gates = 0
+  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: async () => { gates++; return { pass: true, results: [] } }, countAdvisor: async () => 0 })
+  assert.equal(result.status, 'done')
+  const sessions = host.requests.filter(r => r.role === 'advisedExecutor')
+  assert.equal(sessions.length, 2)
+  assert.match(sessions[1].prompt, /reported these parts BLOCKED\n- the whole task: UI incompleta/)
+  assert.doesNotMatch(sessions[1].prompt, /did not pass the supervisor gate/)
+  assert.equal(gates, 2)
+  assert.deepEqual(result.sessions.map(s => s.status), ['BLOCKED', 'DONE'])
+  const spent = await runAdvisorFlow({ host: fakeHost({ executorOutputs: [{ status: 'BLOCKED', summary: 'UI incompleta' }] }), cwd, task: 't', gate: GATE, runGateImpl: passing, countAdvisor: async () => 0 })
+  assert.equal(spent.status, 'blocked')
+  assert.equal(spent.feedback.reason, 'advisor_executor_blocked')
+  assert.equal(spent.sessions.length, 2)
 })
 
 test('sem script de test não há gate: o fluxo bloqueia antes de qualquer chamada', async t => {

@@ -23,6 +23,7 @@ Power Mode: cada papel sobe um degrau na família, os passos rodam em paralelo, 
 ### Fixed
 
 - **Executor do Claude com `Write` negado.** O `--allowedTools` do papel de escrita só tinha `Edit(./**)`, e essa regra não cobre `Write`: no benchmark de 11/11 (rodada 1) a primeira sessão do executor padrão e duas raias do Power Mode devolveram `BLOCKED` sem escrever nada, e a run só fechou na sessão de conserto. Agora `Write(./**)` também é liberado, preso ao cwd.
+- **Gate verde com sessão `BLOCKED` fechava a run sem conserto.** Na rodada 1 de `--power max`, a raia da UI devolveu `BLOCKED`, o gate passou (os testes cobrem só o motor e o build compila o esqueleto) e a run fechou `blocked` sem usar a sessão de conserto que ainda tinha; a página mostrava "em construção". Agora o conserto também abre nesse caso, recebendo o que cada sessão deixou por fazer, e `advisor_executor_blocked` só sai quando as sessões acabam.
 
 ### Pendente
 
