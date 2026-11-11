@@ -17,12 +17,13 @@ const MODEL_BY_ROLE = {
 const ADVISOR_BY_ROLE = { claude: { advisedExecutor: 'opus' } }
 // Modelos aceitos no executor contínuo (--executor e roteamento por complexidade). O Opus fica de fora: ele já é o advisor.
 const ADVISED_EXECUTOR_MODELS = new Set(['sonnet', 'haiku'])
-// Power Mode (1.4, docs/power-mode.md): o Fable 5.2 planeja e é o advisor; o Opus revisa o plano e é o executor padrão
-// (conserto do gate). Com o Fable de advisor, o Opus entra nas raias high; o próprio Fable entra com --fable-min high.
+// Power Mode (1.4, docs/power-mode.md): cada papel sobe um degrau. --power: o Opus planeja, o Fable 5.2 revisa o plano
+// e é o advisor, o Opus é o executor padrão (conserto do gate) e entra nas raias high. --power max: o Fable também planeja.
 export const FABLE = 'claude-fable-5-2'
-const POWER_MODEL_BY_ROLE = { planner: FABLE, planReviewer: 'opus', advisedExecutor: 'opus' }
+const POWER_MODEL_BY_ROLE = { planner: 'opus', planReviewer: FABLE, advisedExecutor: 'opus' }
+const POWER_MAX_MODEL_BY_ROLE = { ...POWER_MODEL_BY_ROLE, planner: FABLE }
 const POWER_ADVISOR_BY_ROLE = { advisedExecutor: FABLE }
-const POWER_EXECUTOR_MODELS = new Set(['sonnet', 'haiku', 'opus', FABLE])
+const POWER_EXECUTOR_MODELS = new Set(['sonnet', 'haiku', 'opus'])
 const WRITE_SHELL_ROLES = new Set(['advisedExecutor'])
 // Comando de check liberado ao executor: texto exato, sem metacaractere de shell nem curinga de permissão.
 const ALLOW_COMMAND = /^[A-Za-z0-9_./@=+:,-]+( [A-Za-z0-9_./@=+:,-]+)*$/
@@ -219,10 +220,11 @@ function samePath(left, right) { return path.resolve(left) === path.resolve(righ
  * planner e planReviewer são sempre read-only. writeScope é rejeitado até haver enforcement real. A disponibilidade
  * de modelo permanece desconhecida até o CLI executar e reportar o identificador.
  */
-export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, advisedExecutorModel = null, power = false }) {
+export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, advisedExecutorModel = null, power = false, powerMax = false }) {
   if (!MODEL_BY_ROLE[host]) throw new TypeError(`Host desconhecido: ${host}`)
   if (power && host !== 'claude') throw new TypeError('power vale só no host claude')
-  const models = power ? POWER_MODEL_BY_ROLE : MODEL_BY_ROLE[host]
+  if (powerMax && !power) throw new TypeError('powerMax exige power')
+  const models = power ? (powerMax ? POWER_MAX_MODEL_BY_ROLE : POWER_MODEL_BY_ROLE) : MODEL_BY_ROLE[host]
   const executorModels = power ? POWER_EXECUTOR_MODELS : ADVISED_EXECUTOR_MODELS
   const advisors = power ? POWER_ADVISOR_BY_ROLE : ADVISOR_BY_ROLE[host] ?? {}
   if (advisedExecutorModel !== null && (host !== 'claude' || !executorModels.has(advisedExecutorModel))) throw new TypeError(`advisedExecutorModel aceita somente ${[...executorModels].join(', ')}, no host claude`)
@@ -275,7 +277,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const readOnlyEnforcement = host === 'claude'
       ? 'Claude Code usa permission-mode dontAsk e limita as ferramentas a Read, Glob e Grep; não oferece ferramenta de escrita nem shell. Papéis de escrita só gravam dentro do cwd (Edit(./**)).'
       : readOnlyEnforced ? 'Codex CLI usa -s read-only para restringir gravações no sandbox do sistema de arquivos.' : null
-    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(models), power, structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex' }
+    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(models), power, powerMax, structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex' }
   }
 
   async function spawnRequest(request) {

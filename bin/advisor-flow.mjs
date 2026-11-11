@@ -3,20 +3,19 @@
 // do plano, sem nova rodada. O fim é o gate externo do supervisor: npm test e npm run build.
 // Benchmark Minecraft (21 a 23/10): o motor de grafo antigo gastou 71% da run em plano e revisão antes de existir
 // código e nunca entregou o jogo. Aqui o grosso do gasto vai para quem escreve código, com o contexto inteiro.
-// Power Mode (1.4, docs/power-mode.md): o Fable 5.2 planeja e aconselha; o plano sai em ondas, e dentro de cada onda
-// os passos viram raias por modelo que rodam em paralelo em arquivos disjuntos. As ondas rodam em série.
+// Power Mode (1.4, docs/power-mode.md): cada papel sobe um degrau (o Fable 5.2 revisa e aconselha; com max, também
+// planeja); o plano sai em ondas, e dentro de cada onda os passos viram raias por modelo que rodam em paralelo em
+// arquivos disjuntos. As ondas rodam em série. Quem escolhe o modelo de cada papel é o host (bin/hosts.mjs).
 import { spawn } from 'node:child_process'
 import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { childEnv } from './child-env.mjs'
-import { FABLE } from './hosts.mjs'
 
 export const ADVISOR_MAX_CALLS = 3
 // Power: seis chamadas por run, no máximo duas por sessão de raia (as raias de uma onda rodam ao mesmo tempo).
 export const POWER_ADVISOR_MAX_CALLS = 6
 export const POWER_LANE_ADVISOR_MAX = 2
-export const FABLE_MINS = ['high', 'off']
 export const DEFAULT_EXECUTOR_SESSIONS = 2
 // Sessão de implementação inteira: o agente único (Opus) levou 23 min no Minecraft. O host aceita até 60 min.
 export const EXECUTOR_TIMEOUT_MS = 55 * 60 * 1000
@@ -66,12 +65,11 @@ export function routeSteps(steps, haikuMax) {
   return segments
 }
 
-// Power: Haiku até haikuMax, Opus nos high (ou o Fable com fableMin high), Sonnet no resto e na complexidade inválida.
-export function powerModelFor(complexity, { haikuMax = 'low', fableMin = 'off' } = {}) {
+// Power: Haiku até haikuMax, Opus nos high, Sonnet no resto e na complexidade inválida.
+export function powerModelFor(complexity, { haikuMax = 'low' } = {}) {
   const level = COMPLEXITIES.indexOf(complexity)
   if (level >= 0 && level <= COMPLEXITIES.indexOf(haikuMax)) return 'haiku'
-  if (level === 2) return fableMin === 'high' ? FABLE : 'opus'
-  return 'sonnet'
+  return level === 2 ? 'opus' : 'sonnet'
 }
 
 const footprint = step => new Set((Array.isArray(step?.files) ? step.files : []).map(file => path.posix.normalize(String(file).trim().replace(/\\/g, '/')).replace(/^\.\//, '')).filter(file => file && file !== '.'))
@@ -111,8 +109,6 @@ export function powerWaves(steps, options = {}) {
 }
 
 const listSteps = steps => steps.length > 1 && steps.every((step, i) => i === 0 || step === steps[i - 1] + 1) ? `${steps[0]}–${steps.at(-1)}` : steps.join(', ')
-// O Fable só planeja com effort high ou max: é a chamada que define a run inteira.
-const powerEffort = effort => effort === 'max' ? 'max' : 'high'
 
 const REVIEW_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -256,11 +252,12 @@ A stronger advisor model is available through the advisor tool; it sees this who
 }
 
 // planOnly: para depois da revisão do plano (comando plan). planned: { plan, review } de um plan anterior, que pula
-// o planner e a revisão (implemente sem tarefa). power: Power Mode, com fableMin high mandando os passos high ao Fable.
-export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {}, haikuMax = null, planOnly = false, planned = null, power = false, fableMin = 'off' } = {}) {
+// o planner e a revisão (implemente sem tarefa). power: Power Mode; powerMax: o Fable também planeja. Todas as chamadas
+// usam o effort da run (medium por padrão, o que a Anthropic recomenda para o Fable).
+export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {}, haikuMax = null, planOnly = false, planned = null, power = false, powerMax = false } = {}) {
   if (haikuMax !== null && !['low', 'medium'].includes(haikuMax)) throw new TypeError('haikuMax aceita somente low ou medium')
   if (power && hostName !== 'claude') throw new TypeError('power vale só no host claude')
-  if (!FABLE_MINS.includes(fableMin)) throw new TypeError('fableMin aceita somente high ou off')
+  if (powerMax && !power) throw new TypeError('powerMax exige power')
   if (!host || typeof task !== 'string' || !task.trim() || !cwd) throw new TypeError('runAdvisorFlow exige host, cwd e tarefa')
   const started = Date.now()
   const checks = gate ?? gateCommands(JSON.parse(await readFile(path.join(cwd, 'package.json'), 'utf8')))
@@ -278,7 +275,7 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
     }
   }
   const advisorMax = power ? POWER_ADVISOR_MAX_CALLS : ADVISOR_MAX_CALLS
-  const record = { flow: 'advisor', ...(power ? { power: true, fableMin } : {}), ...(haikuMax ? { haikuMax } : {}), status: 'blocked', plan: null, review: null, sessions: [], gate: [], advisorCalls: 0, calls }
+  const record = { flow: 'advisor', ...(power ? { power: true, powerMax: Boolean(powerMax) } : {}), ...(haikuMax ? { haikuMax } : {}), status: 'blocked', plan: null, review: null, sessions: [], gate: [], advisorCalls: 0, calls }
   const finish = async (status, reason = null) => {
     Object.assign(record, { status, ...(reason ? { feedback: { kind: 'BLOCK', reason } } : {}), engineMs: Date.now() - started, cost: splitCost(calls) })
     if (runDir) {
@@ -294,8 +291,8 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
       record.review = planned.review
     } else {
       if (power) {
-        log(`power: planejador (${FABLE}, effort ${powerEffort(effort)})`)
-        record.plan = (await call('planner', plannerPrompt(task, { power: true }), POWER_PLAN_SCHEMA, { readOnly: true, effort: powerEffort(effort) })).output
+        log(`power${powerMax ? ' max' : ''}: planejador (effort ${effort})`)
+        record.plan = (await call('planner', plannerPrompt(task, { power: true }), POWER_PLAN_SCHEMA, { readOnly: true })).output
       } else {
         log('advisor: planner')
         record.plan = (await call('planner', plannerPrompt(task, { routed: Boolean(haikuMax) }), haikuMax ? ROUTED_PLAN_SCHEMA : PLAN_SCHEMA, { readOnly: true })).output
@@ -305,7 +302,7 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
     }
     // Rodada 1: no power, uma sessão por raia, raias da mesma onda em paralelo; roteado, um trecho por sessão, com o
     // modelo do trecho. Reparo do gate: sessão inteira no Opus (power) ou no Sonnet.
-    const waves = power ? powerWaves(record.plan.steps, { haikuMax, fableMin }) : null
+    const waves = power ? powerWaves(record.plan.steps, { haikuMax }) : null
     const segments = !power && haikuMax ? routeSteps(record.plan.steps, haikuMax) : null
     if (waves) record.routing = waves
     else if (segments) record.routing = segments

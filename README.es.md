@@ -118,21 +118,22 @@ Los pasos seguidos en el mismo modelo comparten una sesión. El presupuesto del 
 
 ## Power Mode
 
-`--power` enciende el modo en que el modelo **más fuerte** de la familia (Fable 5.2) piensa y los otros escriben, en paralelo:
+`--power` sube cada rol un escalón en la familia: el modelo fuerte planifica, el **más fuerte** (Fable 5.2) revisa el plan y aconseja, y los pasos corren en paralelo. `--power max` pone al más fuerte también en el plan. Solo existen esas dos configuraciones. Todas las llamadas usan el esfuerzo de la run (`medium` por defecto, lo que Anthropic recomienda para Fable 5.2).
 
-| Rol | Por defecto | Power |
-| --- | --- | --- |
-| Planificador | 📝 medio | 🔥 **más fuerte**, esfuerzo `high` |
-| Revisión del plan | 🧠 fuerte | 🧠 fuerte |
-| Advisor | 🧠 fuerte | 🔥 **más fuerte** (6 llamadas por run, 2 por carril) |
-| Pasos `high` y arreglos del gate | 📝 medio | 🧠 **fuerte** (o el más fuerte, con `--fable-min high`) |
-| Pasos `medium` | 📝 medio | 📝 medio |
-| Pasos `low` | ⚙️ barato | ⚙️ barato |
+| Rol | Por defecto | `--power` | `--power max` |
+| --- | --- | --- | --- |
+| Planificador | 📝 medio | 🧠 **fuerte** | 🔥 **más fuerte** |
+| Revisión del plan | 🧠 fuerte | 🔥 **más fuerte** | 🔥 **más fuerte** |
+| Advisor | 🧠 fuerte (3 llamadas por run) | 🔥 **más fuerte** (6 por run, 2 por carril) | 🔥 **más fuerte** (6 por run, 2 por carril) |
+| Pasos `high` y arreglos del gate | 📝 medio | 🧠 **fuerte** | 🧠 **fuerte** |
+| Pasos `medium` | 📝 medio | 📝 medio | 📝 medio |
+| Pasos `low` | ⚙️ barato | ⚙️ barato | ⚙️ barato |
 
 El plan sale en **olas**: cada paso nombra sus archivos y la ola en que corre. Dentro de una ola, los pasos se vuelven **carriles** por modelo, que corren al mismo tiempo en archivos distintos; las olas corren en orden, y el gate corre una vez al final. El runner revisa la huella de archivos antes de correr: un choque dentro de una ola abre una ola nueva. Diseño completo, ejemplo con Minecraft y plan de benchmark en [docs/power-mode.md](docs/power-mode.md) (en portugués).
 
 ```
 /graph-eng:implemente construir el clon de Minecraft descrito en task.md --power
+/graph-eng:implemente construir el clon de Minecraft descrito en task.md --power max
 ```
 
 ## Comandos
@@ -157,10 +158,9 @@ Siempre en la forma separada (`--effort max`, nunca `--effort=max`).
 | `--effort` | `low`, `medium`, `max` | `medium` | Esfuerzo de razonamiento de todas las llamadas de la run. |
 | `--haiku-max` | `low`, `medium`, `off` | `low` en Claude | Complejidad máxima de paso que va al modelo barato. `off` deja todos los pasos en el medio. |
 | `--executor` | `sonnet`, `haiku` | ninguno | Un modelo para todos los pasos. Apaga el ruteo y no se combina con `--haiku-max` ni con `--power`. |
-| `--power` | — | apagado | Enciende el [Power Mode](#power-mode). |
-| `--fable-min` | `high`, `off` | `off` | Con `high`, los pasos `high` van al modelo más fuerte. Requiere `--power`. |
+| `--power` | —, `max` | apagado | Enciende el [Power Mode](#power-mode). `--power max` pone al más fuerte también en el plan. |
 
-`--haiku-max`, `--executor`, `--power` y `--fable-min` solo existen en el host Claude; en Codex el flujo no rutea. En `implemente` sin tarea, el ruteo viene del plan guardado, así que pasa esas flags en `plan`.
+`--haiku-max`, `--executor` y `--power` solo existen en el host Claude; en Codex el flujo no rutea. En `implemente` sin tarea, el ruteo viene del plan guardado, así que pasa esas flags en `plan`.
 
 Ejemplos:
 
@@ -213,7 +213,7 @@ Cada run deja su evidencia en `.graph-runs/<runId>/advisor-run.json`: plan, revi
 
 El modelo fuerte costó menos del 10% de la run. La evidencia cruda de cada run está en [docs/benchmarks/](docs/benchmarks/).
 
-**Power Mode:** las runs de Minecraft con `--power` todavía no se hicieron (esperan el reset de uso de la cuenta). Las variantes y las hipótesis están en [docs/power-mode.md](docs/power-mode.md); para correr una, `bash test/fixtures/benchmark-minecraft/bench.sh <destino> --power`.
+**Power Mode:** las runs de Minecraft con `--power` y `--power max` todavía no se hicieron (esperan el reset de uso de la cuenta, el 12/11/2026). El plan son 5 rondas por variante (por defecto, `--power`, `--power max`), ajustando graph-eng entre rondas. Las variantes y las hipótesis están en [docs/power-mode.md](docs/power-mode.md); para correr una, `bash test/fixtures/benchmark-minecraft/bench.sh <destino> --power max`.
 
 ### Por qué se quitó el motor de grafo
 

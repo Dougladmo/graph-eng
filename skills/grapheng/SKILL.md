@@ -1,7 +1,7 @@
 ---
 name: grapheng
-description: Planeje ou implemente uma tarefa com o graph-eng no fluxo advisor: um modelo médio planeja, o forte revisa e aconselha, o barato faz os passos simples, e a run só fecha com npm test e build passando. Com --power, o Fable 5.2 planeja e aconselha e as ondas do plano rodam em paralelo.
-argument-hint: "plan <tarefa> | implemente [<tarefa>], com --effort low|medium|max, --haiku-max low|medium|off, --executor sonnet|haiku, --power ou --fable-min high|off opcionais"
+description: Planeje ou implemente uma tarefa com o graph-eng no fluxo advisor: um modelo médio planeja, o forte revisa e aconselha, o barato faz os passos simples, e a run só fecha com npm test e build passando. Com --power, cada papel sobe um degrau (o Fable 5.2 revisa e aconselha; com --power max, também planeja) e as ondas do plano rodam em paralelo.
+argument-hint: "plan <tarefa> | implemente [<tarefa>], com --effort low|medium|max, --haiku-max low|medium|off, --executor sonnet|haiku, --power ou --power max opcionais"
 ---
 
 # grapheng
@@ -24,19 +24,18 @@ Invocações nativas: Claude Code `/graph-eng:grapheng <comando>`, e também os 
 
 **Roteamento por complexidade.** Os passos até o nível de `--haiku-max` vão para o modelo barato; o resto vai para o médio. Passos seguidos no mesmo modelo dividem uma sessão. O padrão no Claude é `low`: só os passos simples e repetitivos vão para o barato.
 
-**Power Mode (`--power`).** O modelo mais forte da família (Fable 5.2) escreve o plano com esforço alto e fica de advisor; o forte revisa o plano, pega os passos `high` e os consertos do gate; o médio pega os `medium` e o barato os `low`. O plano sai em ondas: cada passo nomeia seus arquivos e sua onda, e dentro de uma onda os passos viram raias por modelo que rodam ao mesmo tempo em arquivos diferentes. As ondas rodam em série e o gate roda uma vez no fim. O advisor aceita até 6 chamadas por run, 2 por raia. `--fable-min high` manda os passos `high` para o próprio Fable 5.2. Desenho completo em `docs/power-mode.md`.
+**Power Mode (`--power` ou `--power max`).** Cada papel sobe um degrau: o forte escreve o plano, o modelo mais forte da família (Fable 5.2) revisa o plano e fica de advisor, o forte pega os passos `high` e os consertos do gate, o médio pega os `medium` e o barato os `low`. Com `--power max`, o mais forte também escreve o plano. São as duas únicas configurações; todas as chamadas usam o `--effort` da run (`medium` por padrão). O plano sai em ondas: cada passo nomeia seus arquivos e sua onda, e dentro de uma onda os passos viram raias por modelo que rodam ao mesmo tempo em arquivos diferentes. As ondas rodam em série e o gate roda uma vez no fim. O advisor aceita até 6 chamadas por run, 2 por raia. Desenho completo em `docs/power-mode.md`.
 
 ## Flags
 
 Sempre na forma separada (`--effort max`); `--effort=max` é recusado.
 
-- `--effort low|medium|max` (padrão `medium`): esforço de raciocínio de todas as chamadas da run. No Power Mode, o planejador tem piso `high`.
+- `--effort low|medium|max` (padrão `medium`): esforço de raciocínio de todas as chamadas da run, inclusive no Power Mode.
 - `--haiku-max low|medium|off` (padrão `low` no Claude): complexidade máxima que vai para o modelo barato. `off` deixa todos os passos no médio.
 - `--executor sonnet|haiku`: um modelo para todos os passos. Desliga o roteamento e não combina com `--haiku-max` nem com `--power`.
-- `--power`: liga o Power Mode. Sem valor.
-- `--fable-min high|off` (padrão `off`): com `high`, os passos `high` vão para o Fable 5.2. Exige `--power`.
+- `--power`: liga o Power Mode. `--power max` (o `max` logo depois da flag) põe o mais forte também no plano. `--power=max` é recusado.
 
-`--haiku-max`, `--executor`, `--power` e `--fable-min` só existem no host Claude; no Codex o fluxo não roteia. Em `implemente` sem tarefa, o roteamento vem do plano salvo, então essas flags vão no `plan`.
+`--haiku-max`, `--executor` e `--power` só existem no host Claude; no Codex o fluxo não roteia. Em `implemente` sem tarefa, o roteamento vem do plano salvo, então essas flags vão no `plan`.
 
 ## Status e bloqueios
 

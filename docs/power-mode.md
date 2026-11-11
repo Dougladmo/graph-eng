@@ -1,19 +1,19 @@
 # Power Mode (graph-eng 1.4)
 
-**Em uma frase:** o modelo mais forte da família (Fable 5.2) pensa, os outros digitam em paralelo, e o gate continua decidindo o DONE.
+**Em uma frase:** cada papel sobe um degrau na família (o Fable 5.2 revisa e aconselha; com `max`, também planeja), os passos rodam em paralelo, e o gate continua decidindo o DONE.
 
 O fluxo advisor da 1.3 já tinha a ideia certa: o modelo forte só revisa e aconselha, os mais baratos fazem o volume, e `npm test` + `npm run build` decidem o fim. O Power Mode leva isso ao limite em duas direções ao mesmo tempo:
 
-1. **Inteligência onde ela paga.** O Fable 5.2 escreve o plano e fica de plantão como advisor. O plano é o que mais influencia a run inteira (o que cada sessão faz, em que ordem, em que arquivo), e o advisor é quem desbloqueia quando a sessão trava. São poucas chamadas, com o contexto inteiro, então é aqui que o modelo mais caro faz diferença.
+1. **Inteligência onde ela paga.** Onde a 1.3 usava o Sonnet, o Power Mode usa o Opus; onde usava o Opus, usa o Fable 5.2. O plano é o que mais influencia a run inteira (o que cada sessão faz, em que ordem, em que arquivo), e o advisor é quem desbloqueia quando a sessão trava. São poucas chamadas, com o contexto inteiro, então é aqui que o modelo mais caro faz diferença. Com `--power max`, o Fable também escreve o plano.
 2. **Velocidade onde ela é de graça.** O plano sai dividido em **ondas**. Dentro de uma onda, os passos são independentes e tocam arquivos diferentes, então rodam ao mesmo tempo, em **raias** separadas por modelo: o forte (Opus) pega os passos `high`, o médio (Sonnet) os `medium`, o barato (Haiku) os `low`. Três sessões em paralelo, cada uma com o repositório inteiro, nenhuma esperando a outra.
 
-Nada do que já funciona muda: isolamento do ambiente, shell só com os comandos do gate, gate externo do supervisor, sessões de conserto, evidência em `advisor-run.json`.
+São duas configurações só, `--power` e `--power max`, de propósito: fácil de usar. Todas as chamadas usam o `--effort` da run, `medium` por padrão, que é o que a Anthropic recomenda para o Fable 5.2. Nada do que já funciona muda: isolamento do ambiente, shell só com os comandos do gate, gate externo do supervisor, sessões de conserto, evidência em `advisor-run.json`.
 
 ## Diagrama
 
 ```mermaid
 flowchart TD
-  P[📝 Planejador<br/>🔥 Fable 5.2, effort high<br/>passos com complexidade, arquivos e onda] --> R{🧠 Revisão do plano<br/>Opus, uma rodada}
+  P[📝 Planejador<br/>🧠 Opus, ou 🔥 Fable 5.2 com --power max<br/>passos com complexidade, arquivos e onda] --> R{🔥 Revisão do plano<br/>Fable 5.2, uma rodada}
   R --> W1
 
   subgraph W1[⚡ Onda 1: passos independentes, em paralelo]
@@ -35,17 +35,17 @@ flowchart TD
 
 ## Quem faz o quê
 
-| Papel | Padrão (1.3) | Power (1.4) | Por quê |
-| --- | --- | --- | --- |
-| Planejador | 📝 médio (Sonnet) | 🔥 **Fable 5.2**, effort `high` | O plano define ondas, arquivos e complexidade; erro aqui vira retrabalho em todas as raias |
-| Revisão do plano | 🧠 forte (Opus) | 🧠 forte (Opus) | Segunda opinião de outro modelo, barata; o Fable revisar o próprio plano acrescenta pouco |
-| Advisor | 🧠 forte (Opus) | 🔥 **Fable 5.2** | Quem desbloqueia a sessão travada, vendo a transcrição inteira |
-| Passos `high` | 📝 médio | 🧠 **forte (Opus)** | Algoritmo, caso de borda, integração: o Opus é rápido o bastante e mais confiável que o Sonnet |
-| Passos `medium` | 📝 médio | 📝 médio (Sonnet) | Lógica contida com contrato claro |
-| Passos `low` | ⚙️ barato | ⚙️ barato (Haiku) | Tabela, constante, CSS, ligação simples |
-| Conserto do gate | 📝 médio | 🧠 **forte (Opus)** + advisor Fable | O conserto vê o repositório inteiro e a saída do gate; é a hora de não economizar |
+| Papel | Padrão (1.3) | `--power` | `--power max` | Por quê |
+| --- | --- | --- | --- | --- |
+| Planejador | 📝 médio (Sonnet) | 🧠 **forte (Opus)** | 🔥 **Fable 5.2** | O plano define ondas, arquivos e complexidade; erro aqui vira retrabalho em todas as raias |
+| Revisão do plano | 🧠 forte (Opus) | 🔥 **Fable 5.2** | 🔥 **Fable 5.2** | Segunda opinião do modelo mais forte, numa chamada só |
+| Advisor | 🧠 forte (Opus) | 🔥 **Fable 5.2** | 🔥 **Fable 5.2** | Quem desbloqueia a sessão travada, vendo a transcrição inteira |
+| Passos `high` | 📝 médio | 🧠 **forte (Opus)** | 🧠 **forte (Opus)** | Algoritmo, caso de borda, integração: o Opus é rápido o bastante e mais confiável que o Sonnet |
+| Passos `medium` | 📝 médio | 📝 médio (Sonnet) | 📝 médio (Sonnet) | Lógica contida com contrato claro; Opus aqui seria desperdício |
+| Passos `low` | ⚙️ barato | ⚙️ barato (Haiku) | ⚙️ barato (Haiku) | Tabela, constante, CSS, ligação simples |
+| Conserto do gate | 📝 médio | 🧠 **forte (Opus)** + advisor Fable | 🧠 **forte (Opus)** + advisor Fable | O conserto vê o repositório inteiro e a saída do gate; é a hora de não economizar |
 
-Com `--fable-min high`, os passos `high` vão para o próprio Fable 5.2 em vez do Opus. É a variante "potência máxima", para o benchmark decidir se vale o custo.
+A diferença entre as duas é só quem escreve o plano. A divisão dos executores (Opus nos `high`, Sonnet nos `medium`, Haiku nos `low`) é a hipótese inicial; o benchmark testa outras combinações entre rodadas (Opus também nos `medium`; Sonnet também nos `high`) e cada run registra a raia por modelo, então a comparação sai do `advisor-run.json`.
 
 ## A lógica das ondas e raias
 
@@ -80,22 +80,21 @@ Na run padrão da 1.3, as sessões do executor foram 80% dos 617 s, em série. C
 ## Orçamento do advisor e esforço
 
 - **Advisor:** 6 chamadas por run no Power Mode (contra 3 no padrão), com teto de 2 por sessão de raia. Cada raia recebe o saldo que sobrou no começo da onda; o que ela gastou é contado na transcrição da sessão, como hoje.
-- **Esforço:** as chamadas do Fable (planejador) sobem para `high` quando `--effort` é `low` ou `medium`; `--effort max` vale `max` para todos. As raias usam o `--effort` da run.
+- **Esforço:** todas as chamadas, inclusive as do Fable, usam o `--effort` da run (`medium` por padrão, o que a Anthropic recomenda). Não há piso nem teto por papel.
 
 ## Flags
 
 | Flag | Valores | O que faz |
 | --- | --- | --- |
-| `--power` | — | Liga o Power Mode. Só no host Claude. Não combina com `--executor`. |
-| `--fable-min` | `high`, `off` (padrão `off`) | Com `high`, os passos `high` vão para o Fable 5.2 em vez do Opus. Exige `--power`. |
+| `--power` | —, `max` | Liga o Power Mode; `--power max` (o `max` logo depois da flag) põe o Fable 5.2 também no plano. Só no host Claude. Não combina com `--executor`. `--power=max` é recusado. |
 | `--haiku-max` | `low`, `medium`, `off` | Continua valendo: complexidade máxima que vai para o barato. Com `off`, os passos `low` vão para o Sonnet. |
-| `--effort` | `low`, `medium`, `max` | Continua valendo para todas as chamadas; o Fable tem piso `high`. |
+| `--effort` | `low`, `medium`, `max` | Continua valendo para todas as chamadas. |
 
-`plan --power` salva o modo no plano; `implemente` sem tarefa reaplica. Como hoje, as flags de roteamento vão no `plan`.
+`plan --power` e `plan --power max` salvam o modo no plano; `implemente` sem tarefa reaplica. Como hoje, as flags de roteamento vão no `plan`. A flag `--fable-min` existiu nesta versão antes de ser publicada e saiu: é recusada como opção removida.
 
 ## Evidência
 
-`advisor-run.json` ganha `power: true`, `fableMin`, e `routing` vira a lista de ondas:
+`advisor-run.json` ganha `power: true`, `powerMax`, e `routing` vira a lista de ondas:
 
 ```json
 "routing": [
@@ -108,16 +107,17 @@ Cada sessão registra `wave`, `model`, `steps`, `status`, `summary`, `sessionId`
 
 ## O que o benchmark precisa responder
 
-As runs reais só podem rodar depois do reset semanal de uso (12/11 às 12h, horário de Belém). Até lá, tudo roda com host falso nos testes. Variantes, uma run de cada, no mesmo esqueleto do Minecraft (`test/fixtures/benchmark-minecraft/bench.sh`):
+As runs reais só podem rodar depois do reset semanal de uso (12/11 às 12h, horário de Belém; a tentativa de 10/11 bloqueou com `USAGE_LIMIT`). Até lá, tudo roda com host falso nos testes. Três variantes, no mesmo esqueleto do Minecraft (`test/fixtures/benchmark-minecraft/bench.sh`), **5 rodadas de cada**, alternando as três a cada rodada (rodada 1 das três, depois rodada 2 das três) para a comparação ficar pareada mesmo que o uso acabe no meio:
 
 | Variante | Comando | Hipótese |
 | --- | --- | --- |
-| Padrão 1.3 (referência) | já medido: 55/55, US$ 1,59, 617 s | — |
-| Power | `--power` | 55/55, tempo bem abaixo de 617 s, custo entre US$ 2 e 4 (Fable no plano, Opus nos `high`) |
-| Power, potência máxima | `--power --fable-min high` | 55/55, mais caro; só vale se o Opus falhar algum teste ou precisar de conserto |
-| Power, barato até `medium` | `--power --haiku-max medium` | custo menor; risco no 54/55 que o Haiku já teve em física |
+| Padrão 1.3 (referência) | sem flag; já medido uma vez: 55/55, US$ 1,59, 617 s | as 5 rodadas mostram a variância da referência |
+| Power | `--power` | 55/55, tempo bem abaixo de 617 s, custo entre US$ 2 e 4 (Opus no plano, Fable na revisão e no advisor) |
+| Power max | `--power max` | 55/55; só vale o custo extra se o plano do Fable reduzir conserto, chamadas ao advisor ou tempo |
 
-O que medir em cada uma: testes ocultos (55), build, smoke visual, custo total e por modelo, tempo total e por onda, chamadas ao advisor, sessões de conserto. A variante que mantém 55/55 com o menor tempo vira o Power Mode padrão; o Fable nos `high` só fica se mudar a nota.
+Entre uma rodada e a seguinte, o que falhou ou saiu caro vira ajuste no graph-eng (prompt, roteamento, divisão dos executores), commitado antes da rodada seguinte: a sequência mede a melhoria, não só a variância. Depois do Minecraft, um jogo mais complexo repete o mesmo protocolo.
+
+O que medir em cada run: testes ocultos (55), build, smoke visual, custo total e por modelo, tempo total e por onda, chamadas ao advisor, sessões de conserto. A variante que mantém 55/55 com o menor tempo vira a recomendação do Power Mode; o Fable no plano só fica no `max` se mudar a nota ou o tempo.
 
 ## Riscos e o que segura cada um
 

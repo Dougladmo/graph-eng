@@ -2,26 +2,27 @@
 
 ## 1.4.0 — 2026-11-10
 
-Power Mode: o modelo mais forte da família pensa, os outros digitam em paralelo, e o gate continua decidindo o DONE. Desenho em [docs/power-mode.md](docs/power-mode.md).
+Power Mode: cada papel sobe um degrau na família, os passos rodam em paralelo, e o gate continua decidindo o DONE. Desenho em [docs/power-mode.md](docs/power-mode.md).
 
 ### Added
 
-- **`--power` (host Claude).** O Fable 5.2 (`claude-fable-5-2`) escreve o plano com esforço `high` (`max` com `--effort max`) e fica de advisor; o Opus revisa o plano, pega os passos `high` e as sessões de conserto do gate; o Sonnet pega os `medium` e o Haiku os `low` (até `--haiku-max`).
+- **`--power` (host Claude).** O Opus escreve o plano; o Fable 5.2 (`claude-fable-5-2`) revisa o plano e fica de advisor; o Opus pega os passos `high` e as sessões de conserto do gate; o Sonnet pega os `medium` e o Haiku os `low` (até `--haiku-max`).
+- **`--power max`.** Igual ao `--power`, com o Fable 5.2 também escrevendo o plano. São as duas únicas configurações do Power Mode; todas as chamadas usam o `--effort` da run (`medium` por padrão, o que a Anthropic recomenda para o Fable 5.2).
 - **Ondas e raias.** No Power Mode o planejador devolve, para cada passo, os arquivos que ele toca e a onda em que roda. Dentro de uma onda os passos viram raias por modelo, que rodam ao mesmo tempo em arquivos disjuntos; as ondas rodam em série e o gate roda uma vez no fim. O runner valida a pegada: dois passos da mesma onda com o mesmo arquivo, ou um passo sem arquivo, abrem uma onda nova sem mudar a ordem dos passos.
-- **`--fable-min high|off`** (padrão `off`, exige `--power`): com `high`, os passos `high` vão para o próprio Fable 5.2.
 - **Orçamento do advisor no Power Mode:** 6 chamadas por run, no máximo 2 por sessão de raia.
-- **`routing` e sessões no `advisor-run.json`:** no Power Mode, `routing` lista as ondas com as raias de cada uma, e cada sessão traz `wave`, `steps`, `model` e `ms`. O plano salvo pelo `plan` guarda `power` e `fableMin`, e `implemente` sem tarefa reaplica os dois.
+- **`routing` e sessões no `advisor-run.json`:** no Power Mode, `routing` lista as ondas com as raias de cada uma, e cada sessão traz `wave`, `steps`, `model` e `ms`. O plano salvo pelo `plan` guarda `power` e `powerMax`, e `implemente` sem tarefa reaplica os dois.
 - **`USAGE_LIMIT`:** o limite de uso da conta (semanal, diário ou de sessão) voltava como `CLI_FAILED` genérico; agora a chamada falha com `USAGE_LIMIT` e o texto do CLI, e a run bloqueia com `advisor_call_failed` dizendo isso.
 - **`test/fixtures/benchmark-minecraft/bench.sh`:** roda o benchmark Minecraft de ponta a ponta (cria o repositório, roda `implemente` com as flags pedidas, dá a nota com os 55 testes ocultos e o build, e resume custo, tempo e sessões).
 
 ### Changed
 
 - Uma raia que falha derruba a run só depois que as outras raias da onda terminam, para nenhuma sessão ficar órfã.
-- `implemente` sem tarefa com qualquer flag de roteamento (`--power`, `--fable-min`, `--haiku-max`, `--executor`) é recusado com a mensagem apontando o `plan`.
+- `implemente` sem tarefa com qualquer flag de roteamento (`--power`, `--haiku-max`, `--executor`) é recusado com a mensagem apontando o `plan`.
+- `--fable-min` (desta mesma versão, nunca publicada) saiu: é recusada como opção removida. O planejador do Power Mode não tem mais piso `high` de esforço.
 
 ### Pendente
 
-- Benchmark Minecraft do Power Mode: as runs reais esperam o reset semanal de uso da conta (12/11). As variantes e hipóteses estão em [docs/power-mode.md](docs/power-mode.md).
+- Benchmark Minecraft do Power Mode: as runs reais esperam o reset semanal de uso da conta (12/11 às 12h, horário de Belém; a tentativa de 10/11 bloqueou com `USAGE_LIMIT`). O plano são 5 rodadas de cada variante (padrão, `--power`, `--power max`), alternando as três a cada rodada e ajustando o graph-eng entre rodadas. As variantes e hipóteses estão em [docs/power-mode.md](docs/power-mode.md).
 
 ## 1.3.0 — 2026-10-24
 

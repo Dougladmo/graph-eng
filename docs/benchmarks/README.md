@@ -31,7 +31,7 @@ Cada run real gasta uso da conta do Claude: peça autorização antes. O `bench.
 ```bash
 bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-padrao
 bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-power --power
-bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-power-max --power --fable-min high
+bash test/fixtures/benchmark-minecraft/bench.sh /tmp/mc-power-max --power max
 ```
 
 Com `BENCH_SKIP_RUN=1`, o script só dá a nota do que já estiver no destino (serve para conferir o próprio corretor com o motor de referência). O smoke visual continua manual: `npm run dev` no destino e o roteiro de `acceptance.md`.
@@ -40,4 +40,4 @@ Para guardar a evidência, copie o `.graph-runs/<runId>/advisor-run.json` e o `b
 
 ## Power Mode (1.4)
 
-As runs com `--power` ainda não foram feitas: esperam o reset semanal de uso da conta (12/11/2026). As variantes, o que medir e as hipóteses estão em [docs/power-mode.md](../power-mode.md).
+As runs com `--power` e `--power max` ainda não foram feitas: esperam o reset semanal de uso da conta (12/11/2026 às 12h, horário de Belém; a tentativa de 10/11 bloqueou com `USAGE_LIMIT`). O plano são 5 rodadas de cada variante (padrão, `--power`, `--power max`), alternando as três a cada rodada e ajustando o graph-eng entre rodadas. As variantes, o que medir e as hipóteses estão em [docs/power-mode.md](../power-mode.md).

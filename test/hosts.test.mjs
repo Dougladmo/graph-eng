@@ -73,7 +73,7 @@ test('papéis do advisor: Sonnet planeja, Opus revisa e Sonnet executa; papel do
   const capabilities = host.capabilities()
   assert.equal(capabilities.readOnlyEnforced, true)
   assert.match(capabilities.readOnlyEnforcement, /Read, Glob e Grep/)
-  assert.deepEqual(Object.keys(capabilities).sort(), ['agentShell', 'cancellation', 'cli', 'host', 'lifecycleEvents', 'modelAvailability', 'power', 'promptTransport', 'readOnlyEnforced', 'readOnlyEnforcement', 'roles', 'schemaTransport', 'structuredOutput'].sort())
+  assert.deepEqual(Object.keys(capabilities).sort(), ['agentShell', 'cancellation', 'cli', 'host', 'lifecycleEvents', 'modelAvailability', 'power', 'powerMax', 'promptTransport', 'readOnlyEnforced', 'readOnlyEnforcement', 'roles', 'schemaTransport', 'structuredOutput'].sort())
   assert.equal(capabilities.power, false)
   assert.deepEqual(capabilities.roles, ['planner', 'planReviewer', 'advisedExecutor'])
   assert.equal(capabilities.agentShell, false, 'Claude não dá shell ao agente')
@@ -652,28 +652,37 @@ test('executorModel por pedido troca o modelo só do advisedExecutor, entre sonn
   await assert.rejects(host.spawn({ role: 'planner', prompt: 'x', schema, executorModel: 'haiku' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
 })
 
-// Power Mode (1.4): o Fable 5.2 planeja e é o advisor; o Opus revisa e é o executor padrão (conserto do gate); as raias
-// aceitam haiku, sonnet, opus e o próprio Fable. Fora do power, o Opus segue fora do executor porque é o advisor.
-test('power: Fable 5.2 planeja e aconselha, Opus revisa e conserta, executor aceita opus e Fable; só no claude', async t => {
+// Power Mode (1.4): cada papel sobe um degrau. --power: o Opus planeja, o Fable 5.2 revisa e é o advisor, o Opus é o
+// executor padrão (conserto do gate); --power max: o Fable também planeja. As raias aceitam haiku, sonnet e opus.
+// Fora do power, o Opus segue fora do executor porque é o advisor.
+test('power: Opus planeja, Fable 5.2 revisa e aconselha, Opus conserta, executor aceita opus; power max põe o Fable no plano; só no claude', async t => {
   const runDir = await tempRun(t)
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn }, power: true })
   assert.equal(host.capabilities().power, true)
+  assert.equal(host.capabilities().powerMax, false)
   const modelOf = args => args[args.indexOf('--model') + 1]
-  for (const [role, model] of [['planner', FABLE], ['planReviewer', 'opus'], ['advisedExecutor', 'opus']]) {
+  for (const [role, model] of [['planner', 'opus'], ['planReviewer', FABLE], ['advisedExecutor', 'opus']]) {
     await host.wait(await host.spawn({ role, prompt: 'x', schema }))
     const args = fake.calls.at(-1).args
     assert.equal(modelOf(args), model, role)
     assert.equal(args.includes('--advisor'), role === 'advisedExecutor', role)
   }
-  for (const model of ['haiku', 'sonnet', 'opus', FABLE]) {
+  for (const model of ['haiku', 'sonnet', 'opus']) {
     await host.wait(await host.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: model }))
     const args = fake.calls.at(-1).args
     assert.equal(modelOf(args), model)
     assert.equal(args[args.indexOf('--advisor') + 1], FABLE)
   }
-  await assert.rejects(host.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: 'gpt-6-luna' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
+  for (const model of [FABLE, 'gpt-6-luna']) await assert.rejects(host.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: model }), error => error.code === 'INVALID_EXECUTOR_MODEL')
+  const max = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn }, power: true, powerMax: true })
+  assert.equal(max.capabilities().powerMax, true)
+  for (const [role, model] of [['planner', FABLE], ['planReviewer', FABLE], ['advisedExecutor', 'opus']]) {
+    await max.wait(await max.spawn({ role, prompt: 'x', schema }))
+    assert.equal(modelOf(fake.calls.at(-1).args), model, `max ${role}`)
+  }
   assert.throws(() => createHost({ host: 'codex', cwd: runDir, runDir, power: true }), /power/)
+  assert.throws(() => createHost({ host: 'claude', cwd: runDir, runDir, powerMax: true }), /powerMax exige power/)
   const plain = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
   await assert.rejects(plain.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: 'opus' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
   await assert.rejects(plain.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: FABLE }), error => error.code === 'INVALID_EXECUTOR_MODEL')

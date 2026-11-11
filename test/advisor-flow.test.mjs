@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { ADVISOR_MAX_CALLS, POWER_ADVISOR_MAX_CALLS, countAdvisorCalls, executorPrompt, gateCommands, powerWaves, routeSteps, runAdvisorFlow, splitCost } from '../bin/advisor-flow.mjs'
-import { FABLE } from '../bin/hosts.mjs'
 
 async function tempDir(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'advisor-flow-'))
@@ -208,8 +207,9 @@ test('effort chega a todas as chamadas do fluxo', async t => {
   assert.deepEqual(host.requests.map(r => r.effort), ['max', 'max', 'max'])
 })
 
-// Power Mode (1.4): o Fable 5.2 planeja e aconselha; dentro de cada onda do plano, os passos viram raias por modelo
-// (Opus nos high, Sonnet nos medium, Haiku nos low) que rodam em paralelo em arquivos disjuntos. Ondas em série.
+// Power Mode (1.4): o Fable 5.2 revisa e aconselha (e planeja, com max); dentro de cada onda do plano, os passos viram
+// raias por modelo (Opus nos high, Sonnet nos medium, Haiku nos low) que rodam em paralelo em arquivos disjuntos.
+// Ondas em série. O modelo de cada papel é do host; o fluxo só decide as raias e o effort, que é o da run.
 const powerPlan = { goal: 'g', doneWhen: ['d1'], risks: [], steps: [
   { step: 'blocks', complexity: 'low', files: ['src/engine/blocks.js'], wave: 1 },
   { step: 'noise', complexity: 'medium', files: ['src/engine/noise.js'], wave: 1 },
@@ -226,8 +226,8 @@ test('powerWaves: as ondas do plano viram raias por modelo; conflito de arquivo 
     { wave: 2, lanes: [{ model: 'opus', steps: [4, 5] }, { model: 'sonnet', steps: [6] }] },
     { wave: 3, lanes: [{ model: 'sonnet', steps: [7] }] },
   ])
-  // --fable-min high manda os high para o Fable; --haiku-max medium manda os medium para o Haiku; sem Haiku, low vai para o Sonnet.
-  assert.deepEqual(powerWaves(powerPlan.steps.slice(3, 6), { haikuMax: 'medium', fableMin: 'high' }), [{ wave: 1, lanes: [{ model: FABLE, steps: [1, 2] }, { model: 'haiku', steps: [3] }] }])
+  // --haiku-max medium manda os medium para o Haiku; sem Haiku, low vai para o Sonnet.
+  assert.deepEqual(powerWaves(powerPlan.steps.slice(3, 6), { haikuMax: 'medium' }), [{ wave: 1, lanes: [{ model: 'opus', steps: [1, 2] }, { model: 'haiku', steps: [3] }] }])
   assert.deepEqual(powerWaves(powerPlan.steps.slice(0, 1), { haikuMax: null }), [{ wave: 1, lanes: [{ model: 'sonnet', steps: [1] }] }])
   // Mesmo arquivo na mesma onda: o segundo passo abre a onda seguinte e a ordem dos passos não muda. ./ e \ normalizam.
   const clash = [
@@ -246,7 +246,7 @@ test('powerWaves: as ondas do plano viram raias por modelo; conflito de arquivo 
   assert.deepEqual(powerWaves(loose), [{ wave: 1, lanes: [{ model: 'haiku', steps: [1] }] }, { wave: 2, lanes: [{ model: 'haiku', steps: [2] }] }, { wave: 3, lanes: [{ model: 'haiku', steps: [3] }, { model: 'sonnet', steps: [4] }] }])
 })
 
-test('fluxo power: Fable planeja com effort high, as raias de cada onda rodam em paralelo e o conserto do gate vai para o Opus', async t => {
+test('fluxo power: todas as chamadas no effort da run, as raias de cada onda rodam em paralelo e o conserto do gate vai para o Opus', async t => {
   const cwd = await tempDir(t)
   const host = fakeHost({ plan: powerPlan })
   // Conta quantas sessões do executor estão abertas ao mesmo tempo: dentro da onda, as raias são paralelas.
@@ -266,10 +266,10 @@ test('fluxo power: Fable planeja com effort high, as raias de cada onda rodam em
   const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: gate, countAdvisor: async () => 1, haikuMax: 'low', power: true, runDir: path.join(cwd, 'run') })
   assert.equal(result.status, 'done')
   assert.equal(result.power, true)
-  assert.equal(result.fableMin, 'off')
+  assert.equal(result.powerMax, false)
   const [planner, reviewer] = host.requests
   assert.equal(planner.role, 'planner')
-  assert.equal(planner.effort, 'high')
+  assert.equal(planner.effort, 'medium')
   assert.deepEqual(Object.keys(planner.schema.properties.steps.items.properties), ['step', 'complexity', 'files', 'wave'])
   assert.match(planner.prompt, /wave/)
   assert.equal(reviewer.role, 'planReviewer')
@@ -295,16 +295,17 @@ test('fluxo power: Fable planeja com effort high, as raias de cada onda rodam em
   assert.equal(JSON.parse(await readFile(path.join(cwd, 'run', 'advisor-run.json'), 'utf8')).power, true)
 })
 
-test('fluxo power: --effort max sobe o Fable para max; planOnly devolve as ondas; host sem Fable e fableMin inválido são recusados', async t => {
+test('fluxo power max: --effort vale para todas as chamadas; planOnly devolve as ondas e grava powerMax; host sem Fable e powerMax sem power são recusados', async t => {
   const cwd = await tempDir(t)
   const host = fakeHost({ plan: powerPlan })
-  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: passing, haikuMax: 'low', power: true, fableMin: 'high', effort: 'max', planOnly: true })
+  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: passing, haikuMax: 'low', power: true, powerMax: true, effort: 'max', planOnly: true })
   assert.equal(result.status, 'planned')
-  assert.equal(host.requests[0].effort, 'max')
+  assert.equal(result.powerMax, true)
+  assert.deepEqual(host.requests.map(r => r.effort), ['max', 'max'])
   assert.deepEqual(host.requests.map(r => r.role), ['planner', 'planReviewer'])
-  assert.equal(result.routing[1].lanes[0].model, FABLE)
+  assert.equal(result.routing[1].lanes[0].model, 'opus')
   await assert.rejects(runAdvisorFlow({ host, cwd, task: 't', gate: GATE, hostName: 'codex', power: true }), /power vale só no host claude/)
-  await assert.rejects(runAdvisorFlow({ host, cwd, task: 't', gate: GATE, power: true, fableMin: 'medium' }), /fableMin/)
+  await assert.rejects(runAdvisorFlow({ host, cwd, task: 't', gate: GATE, powerMax: true }), /powerMax exige power/)
 })
 
 test('fluxo power: uma raia que falha bloqueia a run depois que as outras raias da onda terminam', async t => {

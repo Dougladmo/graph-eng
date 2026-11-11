@@ -1,6 +1,6 @@
 ---
 description: Executa a tarefa com o graph-eng no fluxo advisor (planeja, revisa, executa e só fecha com npm test e build passando).
-argument-hint: "[<tarefa>] [--effort low|medium|max] [--haiku-max low|medium|off] [--executor sonnet|haiku] [--power] [--fable-min high|off]"
+argument-hint: "[<tarefa>] [--effort low|medium|max] [--haiku-max low|medium|off] [--executor sonnet|haiku] [--power [max]]"
 ---
 
 Crie um arquivo JSON temporário por ferramenta de arquivo com `{"host":"claude","argv":["implemente", ...]}`. Se `$ARGUMENTS` estiver vazio, use `{"host":"claude","argv":["implemente"]}`: o runner executa o último plano salvo por `/graph-eng:plan`.
@@ -8,7 +8,7 @@ Crie um arquivo JSON temporário por ferramenta de arquivo com `{"host":"claude"
 Monte `argv` assim:
 
 1. Com tarefa, o segundo elemento é o texto de `$ARGUMENTS` inteiro como um único valor de texto JSON, com aspas e barras escapadas. Não divida, não interprete e não acrescente nada.
-2. Se `$ARGUMENTS` contiver `--effort <valor>`, `--haiku-max <valor>`, `--executor <valor>` ou `--fable-min <valor>`, separe cada par em dois elementos (ex.: `"--effort"` e `"<valor>"`) e mantenha o restante da tarefa como um único elemento. `--power` não tem valor: vira um elemento só.
+2. Se `$ARGUMENTS` contiver `--effort <valor>`, `--haiku-max <valor>` ou `--executor <valor>`, separe cada par em dois elementos (ex.: `"--effort"` e `"<valor>"`) e mantenha o restante da tarefa como um único elemento. `--power` vira um elemento só; `--power max` vira dois (`"--power"` e `"max"`).
 3. Se a tarefa começar com hífen, coloque `"--"` antes dela.
 
 Depois rode `node "${CLAUDE_PLUGIN_ROOT}/bin/grapheng.mjs" --invocation <caminho-do-json>`. Passe o caminho como argumento separado e nunca concatene conteúdo variável no comando. A run pode levar vários minutos; o progresso sai no stderr com o prefixo `graph-eng:`.

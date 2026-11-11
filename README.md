@@ -118,21 +118,22 @@ Consecutive steps on the same model share one session. The advisor budget is sha
 
 ## Power Mode
 
-`--power` turns on the mode where the **strongest** model of the family (Fable 5.2) thinks and the others type, in parallel:
+`--power` moves every role one step up the family: the strong model plans, the **strongest** (Fable 5.2) reviews the plan and advises, and the steps run in parallel. `--power max` puts the strongest model on the plan too. There are only these two settings. Every call keeps the run's effort (`medium` by default, what Anthropic recommends for Fable 5.2).
 
-| Role | Default | Power |
-| --- | --- | --- |
-| Planner | 📝 mid | 🔥 **strongest**, `high` effort |
-| Plan review | 🧠 strong | 🧠 strong |
-| Advisor | 🧠 strong | 🔥 **strongest** (6 calls per run, 2 per lane) |
-| `high` steps and gate repairs | 📝 mid | 🧠 **strong** (or the strongest, with `--fable-min high`) |
-| `medium` steps | 📝 mid | 📝 mid |
-| `low` steps | ⚙️ cheap | ⚙️ cheap |
+| Role | Default | `--power` | `--power max` |
+| --- | --- | --- | --- |
+| Planner | 📝 mid | 🧠 **strong** | 🔥 **strongest** |
+| Plan review | 🧠 strong | 🔥 **strongest** | 🔥 **strongest** |
+| Advisor | 🧠 strong (3 calls per run) | 🔥 **strongest** (6 per run, 2 per lane) | 🔥 **strongest** (6 per run, 2 per lane) |
+| `high` steps and gate repairs | 📝 mid | 🧠 **strong** | 🧠 **strong** |
+| `medium` steps | 📝 mid | 📝 mid | 📝 mid |
+| `low` steps | ⚙️ cheap | ⚙️ cheap | ⚙️ cheap |
 
 The plan comes out in **waves**: each step names its files and the wave it runs in. Inside a wave, the steps become **lanes** by model, which run at the same time on different files; waves run in order, and the gate runs once at the end. The runner checks the file footprint before running: a clash inside a wave opens a new wave. The complete design, the Minecraft example and the benchmark plan are in [docs/power-mode.md](docs/power-mode.md) (Portuguese).
 
 ```
 /graph-eng:implemente build the Minecraft clone described in task.md --power
+/graph-eng:implemente build the Minecraft clone described in task.md --power max
 ```
 
 ## Commands
@@ -157,10 +158,9 @@ Always in the separated form (`--effort max`, never `--effort=max`).
 | `--effort` | `low`, `medium`, `max` | `medium` | Reasoning effort for every call in the run. |
 | `--haiku-max` | `low`, `medium`, `off` | `low` on Claude | Highest step complexity that goes to the cheap model. `off` keeps every step on the mid model. |
 | `--executor` | `sonnet`, `haiku` | none | One model for every step. Turns routing off and does not combine with `--haiku-max` or `--power`. |
-| `--power` | — | off | Turns on [Power Mode](#power-mode). |
-| `--fable-min` | `high`, `off` | `off` | With `high`, the `high` steps go to the strongest model. Requires `--power`. |
+| `--power` | —, `max` | off | Turns on [Power Mode](#power-mode). `--power max` also puts the strongest model on the plan. |
 
-`--haiku-max`, `--executor`, `--power` and `--fable-min` only exist on the Claude host; on Codex the flow does not route. With `implemente` and no task, routing comes from the saved plan, so pass these flags to `plan`.
+`--haiku-max`, `--executor` and `--power` only exist on the Claude host; on Codex the flow does not route. With `implemente` and no task, routing comes from the saved plan, so pass these flags to `plan`.
 
 Examples:
 
@@ -213,7 +213,7 @@ Every run leaves its evidence in `.graph-runs/<runId>/advisor-run.json`: plan, r
 
 The strong model cost under 10% of the run. Raw evidence for every run is in [docs/benchmarks/](docs/benchmarks/).
 
-**Power Mode:** the Minecraft runs with `--power` have not been done yet (they wait for the account's usage reset). The variants and hypotheses are in [docs/power-mode.md](docs/power-mode.md); to run one, `bash test/fixtures/benchmark-minecraft/bench.sh <dest> --power`.
+**Power Mode:** the Minecraft runs with `--power` and `--power max` have not been done yet (they wait for the account's usage reset on 2026-11-12). The plan is 5 rounds per variant (default, `--power`, `--power max`), adjusting graph-eng between rounds. The variants and hypotheses are in [docs/power-mode.md](docs/power-mode.md); to run one, `bash test/fixtures/benchmark-minecraft/bench.sh <dest> --power max`.
 
 ### Why the graph engine was removed
 
