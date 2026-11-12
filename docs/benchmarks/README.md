@@ -67,6 +67,16 @@ bash test/fixtures/benchmark-soulslike/bench.sh /tmp/souls-power --power
 bash test/fixtures/benchmark-soulslike/bench.sh /tmp/souls-power-max --power max
 ```
 
+## Power Mode (1.4 publicada): souls-like, uma run de validação do `--power` único
+
+Depois de a 1.4 fixar a configuração única (`f8e1a7f`: Fable 5.2 no plano, na revisão e no advisor; Sonnet em todas as raias; Opus só no conserto; regra de escrita absoluta e `cd` negado; segunda tentativa da raia `BLOCKED`; conserto preso ao contrato), uma run do `--power` como sai da caixa, no mesmo `task.md` da segunda rodada. Evidência, capturas e análise em [`runs/soulslike-20261112-publicada/`](runs/soulslike-20261112-publicada/) ([`qualidade.md`](runs/soulslike-20261112-publicada/qualidade.md)).
+
+| Variante | Status | Ocultos (66) | Custo | Tempo | Sessões perdidas / conserto | Linhas | Spec UI (37) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--power` (1.4 publicada) | done | 66/66 | US$ 3,69 | 746 s | 0 / 0 | 3431 | 36 |
+
+Passou tudo sem conserto, no menor tempo das três runs do Power Mode nesta tarefa, por 1,8 vezes o custo do padrão de 11/11. Três comandos de shell foram negados nas raias (um `cd`, dois heredocs para gravar arquivo), e nenhuma raia perdeu a escrita: o prompt mandou usar `Write` e `Edit`, e a regra absoluta manteve o `Write` liberado. A segunda tentativa e o conserto preso ao contrato não foram acionados, porque não houve `BLOCKED` nem gate vermelho.
+
 ## Power Mode (1.4): souls-like com ambientação, segunda rodada
 
 Depois da primeira rodada, o `task.md` ganhou a seção visual pedida (árvores, folhas, pedras, grama, cavaleiro com armadura, capa, espada e escudo, chefe minotauro) e fixou o hash da seed, o mulberry32 e a estamina do inimigo. Mesmo motor, mesmos 66 ocultos, uma run de cada no código `d6af277`, as duas do Power Mode com `GRAPHENG_POWER_SPLIT=sonnet/sonnet`. Evidência, capturas e análise em [`runs/soulslike-20261111-ambientacao/`](runs/soulslike-20261111-ambientacao/) ([`qualidade.md`](runs/soulslike-20261111-ambientacao/qualidade.md)).

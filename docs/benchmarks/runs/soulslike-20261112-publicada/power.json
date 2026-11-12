@@ -1,0 +1,438 @@
+{
+  "flow": "advisor",
+  "power": true,
+  "haikuMax": "low",
+  "status": "done",
+  "plan": {
+    "goal": "Entregar o ASHEN GATE jogável: motor puro em src/engine/ seguindo o contrato à risca (npm test e testes ocultos), e a interface React + three.js + motion (cena procedural, câmera, controles, HUD, telas) ligada ao stepGame em passo fixo, com npm run build limpo.",
+    "steps": [
+      {
+        "step": "Motor, módulos-folha: implementar rng.ts (hashSeed FNV-1a, randomStep mulberry32, createRng), vec.ts (add, sub, scale, dot, length, distance, normalize, yawOf, fromYaw, yawTo, yawDelta em (-π, π], turnTowards, withinArc com distância zero dentro), stats.ts (constantes da tabela, createVitals, createPlayerVitals, canAct, spendStamina, regen, takeDamage, heal), attacks.ts (ATTACKS, ROLL, JUMP, FLASK, RIPOSTE, GUARD, STAGGER, LIGHT_COMBO_START) e arena.ts (getRoom, pushOut com centro empurrando para +X, resolveRoom: rect/círculo recuado e depois pilares na ordem). Tudo puro, sem mutar argumentos, mantendo nomes e formas dos tipos dos stubs; imports com extensão .ts e `import type` onde couber. Conferir com os testes de rng, vec, stats e arena.",
+        "complexity": "medium",
+        "files": [
+          "src/engine/rng.ts",
+          "src/engine/vec.ts",
+          "src/engine/stats.ts",
+          "src/engine/attacks.ts",
+          "src/engine/arena.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "Entrada e câmera (sem depender de implementação do motor, só dos tipos). controls.ts: `createControls(canvas)` devolvendo `{ sample(cameraYaw): Input, consumeLook(): {dx, dy}, consumePause(): boolean, isLocked(): boolean, release(): void, dispose(): void }`. Teclas: WASD (move relativo ao yaw da câmera, W anda para onde ela olha, na convenção fromYaw), Shift corre, Espaço esquiva, F pula, J/botão esquerdo leve, K/botão direito pesado, Q guarda, Tab lock-on, R frasco, E interagir, Esc pausa. Ações viram pressionamento único (fila consumida em sample, ignorar key repeat); preventDefault em Tab e contextmenu; pointer lock ao clicar no canvas; limpar teclas no blur. cameraRig.ts: `createCameraRig(camera)` com `update({ playerPos, playerY, playerYaw, targetPos|null, look:{dx,dy}, locked, dt })` e `yaw()`: distância 5 m, altura 2.2 m, olha 1.2 m acima dos pés; órbita livre com pointer lock (pitch entre −20° e 60°), seguimento suavizado atrás do yaw do jogador sem lock, e atrás do jogador apontando para o alvo com lock-on.",
+        "complexity": "medium",
+        "files": [
+          "src/view/controls.ts",
+          "src/view/cameraRig.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "HUD e telas com React + motion, usando só os tipos do motor (GameState, GameEvent, Enemy). Estilos num módulo TS (string CSS injetada por um <style>; não importar .css, pois o tsconfig não inclui tipos do vite). Hud.tsx recebe `{ state: GameState; target: { x: number; y: number; poise: number; maxPoise: number; staggered: boolean } | null }`: barras de HP (vermelha) e estamina (verde) com rastro amarelo que encolhe atrás, contador de frascos, runas no canto inferior direito, barra do chefe \"Minotauro da Névoa\" (visível com room bossRoom até a vitória, pisca no evento bossPhase2), retículo do lock-on e barra de poise na posição de tela recebida, mensagens centrais com fade (\"VOCÊ MORREU\" vermelha, \"INIMIGO ABATIDO\" dourada por hollow, \"GRANDE INIMIGO ABATIDO\"), prompts \"Descansar [E]\" e \"Atravessar a névoa [E]\" por distância a BONFIRE/FOG_GATE na sala courtyard, flashes de borda (vermelho em playerHit, azul em bloqueio, branco em riposte) disparados por state.events. Screens.tsx: TitleScreen (título \"ASHEN GATE\", campo de seed editável pré-preenchido com aleatória, \"Pressione qualquer tecla\", `onStart(seed)` por tecla ou clique, sem disparar ao digitar no campo), RestScreen (\"Fogueira\", \"Levantar [E]\"), PauseMenu (Continuar, Voltar ao título).",
+        "complexity": "medium",
+        "files": [
+          "src/ui/Hud.tsx",
+          "src/ui/Screens.tsx",
+          "src/ui/styles.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "Modelos dos personagens em three.js, só com primitivas e MeshStandardMaterial (materiais próprios em cada arquivo, sem asset externo), cada um exportando uma fábrica `{ group, update(...), dispose() }` com castShadow nas malhas. knight.ts `createKnight()` / `update(player: Player, time, dt)`: cavaleiro com cápsula, peitoral, ombreiras, elmo com viseira, cinto, botas, capa que balança ao andar, espada num pivô no ombro direito e escudo redondo no braço esquerdo; animação por action.kind/attack/t (arco horizontal nos leves, de cima para baixo no heavy e jumpAttack, brilho no riposte, inclinação na esquiva, y no salto, escudo à frente na guarda, stagger e dead). hollow.ts `createHollow()` / `update(enemy: Enemy, time, dt)`: humanoide magro e corcunda, trapos, lâmina enferrujada, olhos emissivos; windup inclina para trás, attack desce a arma, stagger cambaleia, dead tomba e some em 2 s. minotaur.ts `createMinotaur()`: 2.6 m, tronco largo, cabeça de touro com focinho e dois chifres, pernas grossas, machado de duas mãos, olhos âmbar; fase 2 com emissão vermelha e vapor nas narinas (Points próprio); charge abaixa a cabeça com os chifres à frente. Posicionar por pos/yaw do motor (yaw 0 = +Z, rotation.y = yaw).",
+        "complexity": "high",
+        "files": [
+          "src/render/knight.ts",
+          "src/render/hollow.ts",
+          "src/render/minotaur.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "Cenário procedural. textures.ts: texturas em canvas (pedra, terra/grama, musgo, névoa, rocha). particles.ts: sistema simples de partículas em THREE.Points com `update(dt)` (brasas subindo, folhas caindo). courtyard.ts `createCourtyard()` → `{ group, update(time, dt), dispose() }`: chão texturizado com manchas, tufos de grama e pedras em InstancedMesh, 6 a 10 árvores de outono (com sombra) nos cantos e atrás dos muros, folhas caindo, muros com musgo nas bordas do rect de COURTYARD, os quatro pilares de COURTYARD.pillars, fogueira em BONFIRE (espada em brasas, PointLight tremulante, partículas) e porta de névoa em FOG_GATE (plano semitransparente animado entre dois batentes). bossRoom.ts `createBossRoom()` com a mesma forma: círculo de BOSS_ROOM, muro de rocha escuro, raízes e galhos secos, ossos e crânios, tochas com PointLight. environment.ts `createEnvironment(scene)`: céu escuro de fim de tarde, scene.fog, lua ou brilho no horizonte, luz ambiente e direcional alaranjada baixa com sombra. Manter o total perto de 200 malhas; sombra só em personagens e árvores.",
+        "complexity": "high",
+        "files": [
+          "src/render/textures.ts",
+          "src/render/particles.ts",
+          "src/render/courtyard.ts",
+          "src/render/bossRoom.ts",
+          "src/render/environment.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "Motor, player.ts: createPlayer, stepPlayer, isInvulnerable, activeAttack conforme o contrato, na ordem dada: subpassos de no máximo 0.05 (pressionamentos só no primeiro), avanço de t e volta a IDLE_ACTION zerando guardCounter, dead/stagger ignorando entrada, início de ação por prioridade (frasco sem canAct, esquiva com cancelamento após hitEnd, salto, heavy, light/combo light2/jumpAttack), regra do guardCounter ao começar heavy, guarding/sprinting calculados depois do início de ação, orientação com e sem lock-on, movimento exato de roll (3.15 m) e lunge independentes de dt, o passo que inicia a ação com t = 0 sem andar, arco do salto, queda do jumpAttack, cura do frasco ao cruzar healAt, resolveRoom com raio 0.4 e regen com allow = idle e não correndo. Nunca mutar o argumento (copiar hitIds e dir). Validar com os testes de jogador.",
+        "complexity": "high",
+        "files": [
+          "src/engine/player.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "Motor, enemies.ts: createEnemy (vitais createVitals(hp, 0, poise)), respawnEnemy, enemyRadius e stepEnemy conforme o contrato: subpassos de no máximo 0.05, máquina idle/intro/chase/windup/attack/recover/stagger/dead, chefe indo de idle para intro, alvo morto levando a idle, chase parando a enemyRadius + 0.4 sem passar do alvo, escolha de ataque do hollow e do chefe nas fases 1 e 2 com exatamente um randomStep quando previsto (devolver o rng avançado), windup com turnTowards e TRACK_RATE (×PHASE2_WINDUP na fase 2), attack sem virar, charge andando CHARGE_SPEED, acerto único por hitDone com origin = pos, recover com RIPOSTE_RECOVER quando attack é null, resolveRoom com o raio do inimigo, poise sem decaimento. Manter as constantes já presentes no arquivo. Validar com o teste de inimigo.",
+        "complexity": "high",
+        "files": [
+          "src/engine/enemies.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "Renderizador da cena: `createGameRenderer(canvas)` → `{ render(state: GameState, look, locked, dt): { cameraYaw: number; target: {x, y, poise, maxPoise, staggered} | null }, resize(), dispose() }`. Cria WebGLRenderer (sombras, pixelRatio limitado), cena, createEnvironment, createCourtyard e createBossRoom (ambos sempre na cena, em suas coordenadas de mundo), o cavaleiro, um modelo por inimigo de state.enemies (hollow/minotauro por kind, casados por id), o cameraRig e a marca luminosa do rastro de sangue (visível só quando state.bloodstain existe e a sala é a atual). A cada frame desenha o último estado sem interpolar, atualiza modelos e cenários, e projeta o alvo do lock-on para coordenadas de tela para o HUD. Trocar o estado por um jogo novo (voltar ao título) não pode vazar malhas.",
+        "complexity": "high",
+        "files": [
+          "src/render/gameRenderer.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "Motor, game.ts: createGame e stepGame conforme o contrato: time += dt, subpassos de no máximo 0.05 acumulando eventos (pressionamentos só no primeiro), fases title, resting, dead (renascimento com bloodstain e respawn) e victory, e a ordem exata do playing: lock-on, riposte (consome o light), stepPlayer, acertos do jogador com range + enemyRadius, hitIds e contra-ataque de guarda, fase 2, stepEnemy só na sala atual com rng encadeado por id, acertos no jogador (i-frames, bloqueio com arco de guarda, guardBreak, stagger, morte), empurrão com pushOut + resolveRoom, interações (fogueira, porta de névoa) e rastro de sangue. Emitir o evento flask quando a cura acontece. Estado sempre novo e determinístico (deepEqual). Rodar npm test inteiro e corrigir desvios encontrados nos demais módulos do motor.",
+        "complexity": "high",
+        "files": [
+          "src/engine/game.ts"
+        ],
+        "wave": 3
+      },
+      {
+        "step": "Integração nos pontos de entrada. Game.tsx: canvas em tela cheia, createControls + createGameRenderer, loop requestAnimationFrame com acumulador fixo de 1/60 s (limitar o atraso acumulado; pressionamentos entregues a um único stepGame por frame, os demais passos com as ações zeradas), estado em ref com repasse ao React para o HUD (state, target e eventos acumulados do frame), pausa com Esc (solta o mouse, para o loop de simulação, PauseMenu com Continuar e Voltar ao título), RestScreen na fase resting, resize e limpeza no unmount (compatível com StrictMode). App.tsx: alterna TitleScreen ↔ Game, cria `createGame(seed)` e já tira da fase title ao começar. main.tsx: monta App e o <style> global. Rodar npm test e npm run build, abrir npm run dev e percorrer todos os itens de \"Interface e jogabilidade\", corrigindo erros de tipo, de console e de encaixe entre módulos.",
+        "complexity": "high",
+        "files": [
+          "src/App.tsx",
+          "src/Game.tsx",
+          "src/main.tsx"
+        ],
+        "wave": 4
+      }
+    ],
+    "doneWhen": [
+      "npm test passa, e cada função do motor segue o contrato inclusive nos casos de borda (subpassos, pureza, determinismo com deepEqual para mesma seed e mesmas entradas).",
+      "npm run build termina sem erro: tsc estrito limpo, sem any, `as unknown as`, @ts-ignore ou @ts-expect-error, e bundle gerado.",
+      "src/engine/ não importa three, react, motion nem DOM e roda no Node; package.json, vite.config.ts, tsconfig.json, index.html e test/ ficam intocados, sem dependências novas.",
+      "npm run dev abre a tela inicial \"ASHEN GATE\" com seed editável, e qualquer tecla ou clique começa o jogo.",
+      "Todo o combate é jogável com os controles descritos: andar, correr, esquiva com i-frames, combo leve, pesado, ataque em salto, guarda e contra-ataque, lock-on, riposte em inimigo atordoado, frasco, fogueira, morte com rastro recuperável, porta de névoa e chefe em duas fases até a vitória.",
+      "Cena 100% procedural com cavaleiro, hollows, minotauro, pátio e sala do chefe como descritos, câmera em terceira pessoa (pointer lock, seguimento e lock-on) e pausa com Esc.",
+      "HUD completo: barras com rastro, frascos, runas, barra do chefe, retículo e poise do alvo, mensagens, prompts, tela de descanso e flashes.",
+      "Roda a 60 fps numa máquina comum e sem erro no console."
+    ],
+    "risks": [
+      "Há testes ocultos: a ordem das regras e os casos de borda de stepPlayer, stepEnemy e stepGame (subpassos, passo com t = 0 que não anda, número de randomStep consumidos, pressionamentos só no primeiro subpasso) precisam seguir o texto literalmente.",
+      "Os módulos de interface da onda 1 e o renderizador da onda 2 são escritos contra contratos descritos só neste plano (formas de createControls, cameraRig, fábricas de modelos e cenário, props do Hud); divergências de assinatura só aparecem na integração final.",
+      "tsconfig estrito com noUncheckedIndexedAccess, verbatimModuleSyntax e erasableSyntaxOnly (sem enum nem parameter properties), e sem tipos do vite: imports de .css ou acesso a índices sem checagem quebram o build.",
+      "Pureza do motor: reutilizar IDLE_ACTION, hitIds ou Vec2 compartilhados por referência pode mutar estado antigo e quebrar determinismo e deepEqual.",
+      "Orçamento de desempenho: cenário e personagens detalhados podem passar de ~200 malhas ou abusar de sombras e luzes pontuais, derrubando os 60 fps.",
+      "Ciclo de vida no React (StrictMode, pointer lock, Esc soltando o mouse, voltar ao título) pode duplicar loops ou listeners e vazar recursos do three, gerando erros no console."
+    ]
+  },
+  "review": {
+    "verdict": "REVISE",
+    "notes": [
+      "Contrato de eventos HUD (ondas 1 e 4 divergem): Hud.tsx é especificado lendo `state.events`, mas `events` só traz o último stepGame e um frame pode ter 0 ou 2+ passos fixos, então flashes e mensagens (INIMIGO ABATIDO, bossPhase2, riposte) se perdem ou repetem. Fixar já na onda 1 a prop `events: GameEvent[]` (acumulados no frame pelo Game.tsx, entregues uma única vez) e o Hud não deve ler `state.events`. Colocar esse tipo e o `target` do HUD num módulo de tipos compartilhado, importado por Hud.tsx e gameRenderer.ts, em vez de duplicar a forma.",
+      "Pausa com Esc sob pointer lock: com o mouse travado, o navegador consome o Esc para sair do pointer lock e em geral não entrega o keydown. O controls.ts precisa ouvir `pointerlockchange` e tratar a perda do lock não solicitada como pedido de pausa (além do keydown de Esc quando não há lock), distinguindo do `release()` chamado pelo próprio código (pausa, descanso, voltar ao título) para não pausar em duplicidade.",
+      "Animações que o motor não cronometra: em `dead` o `stepEnemy` não muda nada (o `t` congela) e inimigos de outra sala ficam parados. O 'tomba e some em 2 s' do hollow/minotauro precisa de timer próprio no modelo, disparado na transição para `dead` e zerado quando o inimigo sai de `dead` (respawn na fogueira ou no renascimento, que mantêm o mesmo id), restaurando visibilidade e opacidade. Incluir isso no contrato das fábricas da onda 1 e no casamento por id do gameRenderer.",
+      "stepGame, bordas dos subpassos (testes ocultos): explicitar que a divisão em subpassos envolve todas as fases, não só `playing`. `interact` e `lockOn` também são pressionamentos e valem só no primeiro subpasso; quando a fase muda no meio de um passo (morte → `dead`, `deathTimer` chegando a 0 → renasce, fogueira → `resting`, vitória), os subpassos restantes seguem as regras da fase nova; `events` acumula todos os subpassos e começa vazio a cada chamada, inclusive em `title` e `resting`.",
+      "Evento `flask`: o contrato não diz quando ele é emitido, e o plano escolheu 'quando a cura acontece' sem registrar a ambiguidade. Decidir em game.ts comparando o jogador antes e depois do `stepPlayer` (por exemplo `healed` passando de false para true, ou `flasks` diminuindo ao iniciar a ação), emitir exatamente uma vez por uso e nunca alterar `Player`/`PlayerAction` para isso. Conferir test/engine.test.ts antes de fixar a escolha e anotá-la como suposição."
+    ]
+  },
+  "sessions": [
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 1,
+      "steps": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "status": "DONE",
+      "summary": "Os 5 passos da onda 1 estão implementados. `npm run build` passa com tipos limpos. Em `npm test`, 4 de 8 passam: rng, vec, stats e arena. Os 4 que falham são de player, enemies e game, das outras ondas. Nada disso foi aberto no navegador: nenhum arquivo de visão é importado ainda (a integração é da onda 4), então o visual e o desempenho dos modelos e do cenário não foram testados.\n\n**Motor (`src/engine/`)**\n- `rng.ts`, `vec.ts`, `stats.ts` e `arena.ts` seguem o contrato. `withinArc` tolera 1e-9 no limite do arco, para o desvio exatamente igual à metade do arco contar como dentro.\n- `attacks.ts` já vinha completo no esqueleto e não foi alterado.\n\n**Entrada e câmera (`src/view/`)**\n- `controls.ts`: `createControls(canvas)` devolve `{ sample(cameraYaw), consumeLook(), consumePause(), isLocked(), release(), dispose() }`. A pausa tem duas origens:\n  - Esc quando não há pointer lock;\n  - perda não solicitada do pointer lock (`pointerlockchange`), distinguida do `release()` do próprio código para não pausar duas vezes.\n- `cameraRig.ts`: `createCameraRig(camera)` com `update({ playerPos, playerY, playerYaw, targetPos, look, locked, dt })` e `yaw()`.\n\n**Interface (`src/ui/`)**\n- `Hud.tsx` recebe `{ state, target, events }`. `events` são os eventos acumulados no frame e entregues uma vez; o HUD não lê `state.events`. O tipo `HudTarget` é exportado de `Hud.tsx`, para o `gameRenderer.ts` importar.\n- `Screens.tsx` tem `TitleScreen({ onStart(seed) })`, `RestScreen()` e `PauseMenu({ onResume, onTitle })`. Digitar no campo da seed não começa o jogo.\n- `styles.ts` exporta a string `CSS`, para o `main.tsx` injetar num `<style>` (a onda 4 ainda precisa fazer isso).\n\n**Cena (`src/render/`)**\n- `knight.ts`, `hollow.ts`, `minotaur.ts` exportam `createKnight()`, `createHollow()` e `createMinotaur()`. Cada um devolve `{ group, update(..., time, dt), dispose() }`. `hollow` e `minotaur` têm timer próprio de morte (tombam e somem em 2 s) e restauram visibilidade e opacidade quando o inimigo sai de `dead`.\n- `createCourtyard()` e `createBossRoom()` devolvem `Scenery = { group, update(time, dt), dispose() }`.\n- `createEnvironment(scene)` devolve `{ update(focusX, focusZ, room, dt), dispose() }`. O renderizador (onda 2) precisa chamar `update` a cada frame; ele segue a sombra e o céu e escurece a névoa na sala do chefe.\n- `textures.ts` e `particles.ts` têm as texturas procedurais e as partículas. `disposeObject(root)` em `textures.ts` libera geometrias, materiais e mapas.",
+      "sessionId": "a913d653-3372-4d41-98f5-6b59dc0c7c67",
+      "advisorCalls": 0,
+      "ms": 368716
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 2,
+      "steps": [
+        6,
+        7,
+        8
+      ],
+      "status": "DONE",
+      "summary": "Passos 6–8 implementados: src/engine/player.ts, src/engine/enemies.ts e src/render/gameRenderer.ts (createGameRenderer com render/resize/dispose, modelos casados por id, rastro de sangue, projeção do alvo do lock-on). npm run build passa (tsc estrito limpo). npm test: 7 de 8 passam; o único que falha é o teste de createGame, que ainda é stub em game.ts (onda 3, fora do meu escopo). Suposições: subpassos em blocos de 0,05 com resto; salto anda também no passo inicial; chefe vai idle→intro só se t era 0; inimigo não acerta alvo morto.",
+      "sessionId": "940f1864-1aea-421b-b7b2-ac6e219d5ed1",
+      "advisorCalls": 0,
+      "ms": 123686
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 3,
+      "steps": [
+        9
+      ],
+      "status": "DONE",
+      "summary": "Implementei `createGame` e `stepGame` em `src/engine/game.ts`, e `npm test` passa (8 de 8). O `npm run build` não mostra erro de tipo em `game.ts`; filtrei a saída só por `game.ts` e `error`, então não vi o resultado completo do build.\n\nNão rodei nenhum teste além dos visíveis em `test/engine.test.ts`; os casos de borda abaixo ficam sem cobertura. Escolhas onde o contrato deixa margem:\n- **Subpassos:** a divisão em subpassos de no máximo 0.05 vale para todas as fases. `light`, `heavy`, `roll`, `jump`, `flask`, `interact` e `lockOn` só valem no primeiro subpasso. Se a fase muda no meio do passo, os subpassos restantes seguem as regras da fase nova. `events` começa vazio a cada chamada e acumula todos os subpassos. `time` soma `dt` uma vez no fim.\n- **Evento `flask`:** sai no instante da cura, quando `action.healed` passa de false para true. Anotei isso como suposição no código. Não alterei `Player` nem `PlayerAction` para isso.\n- **Riposte:** o arco é testado até o centro do inimigo, sem somar o raio. Se houver mais de um inimigo atordoado no arco, vale o mais próximo.\n- **Golpe do jogador que quebra o poise e mata ao mesmo tempo:** emite `enemyStaggered` e depois `enemyDied`, na ordem literal do contrato.\n- **Acertos no jogador:** quando o jogador já morreu num passo, os acertos restantes daquele passo são ignorados, para não gerar `dodged` espúrio.\n- **Chip de bloqueio que zera o HP:** vai direto para a morte, sem `guardBreak`.",
+      "sessionId": "e88c8fe0-92f0-4de9-a7a4-33ce6046544d",
+      "advisorCalls": 0,
+      "ms": 76609
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 4,
+      "steps": [
+        10
+      ],
+      "status": "DONE",
+      "summary": "Escrevi `src/App.tsx`, `src/Game.tsx` e `src/main.tsx`. `npm test` passa (8 de 8) e `npm run build` termina sem erro; a única saída é o aviso de chunk acima de 500 kB. Não abri `npm run dev` nem percorri o jogo no navegador, então a jogabilidade e o console não foram verificados.\n\n- **`App.tsx`**: alterna entre `TitleScreen` e `Game`. `Game` recebe a seed e um `onExit` que volta ao título.\n- **`Game.tsx`**:\n  - **Estado inicial:** o jogo nasce com `createGame(seed)` já em `playing`.\n  - **Loop e passo fixo:**\n    - O loop usa `requestAnimationFrame` com acumulador de 1/60 s e atraso limitado a 0,25 s.\n    - A entrada só é amostrada no primeiro passo do frame; os passos seguintes zeram os pressionamentos e mantêm `move`, `sprint` e `guard`. Assim nenhum pressionamento se perde num frame sem passo.\n  - **HUD:** recebe os eventos acumulados no frame, entregues uma única vez.\n  - **Pausa:** Esc e a perda do pointer lock pausam, abrem o `PauseMenu` e param a simulação; \"Voltar ao título\" solta o mouse e chama `onExit`.\n  - **Descanso:** mostra o `RestScreen` e solta o mouse ao entrar em `resting`.\n  - **Limpeza:** o unmount cancela o loop, remove os listeners e descarta controles e renderer, então StrictMode não duplica nada.\n- **`main.tsx`**: monta `App` em StrictMode com o `<style>` global.",
+      "sessionId": "efe3a0f7-4b31-4678-8220-8d3f95b065c0",
+      "advisorCalls": 0,
+      "ms": 45966
+    }
+  ],
+  "gate": [
+    {
+      "round": 1,
+      "pass": true,
+      "results": [
+        {
+          "id": "test",
+          "command": "npm test",
+          "exitCode": 0,
+          "ms": 176,
+          "outputTail": "\n> ashen-gate@0.0.0 test\n> node --test test/*.test.ts\n\nTAP version 13\n# Subtest: rng: determinístico e no intervalo\nok 1 - rng: determinístico e no intervalo\n  ---\n  duration_ms: 0.995375\n  type: 'test'\n  ...\n# Subtest: vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo\nok 2 - vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo\n  ---\n  duration_ms: 0.148333\n  type: 'test'\n  ...\n# Subtest: stats: gastar estamina atrasa a regeneração; poise acumulado quebra\nok 3 - stats: gastar estamina atrasa a regeneração; poise acumulado quebra\n  ---\n  duration_ms: 0.07925\n  type: 'test'\n  ...\n# Subtest: jogador: a esquiva tem i-frames e se desloca 3.15 m\nok 4 - jogador: a esquiva tem i-frames e se desloca 3.15 m\n  ---\n  duration_ms: 0.510166\n  type: 'test'\n  ...\n# Subtest: jogador: o ataque leve tem janela de acerto\nok 5 - jogador: o ataque leve tem janela de acerto\n  ---\n  duration_ms: 0.077167\n  type: 'test'\n  ...\n# Subtest: inimigo: o hollow só persegue dentro do alcance de agressão\nok 6 - inimigo: o hollow só persegue dentro do alcance de agressão\n  ---\n  duration_ms: 0.162042\n  type: 'test'\n  ...\n# Subtest: arena: os muros e os pilares prendem o jogador\nok 7 - arena: os muros e os pilares prendem o jogador\n  ---\n  duration_ms: 0.100167\n  type: 'test'\n  ...\n# Subtest: jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado\nok 8 - jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado\n  ---\n  duration_ms: 2.766208\n  type: 'test'\n  ...\n1..8\n# tests 8\n# suites 0\n# pass 8\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 68.740083\n"
+        },
+        {
+          "id": "build",
+          "command": "npm run build",
+          "exitCode": 0,
+          "ms": 1109,
+          "outputTail": "\n> ashen-gate@0.0.0 build\n> tsc --noEmit && vite build\n\nvite v8.3.8 building client environment for production...\ntransforming...\n✓ 467 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                  0.32 kB │ gzip:   0.23 kB\ndist/assets/index-BReadmrw.js  885.17 kB │ gzip: 248.23 kB\n\n[plugin builtin:vite-reporter] \n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n✓ built in 137ms\n"
+        }
+      ]
+    }
+  ],
+  "advisorCalls": 0,
+  "calls": [
+    {
+      "role": "planner",
+      "ms": 96594,
+      "usage": {
+        "claude-fable-5-2": {
+          "inputTokens": 8,
+          "outputTokens": 9360,
+          "cacheReadInputTokens": 78061,
+          "cacheCreationInputTokens": 34372,
+          "webSearchRequests": 0,
+          "costUSD": 0.9400282,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 2601,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 34372,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "52d899d1-45d2-4bd5-8337-6bf0f08af55b",
+      "permissionDenials": 0
+    },
+    {
+      "role": "planReviewer",
+      "ms": 33406,
+      "usage": {
+        "claude-fable-5-2": {
+          "inputTokens": 6,
+          "outputTokens": 2906,
+          "cacheReadInputTokens": 58505,
+          "cacheCreationInputTokens": 31775,
+          "webSearchRequests": 0,
+          "costUSD": 0.6363890000000001,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 1290,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 31775,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "a1ccbb5e-3f08-4dc1-a6b5-d181cc4ce2f2",
+      "permissionDenials": 0
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 368705,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 44,
+          "outputTokens": 59348,
+          "cacheReadInputTokens": 1206336,
+          "cacheCreationInputTokens": 98645,
+          "webSearchRequests": 0,
+          "costUSD": 1.1087816000000001,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 11111,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 98645,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "a913d653-3372-4d41-98f5-6b59dc0c7c67",
+      "permissionDenials": 1
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 123651,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 22,
+          "outputTokens": 18094,
+          "cacheReadInputTokens": 459213,
+          "cacheCreationInputTokens": 55793,
+          "webSearchRequests": 0,
+          "costUSD": 0.4500773,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 7136,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 55793,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "940f1864-1aea-421b-b7b2-ac6e219d5ed1",
+      "permissionDenials": 1
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 76572,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 12,
+          "outputTokens": 10988,
+          "cacheReadInputTokens": 207682,
+          "cacheCreationInputTokens": 45474,
+          "webSearchRequests": 0,
+          "costUSD": 0.3125682,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 4095,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 45474,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "e88c8fe0-92f0-4de9-a7a4-33ce6046544d",
+      "permissionDenials": 0
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 45936,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 16,
+          "outputTokens": 6445,
+          "cacheReadInputTokens": 272184,
+          "cacheCreationInputTokens": 37307,
+          "webSearchRequests": 0,
+          "costUSD": 0.24092840000000004,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 926,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 37307,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "efe3a0f7-4b31-4678-8220-8d3f95b065c0",
+      "permissionDenials": 1
+    }
+  ],
+  "routing": [
+    {
+      "wave": 1,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            6,
+            7,
+            8
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            9
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 4,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            10
+          ]
+        }
+      ]
+    }
+  ],
+  "engineMs": 746268,
+  "cost": {
+    "costUSD": 3.6887727000000003,
+    "input": 0.00027700135339042974,
+    "cacheWrite": 1.8686904423189936,
+    "cacheRead": 0.49263481077383187,
+    "output": 1.3271704455537845,
+    "tokens": {
+      "input": 108,
+      "cacheWrite": 303366,
+      "cacheRead": 2281981,
+      "output": 107141
+    },
+    "byModel": {
+      "claude-fable-5-2": 1.5764172,
+      "claude-sonnet-5-5": 2.1123555000000005
+    },
+    "byRole": {
+      "planner": 0.9400282,
+      "planReviewer": 0.6363890000000001,
+      "advisedExecutor": 2.1123555000000005
+    }
+  }
+}
