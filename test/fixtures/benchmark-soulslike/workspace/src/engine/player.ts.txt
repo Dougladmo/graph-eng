@@ -1,0 +1,60 @@
+// Contrato em task.md. Motor puro: sem three, react, motion nem DOM.
+import type { Vec2 } from './vec.ts'
+import type { Vitals } from './stats.ts'
+import type { AttackName, AttackProfile } from './attacks.ts'
+import type { Room } from './arena.ts'
+
+export type ActionKind = 'idle' | 'roll' | 'attack' | 'jump' | 'jumpAttack' | 'flask' | 'riposte' | 'stagger' | 'dead'
+
+export type PlayerAction = {
+  kind: ActionKind
+  t: number
+  attack: AttackName | null
+  dir: Vec2
+  hitIds: number[]
+  healed: boolean
+}
+
+export type Player = {
+  pos: Vec2
+  y: number
+  yaw: number
+  vitals: Vitals
+  flasks: number
+  action: PlayerAction
+  guarding: boolean
+  sprinting: boolean
+  lockOn: number | null
+  guardCounter: number
+}
+
+export type PlayerInput = {
+  move: Vec2
+  sprint: boolean
+  roll: boolean
+  jump: boolean
+  light: boolean
+  heavy: boolean
+  guard: boolean
+  flask: boolean
+}
+
+export type PlayerContext = { targetPos: Vec2 | null; room: Room }
+
+export const IDLE_ACTION: PlayerAction = { kind: 'idle', t: 0, attack: null, dir: { x: 0, z: 0 }, hitIds: [], healed: false }
+
+export function createPlayer(pos: Vec2, yaw: number): Player {
+  throw new Error(`não implementado: createPlayer(${pos.x},${yaw})`)
+}
+
+export function stepPlayer(player: Player, input: PlayerInput, dt: number, ctx: PlayerContext): Player {
+  throw new Error(`não implementado: stepPlayer(${player.yaw},${input.sprint},${dt},${ctx.room.id})`)
+}
+
+export function isInvulnerable(player: Player): boolean {
+  throw new Error(`não implementado: isInvulnerable(${player.action.kind})`)
+}
+
+export function activeAttack(player: Player): AttackProfile | null {
+  throw new Error(`não implementado: activeAttack(${player.action.kind})`)
+}

@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/Dougladmo/graph-eng/stargazers"><img src="https://img.shields.io/github/stars/Dougladmo/graph-eng?style=flat-square&color=1d1d1f&label=stars" alt="estrellas"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versi%C3%B3n-1.3.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versión 1.3.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versi%C3%B3n-1.4.0-0a84ff?style=flat-square&labelColor=1d1d1f" alt="versión 1.4.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licencia-MIT-1d1d1f?style=flat-square" alt="licencia MIT"></a>
   <a href="#comandos"><img src="https://img.shields.io/badge/Claude%20Code-plugin-1d1d1f?style=flat-square" alt="plugin de Claude Code"></a>
   <a href="#comandos"><img src="https://img.shields.io/badge/Codex-plugin-1d1d1f?style=flat-square" alt="plugin de Codex"></a>
@@ -49,7 +49,7 @@
 | 🧪 **Gate real** | `npm test` y `npm run build`, corridos por el supervisor, deciden el DONE. |
 | 💰 **Más barato y más rápido** | La misma nota que un agente único en el modelo fuerte por cerca de un cuarto del costo, en menos de la mitad del tiempo ([benchmark](#benchmark)). |
 
-Versión actual: **1.3.0** · ver el [CHANGELOG](CHANGELOG.md).
+Versión actual: **1.4.0** · ver el [CHANGELOG](CHANGELOG.md). Novedad: el [Power Mode](#power-mode).
 
 ## Instalación
 
@@ -77,7 +77,7 @@ Requisitos: `node` 22 en el `PATH` y un repositorio con script `test` en `packag
 Pega esto en Claude Code, dentro de tu repositorio, y cambia la tarea (el prompt está en inglés para que funcione en cualquier proyecto):
 
 ```
-Use graph-eng 1.3 (advisor flow) for this task. First run /graph-eng:plan with it and show me the plan; after I approve, run /graph-eng:implemente with no arguments.
+Use graph-eng 1.4 (advisor flow) for this task. First run /graph-eng:plan with it and show me the plan; after I approve, run /graph-eng:implemente with no arguments.
 
 Task: <describe what you want built or changed>
 ```
@@ -116,6 +116,25 @@ flowchart TD
 
 Los pasos seguidos en el mismo modelo comparten una sesión. El presupuesto del advisor se comparte entre sesiones.
 
+## Power Mode
+
+`--power` pone al **más fuerte** de la familia (Fable 5.2) en el plan, en la revisión del plan y en el advisor, mantiene al modelo medio en todos los pasos y corre los pasos en paralelo. Una sola configuración, afinada por los benchmarks de abajo: el modelo fuerte en los pasos costó de 4 a 7 veces más sin mejor nota, mientras que el medio en todos los carriles, con el plan del más fuerte, pasó todo sin reparación en las cuatro runs. Todas las llamadas usan el esfuerzo de la run (`medium` por defecto, lo que Anthropic recomienda para Fable 5.2).
+
+| Rol | Por defecto | `--power` |
+| --- | --- | --- |
+| Planificador | 📝 medio | 🔥 **más fuerte** |
+| Revisión del plan | 🧠 fuerte | 🔥 **más fuerte** |
+| Advisor | 🧠 fuerte (3 llamadas por run) | 🔥 **más fuerte** (6 por run, 2 por carril) |
+| Pasos `high` y `medium` | 📝 medio | 📝 medio, en carriles paralelos |
+| Pasos `low` | ⚙️ barato | ⚙️ barato |
+| Arreglos del gate | 📝 medio | 🧠 **fuerte** |
+
+El plan sale en **olas**: cada paso nombra sus archivos y la ola en que corre. Dentro de una ola, los pasos se vuelven **carriles** por modelo, que corren al mismo tiempo en archivos distintos; las olas corren en orden, y el gate corre una vez al final. El runner revisa la huella de archivos antes de correr: un choque dentro de una ola abre una ola nueva. Un carril que devuelve `BLOCKED` recibe un segundo intento en el mismo modelo, con su propio motivo, antes de que abra el arreglo del gate. Diseño completo, ejemplo con Minecraft y resultados del benchmark en [docs/power-mode.md](docs/power-mode.md) (en portugués).
+
+```
+/graph-eng:implemente construir el clon de Minecraft descrito en task.md --power
+```
+
 ## Comandos
 
 | Comando | Qué hace | ¿Toca el código? |
@@ -137,9 +156,10 @@ Siempre en la forma separada (`--effort max`, nunca `--effort=max`).
 | --- | --- | --- | --- |
 | `--effort` | `low`, `medium`, `max` | `medium` | Esfuerzo de razonamiento de todas las llamadas de la run. |
 | `--haiku-max` | `low`, `medium`, `off` | `low` en Claude | Complejidad máxima de paso que va al modelo barato. `off` deja todos los pasos en el medio. |
-| `--executor` | `sonnet`, `haiku` | ninguno | Un modelo para todos los pasos. Apaga el ruteo y no se combina con `--haiku-max`. |
+| `--executor` | `sonnet`, `haiku` | ninguno | Un modelo para todos los pasos. Apaga el ruteo y no se combina con `--haiku-max` ni con `--power`. |
+| `--power` | — | apagado | Enciende el [Power Mode](#power-mode): el más fuerte planifica, revisa y aconseja; los pasos corren en carriles paralelos. |
 
-`--haiku-max` y `--executor` solo existen en el host Claude; en Codex el flujo no rutea. En `implemente` sin tarea, el ruteo viene del plan guardado, así que pasa esas dos flags en `plan`.
+`--haiku-max`, `--executor` y `--power` solo existen en el host Claude; en Codex el flujo no rutea. En `implemente` sin tarea, el ruteo viene del plan guardado, así que pasa esas flags en `plan`.
 
 Ejemplos:
 
@@ -191,6 +211,8 @@ Cada run deja su evidencia en `.graph-runs/<runId>/advisor-run.json`: plan, revi
 | 🧠 Advisor | fuerte | 0 (no se llamó) |
 
 El modelo fuerte costó menos del 10% de la run. La evidencia cruda de cada run está en [docs/benchmarks/](docs/benchmarks/).
+
+**Power Mode (5 rondas por variante, 11/11/2026):** las 15 runs pasaron los 55 tests ocultos y el build. La configuración por defecto entregó un juego jugable en 5 de 5 rondas por US$ 1,34 a 1,83 en 8 a 11 min. El Power Mode tal como fue diseñado (modelo fuerte en los pasos `high`) costó de 4 a 7 veces más, tardó de 2 a 3 veces más y `--power max` no entregó un juego jugable en 2 de 2 rondas. Con el modelo medio en todos los pasos del ejecutor (`GRAPHENG_POWER_SPLIT`, ver [docs/benchmarks/](docs/benchmarks/)), `--power max` entregó en las dos rondas por US$ 2,75 a 3,15 en 10 a 12 min, con código del tamaño y la forma del de por defecto. Misma nota, mismas features: la configuración por defecto sigue siendo la recomendación. En el benchmark mayor, el souls-like (66 tests ocultos, TypeScript estricto, una run por variante), el cuadro se mantuvo: la configuración por defecto pasó todo por US$ 1,57 en 8 min, y las dos runs del Power Mode costaron 2,3 y 4,5 veces más, tardaron más y quedaron cada una con una falla real de regla. Una segunda ronda con la spec de ambientación (árboles de otoño, rocas, pasto, caballero con armadura, jefe minotauro) invirtió la nota (Power Mode 66/66, por defecto 65/66, dentro de la variación entre runs) por 1,7 y 2,0 veces el costo de la configuración por defecto, con 30 a 36 % más código de escenario y ninguna raia perdida. El `--power` publicado es la configuración que nunca necesitó reparación en esas rondas: el más fuerte en el plan y en la revisión, el medio en todos los carriles. Una run de validación en la misma tarea del souls-like pasó 66/66 por US$ 3,69 en 12 min, sin carril perdido ni reparación. Las tablas completas, el análisis de calidad del código y los próximos pasos están en [docs/benchmarks/README.md](docs/benchmarks/README.md) y [docs/power-mode.md](docs/power-mode.md) (en portugués).
 
 ### Por qué se quitó el motor de grafo
 

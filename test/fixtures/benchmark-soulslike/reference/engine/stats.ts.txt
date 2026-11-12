@@ -1,0 +1,56 @@
+export const PLAYER_MAX_HP = 400
+export const PLAYER_MAX_STAMINA = 100
+export const PLAYER_MAX_POISE = 40
+export const STAMINA_REGEN = 25
+export const STAMINA_REGEN_DELAY = 0.6
+export const SPRINT_COST = 12
+export const POISE_DECAY = 15
+export const FLASK_MAX = 3
+export const FLASK_HEAL = 180
+export const WALK_SPEED = 4
+export const SPRINT_SPEED = 6.5
+export const GUARD_SPEED = 2
+
+export type Vitals = {
+  hp: number
+  maxHp: number
+  stamina: number
+  maxStamina: number
+  poise: number
+  maxPoise: number
+  regenDelay: number
+}
+
+export function createVitals(maxHp: number, maxStamina: number, maxPoise: number): Vitals {
+  return { hp: maxHp, maxHp, stamina: maxStamina, maxStamina, poise: 0, maxPoise, regenDelay: 0 }
+}
+
+export function createPlayerVitals(): Vitals {
+  return createVitals(PLAYER_MAX_HP, PLAYER_MAX_STAMINA, PLAYER_MAX_POISE)
+}
+
+export function canAct(v: Vitals): boolean {
+  return v.stamina > 0
+}
+
+export function spendStamina(v: Vitals, cost: number): Vitals {
+  return { ...v, stamina: Math.max(0, v.stamina - cost), regenDelay: STAMINA_REGEN_DELAY }
+}
+
+export function regen(v: Vitals, dt: number, allow: boolean): Vitals {
+  const poise = Math.max(0, v.poise - POISE_DECAY * dt)
+  if (!allow) return { ...v, poise }
+  const regenDelay = Math.max(0, v.regenDelay - dt)
+  const stamina = regenDelay === 0 ? Math.min(v.maxStamina, v.stamina + STAMINA_REGEN * dt) : v.stamina
+  return { ...v, poise, regenDelay, stamina }
+}
+
+export function takeDamage(v: Vitals, damage: number, poiseDamage: number): { vitals: Vitals; broke: boolean } {
+  const poise = v.poise + poiseDamage
+  const broke = poise >= v.maxPoise
+  return { vitals: { ...v, hp: Math.max(0, v.hp - damage), poise: broke ? 0 : poise }, broke }
+}
+
+export function heal(v: Vitals, amount: number): Vitals {
+  return { ...v, hp: Math.min(v.maxHp, v.hp + amount) }
+}

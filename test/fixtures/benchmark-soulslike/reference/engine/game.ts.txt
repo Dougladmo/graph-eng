@@ -1,0 +1,308 @@
+import { distance, withinArc, type Vec2 } from './vec.ts'
+import { hashSeed } from './rng.ts'
+import { FLASK_MAX, createPlayerVitals, spendStamina, takeDamage } from './stats.ts'
+import { GUARD, RIPOSTE } from './attacks.ts'
+import { activeAttack, createPlayer, isInvulnerable, stepPlayer, type Player, type PlayerInput } from './player.ts'
+import { ENEMY_PROFILES, createEnemy, enemyRadius, respawnEnemy, stepEnemy, BOSS_PHASE2_HP, type Enemy } from './enemies.ts'
+import { BONFIRE, BOSS_ROOM_ENTRY, BOSS_SPAWN, FOG_GATE, HOLLOW_SPAWNS, INTERACT_RANGE, LOCK_RANGE, PLAYER_RADIUS, START_POS, getRoom, pushOut, resolveRoom, type RoomId } from './arena.ts'
+
+export type Phase = 'title' | 'playing' | 'resting' | 'dead' | 'victory'
+
+export type Input = PlayerInput & { interact: boolean; lockOn: boolean }
+
+export type GameEvent =
+  | { type: 'playerHit'; damage: number; blocked: boolean }
+  | { type: 'dodged' }
+  | { type: 'guardBreak' }
+  | { type: 'playerStaggered' }
+  | { type: 'enemyHit'; id: number; damage: number; riposte: boolean }
+  | { type: 'enemyStaggered'; id: number }
+  | { type: 'enemyDied'; id: number; runes: number }
+  | { type: 'flask' }
+  | { type: 'playerDied' }
+  | { type: 'respawn' }
+  | { type: 'rest' }
+  | { type: 'enterBossRoom' }
+  | { type: 'bossPhase2' }
+  | { type: 'victory' }
+  | { type: 'runesRecovered'; runes: number }
+
+export type Bloodstain = { room: RoomId; pos: Vec2; runes: number }
+
+export type GameState = {
+  seed: number
+  rng: number
+  time: number
+  phase: Phase
+  room: RoomId
+  player: Player
+  enemies: Enemy[]
+  runes: number
+  bloodstain: Bloodstain | null
+  bossDefeated: boolean
+  deathTimer: number
+  events: GameEvent[]
+}
+
+export const IDLE_INPUT: Input = {
+  move: { x: 0, z: 0 },
+  sprint: false,
+  roll: false,
+  jump: false,
+  light: false,
+  heavy: false,
+  guard: false,
+  flask: false,
+  interact: false,
+  lockOn: false,
+}
+
+export const DEATH_DELAY = 3.0
+export const RUNES_PICKUP_RANGE = 1.0
+
+const MAX_STEP = 0.05
+const BOSS_ID = 10
+const ZERO: Vec2 = { x: 0, z: 0 }
+
+export function createGame(seed: number | string): GameState {
+  const hashed = hashSeed(seed)
+  const hollows = HOLLOW_SPAWNS.map((pos, i) => createEnemy(i + 1, 'hollow', 'courtyard', pos, Math.PI))
+  const boss = createEnemy(BOSS_ID, 'boss', 'bossRoom', BOSS_SPAWN, Math.PI)
+  return {
+    seed: hashed,
+    rng: hashed,
+    time: 0,
+    phase: 'title',
+    room: 'courtyard',
+    player: createPlayer(START_POS, 0),
+    enemies: [...hollows, boss],
+    runes: 0,
+    bloodstain: null,
+    bossDefeated: false,
+    deathTimer: 0,
+    events: [],
+  }
+}
+
+const anyPress = (input: Input): boolean => input.light || input.heavy || input.roll || input.jump || input.flask || input.interact
+
+function alive(e: Enemy): boolean {
+  return e.state !== 'dead'
+}
+
+function respawnAll(enemies: Enemy[], bossDefeated: boolean): Enemy[] {
+  return enemies.map(e => (e.kind === 'boss' && bossDefeated ? e : respawnEnemy(e)))
+}
+
+function updateEnemy(s: GameState, next: Enemy): GameState {
+  return { ...s, enemies: s.enemies.map(e => (e.id === next.id ? next : e)) }
+}
+
+function nearestTarget(s: GameState): number | null {
+  let best: Enemy | null = null
+  for (const e of s.enemies) {
+    if (e.room !== s.room || !alive(e) || distance(s.player.pos, e.pos) > LOCK_RANGE) continue
+    if (!best || distance(s.player.pos, e.pos) < distance(s.player.pos, best.pos)) best = e
+  }
+  return best ? best.id : null
+}
+
+function lockOn(s: GameState, input: Input): GameState {
+  let target = s.player.lockOn
+  if (input.lockOn) target = target === null ? nearestTarget(s) : null
+  const current = target === null ? null : s.enemies.find(e => e.id === target)
+  if (!current || current.room !== s.room || !alive(current)) target = null
+  return { ...s, player: { ...s.player, lockOn: target } }
+}
+
+function killIfDead(s: GameState, id: number): GameState {
+  const e = s.enemies.find(x => x.id === id)
+  if (!e || e.vitals.hp > 0 || e.state === 'dead') return s
+  const runes = ENEMY_PROFILES[e.kind].runes
+  let next = updateEnemy(s, { ...e, state: 'dead', t: 0 })
+  next = { ...next, runes: next.runes + runes, events: [...next.events, { type: 'enemyDied', id, runes }] }
+  if (next.player.lockOn === id) next = { ...next, player: { ...next.player, lockOn: null } }
+  if (e.kind === 'boss') next = { ...next, bossDefeated: true, phase: 'victory', events: [...next.events, { type: 'victory' }] }
+  return next
+}
+
+function riposte(s: GameState, input: Input): { state: GameState; consumed: boolean } {
+  if (!input.light || s.player.action.kind !== 'idle') return { state: s, consumed: false }
+  const victim = s.enemies.find(e => e.room === s.room && e.state === 'stagger' && withinArc(s.player.pos, s.player.yaw, e.pos, RIPOSTE.range, RIPOSTE.arcDeg))
+  if (!victim) return { state: s, consumed: false }
+  const hit = takeDamage(victim.vitals, RIPOSTE.damage, 0)
+  const player: Player = { ...s.player, action: { kind: 'riposte', t: 0, attack: null, dir: ZERO, hitIds: [victim.id], healed: false }, guarding: false, sprinting: false, guardCounter: 0 }
+  let next = updateEnemy({ ...s, player }, { ...victim, vitals: hit.vitals, state: 'recover', t: 0 })
+  next = { ...next, events: [...next.events, { type: 'enemyHit', id: victim.id, damage: RIPOSTE.damage, riposte: true }] }
+  return { state: killIfDead(next, victim.id), consumed: true }
+}
+
+function playerHits(s: GameState): GameState {
+  const profile = activeAttack(s.player)
+  if (!profile) return s
+  let next = s
+  for (const e of s.enemies) {
+    const p = next.player
+    if (e.room !== s.room || !alive(e) || p.action.hitIds.includes(e.id)) continue
+    if (!withinArc(p.pos, p.yaw, e.pos, profile.range + enemyRadius(e), profile.arcDeg)) continue
+    const counter = p.guardCounter > 0 && p.action.attack === 'heavy'
+    const damage = profile.damage * (counter ? GUARD.counterDamage : 1)
+    const poise = profile.poiseDamage * (counter ? GUARD.counterPoise : 1)
+    const hit = takeDamage(e.vitals, damage, poise)
+    let victim: Enemy = { ...e, vitals: hit.vitals }
+    next = { ...next, player: { ...p, action: { ...p.action, hitIds: [...p.action.hitIds, e.id] } }, events: [...next.events, { type: 'enemyHit', id: e.id, damage, riposte: false }] }
+    if (hit.broke && victim.vitals.hp > 0) {
+      victim = { ...victim, state: 'stagger', t: 0, attack: null }
+      next = { ...next, events: [...next.events, { type: 'enemyStaggered', id: e.id }] }
+    }
+    next = killIfDead(updateEnemy(next, victim), e.id)
+    if (next.phase === 'victory') return next
+  }
+  return next
+}
+
+function bossPhase(s: GameState): GameState {
+  const boss = s.enemies.find(e => e.kind === 'boss')
+  if (!boss || !alive(boss) || boss.phase === 2 || boss.vitals.hp > BOSS_PHASE2_HP) return s
+  return { ...updateEnemy(s, { ...boss, phase: 2 }), events: [...s.events, { type: 'bossPhase2' }] }
+}
+
+function stagger(p: Player): Player {
+  return { ...p, action: { kind: 'stagger', t: 0, attack: null, dir: ZERO, hitIds: [], healed: false }, y: 0, guarding: false, sprinting: false, guardCounter: 0 }
+}
+
+function finishHit(s: GameState): GameState {
+  if (s.player.vitals.hp > 0) return s
+  const player: Player = { ...s.player, action: { kind: 'dead', t: 0, attack: null, dir: ZERO, hitIds: [], healed: false }, y: 0, guarding: false, sprinting: false }
+  return { ...s, player, phase: 'dead', deathTimer: DEATH_DELAY, events: [...s.events, { type: 'playerDied' }] }
+}
+
+function applyHit(s: GameState, origin: Vec2, damage: number, poiseDamage: number): GameState {
+  const p = s.player
+  if (p.action.kind === 'dead') return s
+  if (isInvulnerable(p)) return { ...s, events: [...s.events, { type: 'dodged' }] }
+  const inFront = withinArc(p.pos, p.yaw, origin, Infinity, GUARD.arcDeg)
+  if (p.guarding && inFront && p.vitals.stamina > 0) {
+    const blocked = damage * GUARD.damageFactor
+    const vitals = spendStamina(takeDamage(p.vitals, blocked, 0).vitals, damage * GUARD.staminaFactor)
+    let player: Player = { ...p, vitals, guardCounter: GUARD.counterWindow }
+    let events: GameEvent[] = [...s.events, { type: 'playerHit', damage: blocked, blocked: true }]
+    if (vitals.stamina === 0) {
+      player = stagger(player)
+      events = [...events, { type: 'guardBreak' }]
+    }
+    return finishHit({ ...s, player, events })
+  }
+  const hit = takeDamage(p.vitals, damage, poiseDamage)
+  let player: Player = { ...p, vitals: hit.vitals }
+  let events: GameEvent[] = [...s.events, { type: 'playerHit', damage, blocked: false }]
+  if (hit.broke && player.vitals.hp > 0) {
+    player = stagger(player)
+    events = [...events, { type: 'playerStaggered' }]
+  }
+  return finishHit({ ...s, player, events })
+}
+
+function stepEnemies(s: GameState, dt: number): GameState {
+  let next = s
+  const room = getRoom(s.room)
+  for (const e of s.enemies) {
+    if (e.room !== s.room) continue
+    const target = { pos: next.player.pos, alive: next.player.action.kind !== 'dead' }
+    const result = stepEnemy(e, target, dt, next.rng, room)
+    next = { ...updateEnemy(next, result.enemy), rng: result.rng }
+    if (result.hit) next = applyHit(next, result.hit.origin, result.hit.damage, result.hit.poiseDamage)
+  }
+  return next
+}
+
+function separate(s: GameState): GameState {
+  let pos = s.player.pos
+  for (const e of s.enemies) {
+    if (e.room !== s.room || !alive(e)) continue
+    pos = pushOut(pos, PLAYER_RADIUS, { x: e.pos.x, z: e.pos.z, r: enemyRadius(e) })
+  }
+  pos = resolveRoom(getRoom(s.room), pos, PLAYER_RADIUS)
+  return { ...s, player: { ...s.player, pos } }
+}
+
+function interact(s: GameState, input: Input): GameState {
+  if (!input.interact || s.player.action.kind !== 'idle' || s.room !== 'courtyard') return s
+  if (distance(s.player.pos, BONFIRE) <= INTERACT_RANGE) {
+    const player: Player = { ...s.player, vitals: createPlayerVitals(), flasks: FLASK_MAX, lockOn: null, guarding: false, sprinting: false }
+    return { ...s, phase: 'resting', player, enemies: respawnAll(s.enemies, s.bossDefeated), events: [...s.events, { type: 'rest' }] }
+  }
+  if (distance(s.player.pos, FOG_GATE) <= INTERACT_RANGE) {
+    const player: Player = { ...s.player, pos: BOSS_ROOM_ENTRY, yaw: 0, lockOn: null }
+    return { ...s, room: 'bossRoom', player, events: [...s.events, { type: 'enterBossRoom' }] }
+  }
+  return s
+}
+
+function pickupRunes(s: GameState): GameState {
+  const b = s.bloodstain
+  if (!b || b.room !== s.room || distance(s.player.pos, b.pos) > RUNES_PICKUP_RANGE) return s
+  return { ...s, runes: s.runes + b.runes, bloodstain: null, events: [...s.events, { type: 'runesRecovered', runes: b.runes }] }
+}
+
+function respawn(s: GameState): GameState {
+  const bloodstain = s.runes > 0 ? { room: s.room, pos: s.player.pos, runes: s.runes } : s.bloodstain
+  return {
+    ...s,
+    phase: 'playing',
+    room: 'courtyard',
+    player: createPlayer(START_POS, 0),
+    enemies: respawnAll(s.enemies, s.bossDefeated),
+    bloodstain,
+    runes: 0,
+    deathTimer: 0,
+    events: [...s.events, { type: 'respawn' }],
+  }
+}
+
+function playing(s: GameState, input: Input, dt: number): GameState {
+  let next = lockOn(s, input)
+  const r = riposte(next, input)
+  next = r.state
+  const target = next.player.lockOn === null ? null : next.enemies.find(e => e.id === next.player.lockOn)
+  const playerInput: PlayerInput = r.consumed ? { ...input, light: false } : input
+  const before = next.player
+  next = { ...next, player: stepPlayer(before, playerInput, dt, { targetPos: target ? target.pos : null, room: getRoom(next.room) }) }
+  if (next.player.flasks < before.flasks) next = { ...next, events: [...next.events, { type: 'flask' }] }
+  next = playerHits(next)
+  if (next.phase === 'victory') return next
+  next = bossPhase(next)
+  next = stepEnemies(next, dt)
+  next = separate(next)
+  if (next.phase === 'dead') return next
+  next = interact(next, input)
+  if (next.phase === 'resting') return next
+  return pickupRunes(next)
+}
+
+function stepOnce(s: GameState, input: Input, dt: number): GameState {
+  const state: GameState = { ...s, time: s.time + dt }
+  switch (state.phase) {
+    case 'title':
+      return anyPress(input) ? { ...state, phase: 'playing' } : state
+    case 'resting':
+      return input.interact || input.roll ? { ...state, phase: 'playing' } : state
+    case 'dead': {
+      const deathTimer = state.deathTimer - dt
+      return deathTimer <= 0 ? respawn(state) : { ...state, deathTimer }
+    }
+    case 'victory':
+      return { ...state, player: stepPlayer(state.player, input, dt, { targetPos: null, room: getRoom(state.room) }) }
+    case 'playing':
+      return playing(state, input, dt)
+  }
+}
+
+export function stepGame(state: GameState, input: Input, dt: number): GameState {
+  const steps = Math.max(1, Math.ceil(dt / MAX_STEP))
+  const sub = dt / steps
+  const held: Input = { ...input, roll: false, jump: false, light: false, heavy: false, flask: false, interact: false, lockOn: false }
+  let s: GameState = { ...state, events: [] }
+  for (let i = 0; i < steps; i++) s = stepOnce(s, i === 0 ? input : held, sub)
+  return s
+}

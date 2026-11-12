@@ -1,0 +1,474 @@
+TAP version 13
+# Subtest: rng: hashSeed é FNV-1a de 32 bits sobre o texto e trata número como texto
+ok 1 - rng: hashSeed é FNV-1a de 32 bits sobre o texto e trata número como texto
+  ---
+  duration_ms: 0.576458
+  type: 'test'
+  ...
+# Subtest: rng: randomStep é o mulberry32 e createRng encadeia o estado
+ok 2 - rng: randomStep é o mulberry32 e createRng encadeia o estado
+  ---
+  duration_ms: 0.625917
+  type: 'test'
+  ...
+# Subtest: vec: aritmética básica e normalize do vetor nulo
+ok 3 - vec: aritmética básica e normalize do vetor nulo
+  ---
+  duration_ms: 0.124166
+  type: 'test'
+  ...
+# Subtest: vec: yawOf e fromYaw são inversos, yawTo aponta de um ponto ao outro
+ok 4 - vec: yawOf e fromYaw são inversos, yawTo aponta de um ponto ao outro
+  ---
+  duration_ms: 0.085875
+  type: 'test'
+  ...
+# Subtest: vec: yawDelta fica em (−π, π] e turnTowards limita o giro
+ok 5 - vec: yawDelta fica em (−π, π] e turnTowards limita o giro
+  ---
+  duration_ms: 0.126959
+  type: 'test'
+  ...
+# Subtest: vec: withinArc aceita o próprio ponto e respeita a borda do ângulo
+ok 6 - vec: withinArc aceita o próprio ponto e respeita a borda do ângulo
+  ---
+  duration_ms: 0.076417
+  type: 'test'
+  ...
+# Subtest: stats: constantes e vitais iniciais
+ok 7 - stats: constantes e vitais iniciais
+  ---
+  duration_ms: 0.161291
+  type: 'test'
+  ...
+# Subtest: stats: estamina não fica negativa e canAct exige estamina
+ok 8 - stats: estamina não fica negativa e canAct exige estamina
+  ---
+  duration_ms: 0.051667
+  type: 'test'
+  ...
+# Subtest: stats: a regeneração espera o atraso, respeita o teto e o poise decai sempre
+ok 9 - stats: a regeneração espera o atraso, respeita o teto e o poise decai sempre
+  ---
+  duration_ms: 0.223792
+  type: 'test'
+  ...
+# Subtest: stats: takeDamage acumula poise até quebrar e a vida para em zero
+ok 10 - stats: takeDamage acumula poise até quebrar e a vida para em zero
+  ---
+  duration_ms: 0.309209
+  type: 'test'
+  ...
+# Subtest: attacks: a tabela de perfis e as constantes das ações
+ok 11 - attacks: a tabela de perfis e as constantes das ações
+  ---
+  duration_ms: 0.106667
+  type: 'test'
+  ...
+# Subtest: jogador: createPlayer parte parado, com três frascos e sem alvo
+ok 12 - jogador: createPlayer parte parado, com três frascos e sem alvo
+  ---
+  duration_ms: 0.078458
+  type: 'test'
+  ...
+# Subtest: jogador: anda a 4 m/s na direção de move (normalizada) e vira para ela
+ok 13 - jogador: anda a 4 m/s na direção de move (normalizada) e vira para ela
+  ---
+  duration_ms: 0.429792
+  type: 'test'
+  ...
+# Subtest: jogador: correr anda a 6.5 m/s, gasta 12 de estamina por segundo e não regenera
+ok 14 - jogador: correr anda a 6.5 m/s, gasta 12 de estamina por segundo e não regenera
+  ---
+  duration_ms: 0.075041
+  type: 'test'
+  ...
+# Subtest: jogador: guardar anda a 2 m/s e vence a corrida
+ok 15 - jogador: guardar anda a 2 m/s e vence a corrida
+  ---
+  duration_ms: 0.041542
+  type: 'test'
+  ...
+# Subtest: jogador: esquiva parado é um passo atrás e vira o jogador
+ok 16 - jogador: esquiva parado é um passo atrás e vira o jogador
+  ---
+  duration_ms: 0.09825
+  type: 'test'
+  ...
+# Subtest: jogador: os i-frames valem só em [0.08, 0.40) e a esquiva exige estamina
+ok 17 - jogador: os i-frames valem só em [0.08, 0.40) e a esquiva exige estamina
+  ---
+  duration_ms: 0.075916
+  type: 'test'
+  ...
+# Subtest: jogador: a esquiva cancela o ataque só depois da janela de acerto
+ok 18 - jogador: a esquiva cancela o ataque só depois da janela de acerto
+  ---
+  duration_ms: 0.09725
+  type: 'test'
+  ...
+# Subtest: jogador: o combo leve só encadeia a partir de 0.35 s do primeiro golpe
+ok 19 - jogador: o combo leve só encadeia a partir de 0.35 s do primeiro golpe
+  ---
+  duration_ms: 0.07225
+  type: 'test'
+  ...
+# Subtest: jogador: o pesado tem a janela de acerto em [0.45, 0.60) e avança 0.5 m até ela
+ok 20 - jogador: o pesado tem a janela de acerto em [0.45, 0.60) e avança 0.5 m até ela
+  ---
+  duration_ms: 0.090792
+  type: 'test'
+  ...
+# Subtest: jogador: o leve avança 0.6 m até o começo da janela, exatamente
+ok 21 - jogador: o leve avança 0.6 m até o começo da janela, exatamente
+  ---
+  duration_ms: 0.043292
+  type: 'test'
+  ...
+# Subtest: jogador: o salto faz uma parábola de 1.2 m, pousa em 0.7 s e deixa andar
+ok 22 - jogador: o salto faz uma parábola de 1.2 m, pousa em 0.7 s e deixa andar
+  ---
+  duration_ms: 0.068
+  type: 'test'
+  ...
+# Subtest: jogador: o ataque em salto só sai na janela do salto e desce até o chão
+ok 23 - jogador: o ataque em salto só sai na janela do salto e desce até o chão
+  ---
+  duration_ms: 0.082333
+  type: 'test'
+  ...
+# Subtest: jogador: o frasco cura 180 em 0.8 s, uma vez, e acaba em 1.2 s
+ok 24 - jogador: o frasco cura 180 em 0.8 s, uma vez, e acaba em 1.2 s
+  ---
+  duration_ms: 0.072959
+  type: 'test'
+  ...
+# Subtest: jogador: a estamina espera 0.6 s depois do gasto e volta a 25 por segundo
+ok 25 - jogador: a estamina espera 0.6 s depois do gasto e volta a 25 por segundo
+  ---
+  duration_ms: 0.119541
+  type: 'test'
+  ...
+# Subtest: jogador: sem estamina ainda anda, mas não ataca nem corre
+ok 26 - jogador: sem estamina ainda anda, mas não ataca nem corre
+  ---
+  duration_ms: 0.0305
+  type: 'test'
+  ...
+# Subtest: jogador: com lock-on olha para o alvo sempre, inclusive na esquiva
+ok 27 - jogador: com lock-on olha para o alvo sempre, inclusive na esquiva
+  ---
+  duration_ms: 0.067083
+  type: 'test'
+  ...
+# Subtest: jogador: a ação termina na duração, zera guardCounter e o contador só cai parado
+ok 28 - jogador: a ação termina na duração, zera guardCounter e o contador só cai parado
+  ---
+  duration_ms: 0.07
+  type: 'test'
+  ...
+# Subtest: jogador: atordoado e morto ignoram a entrada; o atordoamento acaba em 1 s
+ok 29 - jogador: atordoado e morto ignoram a entrada; o atordoamento acaba em 1 s
+  ---
+  duration_ms: 0.329333
+  type: 'test'
+  ...
+# Subtest: jogador: um passo grande vira subpassos de até 0.05 s com o toque só no primeiro
+ok 30 - jogador: um passo grande vira subpassos de até 0.05 s com o toque só no primeiro
+  ---
+  duration_ms: 0.108333
+  type: 'test'
+  ...
+# Subtest: jogador: a arena prende o jogador durante a esquiva
+ok 31 - jogador: a arena prende o jogador durante a esquiva
+  ---
+  duration_ms: 0.050583
+  type: 'test'
+  ...
+# Subtest: inimigos: perfis, ataques e constantes
+ok 32 - inimigos: perfis, ataques e constantes
+  ---
+  duration_ms: 0.160125
+  type: 'test'
+  ...
+# Subtest: inimigos: createEnemy, enemyRadius e respawnEnemy
+ok 33 - inimigos: createEnemy, enemyRadius e respawnEnemy
+  ---
+  duration_ms: 0.09625
+  type: 'test'
+  ...
+# Subtest: inimigos: o hollow persegue a 3 m/s, olha para o alvo e para encostado
+ok 34 - inimigos: o hollow persegue a 3 m/s, olha para o alvo e para encostado
+  ---
+  duration_ms: 0.301417
+  type: 'test'
+  ...
+# Subtest: inimigos: o hollow golpeia a até 2 m, acerta uma vez no arco e se recupera
+ok 35 - inimigos: o hollow golpeia a até 2 m, acerta uma vez no arco e se recupera
+  ---
+  duration_ms: 0.155125
+  type: 'test'
+  ...
+# Subtest: inimigos: o golpe erra quem está atrás e o windup vira devagar para o alvo
+ok 36 - inimigos: o golpe erra quem está atrás e o windup vira devagar para o alvo
+  ---
+  duration_ms: 0.105458
+  type: 'test'
+  ...
+# Subtest: inimigos: alvo morto não acorda ninguém e devolve o perseguidor ao idle
+ok 37 - inimigos: alvo morto não acorda ninguém e devolve o perseguidor ao idle
+  ---
+  duration_ms: 0.044875
+  type: 'test'
+  ...
+# Subtest: inimigos: o chefe acorda a 40 m, faz a entrada por 2 s e depois persegue a 3.5 m/s
+ok 38 - inimigos: o chefe acorda a 40 m, faz a entrada por 2 s e depois persegue a 3.5 m/s
+  ---
+  duration_ms: 0.057042
+  type: 'test'
+  ...
+# Subtest: inimigos: a investida do chefe anda a 12 m/s e acerta a até 1.4 m, uma vez
+ok 39 - inimigos: a investida do chefe anda a 12 m/s e acerta a até 1.4 m, uma vez
+  ---
+  duration_ms: 0.065583
+  type: 'test'
+  ...
+# Subtest: inimigos: de perto o chefe sorteia entre slash e slam e consome um randomStep
+ok 40 - inimigos: de perto o chefe sorteia entre slash e slam e consome um randomStep
+  ---
+  duration_ms: 0.078958
+  type: 'test'
+  ...
+# Subtest: inimigos: na fase 2 o chefe anda a 4.5 m/s, arma em 75% do tempo e sorteia de longe
+ok 41 - inimigos: na fase 2 o chefe anda a 4.5 m/s, arma em 75% do tempo e sorteia de longe
+  ---
+  duration_ms: 0.1295
+  type: 'test'
+  ...
+# Subtest: inimigos: o atordoamento dura 1.5 s (hollow) ou 2 s (chefe) e volta a perseguir
+ok 42 - inimigos: o atordoamento dura 1.5 s (hollow) ou 2 s (chefe) e volta a perseguir
+  ---
+  duration_ms: 0.105125
+  type: 'test'
+  ...
+# Subtest: inimigos: um passo grande vira subpassos e guarda o acerto de qualquer um deles
+ok 43 - inimigos: um passo grande vira subpassos e guarda o acerto de qualquer um deles
+  ---
+  duration_ms: 0.049292
+  type: 'test'
+  ...
+# Subtest: arena: pontos fixos e salas
+ok 44 - arena: pontos fixos e salas
+  ---
+  duration_ms: 0.06275
+  type: 'test'
+  ...
+# Subtest: arena: pushOut empurra para fora do círculo e deixa quem está fora
+ok 45 - arena: pushOut empurra para fora do círculo e deixa quem está fora
+  ---
+  duration_ms: 0.037209
+  type: 'test'
+  ...
+# Subtest: arena: resolveRoom prende nos quatro muros, no círculo e nos pilares
+ok 46 - arena: resolveRoom prende nos quatro muros, no círculo e nos pilares
+  ---
+  duration_ms: 0.039709
+  type: 'test'
+  ...
+# Subtest: jogo: createGame monta o pátio, os três hollows e o chefe
+ok 47 - jogo: createGame monta o pátio, os três hollows e o chefe
+  ---
+  duration_ms: 0.1025
+  type: 'test'
+  ...
+# Subtest: jogo: na tela inicial só um pressionamento começa; andar, guardar e lock-on não
+ok 48 - jogo: na tela inicial só um pressionamento começa; andar, guardar e lock-on não
+  ---
+  duration_ms: 0.131167
+  type: 'test'
+  ...
+# Subtest: jogo: eventos são só do passo atual
+ok 49 - jogo: eventos são só do passo atual
+  ---
+  duration_ms: 0.612916
+  type: 'test'
+  ...
+# Subtest: jogo: lock-on pega o inimigo vivo mais perto a até 12 m e alterna
+ok 50 - jogo: lock-on pega o inimigo vivo mais perto a até 12 m e alterna
+  ---
+  duration_ms: 0.106542
+  type: 'test'
+  ...
+# Subtest: jogo: lock-on cai quando o alvo morre e o inimigo some do lock
+ok 51 - jogo: lock-on cai quando o alvo morre e o inimigo some do lock
+  ---
+  duration_ms: 0.154875
+  type: 'test'
+  ...
+# Subtest: jogo: o ataque do jogador acerta uma vez por golpe, no arco e com o raio do inimigo
+ok 52 - jogo: o ataque do jogador acerta uma vez por golpe, no arco e com o raio do inimigo
+  ---
+  duration_ms: 0.365542
+  type: 'test'
+  ...
+# Subtest: jogo: o contra-ataque de guarda multiplica o pesado e atordoa o hollow
+ok 53 - jogo: o contra-ataque de guarda multiplica o pesado e atordoa o hollow
+  ---
+  duration_ms: 0.264834
+  type: 'test'
+  ...
+# Subtest: jogo: o riposte acerta o inimigo atordoado na frente e consome o leve
+ok 54 - jogo: o riposte acerta o inimigo atordoado na frente e consome o leve
+  ---
+  duration_ms: 0.220625
+  type: 'test'
+  ...
+# Subtest: jogo: tomar um golpe de frente guardando bloqueia e arma o contra-ataque
+ok 55 - jogo: tomar um golpe de frente guardando bloqueia e arma o contra-ataque
+  ---
+  duration_ms: 0.095958
+  type: 'test'
+  ...
+# Subtest: jogo: bloquear sem estamina quebra a guarda e atordoa
+not ok 56 - jogo: bloquear sem estamina quebra a guarda e atordoa
+  ---
+  duration_ms: 0.380708
+  type: 'test'
+  location: '/private/var/folders/07/d6zcjgg913j4y41bqgrd_6bh0000gn/T/tmp.pafCKpVE3y/acc/engine.acceptance.test.ts:803:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    true !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: true
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///private/var/folders/07/d6zcjgg913j4y41bqgrd_6bh0000gn/T/tmp.pafCKpVE3y/acc/engine.acceptance.test.ts:809:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: jogo: esquivar no tempo evita o golpe; dois golpes cheios atordoam o jogador
+ok 57 - jogo: esquivar no tempo evita o golpe; dois golpes cheios atordoam o jogador
+  ---
+  duration_ms: 0.098333
+  type: 'test'
+  ...
+# Subtest: jogo: a morte espera 3 s, renasce na fogueira e deixa o rastro com as runas
+ok 58 - jogo: a morte espera 3 s, renasce na fogueira e deixa o rastro com as runas
+  ---
+  duration_ms: 0.126917
+  type: 'test'
+  ...
+# Subtest: jogo: o rastro é recolhido a até 1 m e some; morrer sem runas mantém o rastro antigo
+ok 59 - jogo: o rastro é recolhido a até 1 m e some; morrer sem runas mantém o rastro antigo
+  ---
+  duration_ms: 0.111833
+  type: 'test'
+  ...
+# Subtest: jogo: descansar na fogueira restaura tudo, renasce os hollows e levanta com E ou esquiva
+ok 60 - jogo: descansar na fogueira restaura tudo, renasce os hollows e levanta com E ou esquiva
+  ---
+  duration_ms: 0.074292
+  type: 'test'
+  ...
+# Subtest: jogo: a porta de névoa leva à sala do chefe, que faz a entrada e vem
+ok 61 - jogo: a porta de névoa leva à sala do chefe, que faz a entrada e vem
+  ---
+  duration_ms: 0.31
+  type: 'test'
+  ...
+# Subtest: jogo: o chefe entra na fase 2 com metade da vida
+ok 62 - jogo: o chefe entra na fase 2 com metade da vida
+  ---
+  duration_ms: 0.065958
+  type: 'test'
+  ...
+# Subtest: jogo: matar o chefe é a vitória; depois do descanso ele continua morto
+ok 63 - jogo: matar o chefe é a vitória; depois do descanso ele continua morto
+  ---
+  duration_ms: 0.093792
+  type: 'test'
+  ...
+# Subtest: jogo: o jogador não atravessa inimigos vivos
+ok 64 - jogo: o jogador não atravessa inimigos vivos
+  ---
+  duration_ms: 0.11425
+  type: 'test'
+  ...
+# Subtest: jogo: um passo grande vale o mesmo que os subpassos de 0.05 s
+ok 65 - jogo: um passo grande vale o mesmo que os subpassos de 0.05 s
+  ---
+  duration_ms: 0.094167
+  type: 'test'
+  ...
+# Subtest: jogo: a mesma seed e a mesma entrada dão a mesma luta; seeds diferentes divergem
+ok 66 - jogo: a mesma seed e a mesma entrada dão a mesma luta; seeds diferentes divergem
+  ---
+  duration_ms: 1.705834
+  type: 'test'
+  ...
+# Subtest: rng: determinístico e no intervalo
+ok 67 - rng: determinístico e no intervalo
+  ---
+  duration_ms: 1.00225
+  type: 'test'
+  ...
+# Subtest: vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo
+ok 68 - vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo
+  ---
+  duration_ms: 0.16325
+  type: 'test'
+  ...
+# Subtest: stats: gastar estamina atrasa a regeneração; poise acumulado quebra
+ok 69 - stats: gastar estamina atrasa a regeneração; poise acumulado quebra
+  ---
+  duration_ms: 0.099209
+  type: 'test'
+  ...
+# Subtest: jogador: a esquiva tem i-frames e se desloca 3.15 m
+ok 70 - jogador: a esquiva tem i-frames e se desloca 3.15 m
+  ---
+  duration_ms: 0.54375
+  type: 'test'
+  ...
+# Subtest: jogador: o ataque leve tem janela de acerto
+ok 71 - jogador: o ataque leve tem janela de acerto
+  ---
+  duration_ms: 0.080875
+  type: 'test'
+  ...
+# Subtest: inimigo: o hollow só persegue dentro do alcance de agressão
+ok 72 - inimigo: o hollow só persegue dentro do alcance de agressão
+  ---
+  duration_ms: 0.16075
+  type: 'test'
+  ...
+# Subtest: arena: os muros e os pilares prendem o jogador
+ok 73 - arena: os muros e os pilares prendem o jogador
+  ---
+  duration_ms: 0.110167
+  type: 'test'
+  ...
+# Subtest: jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado
+ok 74 - jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado
+  ---
+  duration_ms: 2.65425
+  type: 'test'
+  ...
+1..74
+# tests 74
+# suites 0
+# pass 73
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 93.577209

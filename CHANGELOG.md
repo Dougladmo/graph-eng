@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.4.0 — 2026-11-10
+
+Power Mode: o Fable 5.2 planeja, revisa e aconselha, os passos rodam em paralelo, e o gate continua decidindo o DONE. Desenho em [docs/power-mode.md](docs/power-mode.md).
+
+### Added
+
+- **`--power` (host Claude).** O Fable 5.2 (`claude-fable-5-2`) escreve o plano, revisa o plano e fica de advisor; o Sonnet pega os passos `high` e `medium` em raias paralelas e o Haiku os `low` (até `--haiku-max`); o Opus entra só nas sessões de conserto do gate. É a única configuração do Power Mode; todas as chamadas usam o `--effort` da run (`medium` por padrão, o que a Anthropic recomenda para o Fable 5.2). A divisão saiu dos benchmarks de 11/11: o Opus nas raias custou de 4 a 7 vezes o padrão sem nota melhor, e o plano do Fable com o Sonnet nas raias fechou sem conserto nas quatro runs (o do Opus precisou de conserto em três).
+- **Segunda tentativa da raia `BLOCKED`.** Uma raia que devolve `BLOCKED` roda de novo uma vez, no mesmo modelo e com o próprio motivo no prompt, antes de a onda fechar; só se bloquear de novo é que entra no conserto, listada uma vez. A sessão repetida traz `retry: true` no `advisor-run.json`. No benchmark souls-like, um tropeço de uma raia só mandava a run inteira para o conserto no Opus, que refazia o trabalho das outras.
+- **Conserto preso ao contrato.** A sessão de conserto (gate vermelho ou raia `BLOCKED`) recebe o texto da tarefa como contrato e a ordem de mudar só o que a falha pede, mantendo o que já passa. No souls-like, um conserto reescreveu o motor inteiro e perdeu casos que já passavam.
+- **Ondas e raias.** No Power Mode o planejador devolve, para cada passo, os arquivos que ele toca e a onda em que roda. Dentro de uma onda os passos viram raias por modelo, que rodam ao mesmo tempo em arquivos disjuntos; as ondas rodam em série e o gate roda uma vez no fim. O runner valida a pegada: dois passos da mesma onda com o mesmo arquivo, ou um passo sem arquivo, abrem uma onda nova sem mudar a ordem dos passos.
+- **Orçamento do advisor no Power Mode:** 6 chamadas por run, no máximo 2 por sessão de raia.
+- **`routing` e sessões no `advisor-run.json`:** no Power Mode, `routing` lista as ondas com as raias de cada uma, e cada sessão traz `wave`, `steps`, `model` e `ms`. O plano salvo pelo `plan` guarda `power`, e `implemente` sem tarefa reaplica.
+- **`USAGE_LIMIT`:** o limite de uso da conta (semanal, diário ou de sessão) voltava como `CLI_FAILED` genérico; agora a chamada falha com `USAGE_LIMIT` e o texto do CLI, e a run bloqueia com `advisor_call_failed` dizendo isso.
+- **`test/fixtures/benchmark-minecraft/bench.sh`:** roda o benchmark Minecraft de ponta a ponta (cria o repositório, roda `implemente` com as flags pedidas, dá a nota com os 55 testes ocultos e o build, e resume custo, tempo e sessões).
+- **`test/fixtures/benchmark-soulslike/`:** segundo benchmark, um MVP de souls-like ("ASHEN GATE") em TypeScript estrito, React, three.js e motion: motor puro com contrato exato no `task.md` (estamina, esquiva com i-frames, combo, pesado, ataque em salto, guarda com contra-ataque, poise, riposte, frasco, lock-on, fogueira, rastro de runas, porta de névoa e chefe com duas fases), 66 testes ocultos, motor de referência e `bench.sh` com `tsc` estrito no corretor.
+- **`GRAPHENG_POWER_SPLIT=<medium>/<high>`** (experimento do benchmark): troca o modelo dos passos medium e high do Power Mode (`sonnet` ou `opus`), para medir as divisões de executor entre rodadas. A run grava `powerSplit`.
+
+### Changed
+
+- Uma raia que falha derruba a run só depois que as outras raias da onda terminam, para nenhuma sessão ficar órfã.
+- `implemente` sem tarefa com qualquer flag de roteamento (`--power`, `--haiku-max`, `--executor`) é recusado com a mensagem apontando o `plan`.
+- `--fable-min` (desta mesma versão, nunca publicada) saiu: é recusada como opção removida. O planejador do Power Mode não tem mais piso `high` de esforço.
+- `--power max` (desta mesma versão, nunca publicada: o Fable só no plano com o `max`) saiu, porque o Fable no plano virou o próprio `--power`. `--power max` e `--power=max` são recusados como opção removida; um plano salvo com `powerMax` é lido como `--power`. O `bench.sh` dos dois benchmarks mostra só `power` ou `padrão`.
+- **O executor do Claude não muda de diretório.** O papel de escrita recebe `--disallowedTools Bash(cd:*)` e o prompt diz para criar e editar arquivos com `Write` e `Edit` pelo caminho do repositório. Motivo no item de `Fixed` abaixo.
+
+### Fixed
+
+- **Executor do Claude com `Write` negado.** O `--allowedTools` do papel de escrita só tinha `Edit(./**)`, e essa regra não cobre `Write`: no benchmark de 11/11 (rodada 1) a primeira sessão do executor padrão e duas raias do Power Mode devolveram `BLOCKED` sem escrever nada, e a run só fechou na sessão de conserto. Agora `Write(./**)` também é liberado, preso ao cwd.
+- **Gate verde com sessão `BLOCKED` fechava a run sem conserto.** Na rodada 1 de `--power max`, a raia da UI devolveu `BLOCKED`, o gate passou (os testes cobrem só o motor e o build compila o esqueleto) e a run fechou `blocked` sem usar a sessão de conserto que ainda tinha; a página mostrava "em construção". Agora o conserto também abre nesse caso, recebendo o que cada sessão deixou por fazer, e `advisor_executor_blocked` só sai quando as sessões acabam.
+- **Executor do Claude com `Write` negado depois de um `cd`.** As regras `Edit(./**)` e `Write(./**)` valem em relação ao cwd do shell, não ao do spawn: no benchmark souls-like (`--power`, 11/11) uma raia rodou `cd src/engine` dentro do Bash, toda escrita seguinte foi negada e a raia devolveu `BLOCKED` sem o arquivo; outra raia foi junto, e a run só fechou no conserto. Agora as regras vão pelo caminho real absoluto do cwd (`Edit(//<cwd>/**)`, `Write(//<cwd>/**)`) e o `cd` é negado ao executor.
+- **Executor do Claude com `Write` negado quando o cwd é um symlink.** O CLI resolve `Edit(./**)`/`Write(./**)` pelo caminho real do cwd, mas herdava o `PWD` com o atalho (`/tmp` → `/private/tmp` no macOS): o modelo escrevia em `/tmp/...`, a regra esperava `/private/tmp/...` e todo `Write` era negado. Na rodada 2 do benchmark de 11/11 a primeira sessão do executor padrão devolveu `BLOCKED` em 85 s só por isso. Agora o CLI é lançado com o cwd e o `PWD` já no caminho real.
+
+### Pendente
+
+- Validação do `--power` publicado (12/11, uma run do souls-like com ambientação no código `f8e1a7f`, [docs/benchmarks/runs/soulslike-20261112-publicada/](docs/benchmarks/runs/soulslike-20261112-publicada/)): done 66/66, `tsc` e build, US$ 3,69 em 746 s, 4 raias `DONE` sem conserto; três comandos de shell negados (um `cd`, dois heredocs) sem perder a escrita.
+- Benchmark Minecraft do Power Mode, feito em 11/11 (5 rodadas de cada variante, [docs/benchmarks/README.md](docs/benchmarks/README.md)): as 15 runs fecharam 55/55 e build; o padrão custou US$ 1,34 a 1,83 em 473 a 637 s e entregou nas 5; o Power Mode como desenhado (forte nos `high`) custou 4 a 7 vezes mais, levou 2 a 3 vezes mais e o `--power max` não entregou jogo jogável em 2 de 2; com o médio em todos os executores (`GRAPHENG_POWER_SPLIT=sonnet/sonnet`), o `--power max` entregou nas 2 rodadas por US$ 2,75 a 3,15 em 618 a 740 s. Recomendação em [docs/power-mode.md](docs/power-mode.md): o padrão continua o default; a divisão padrão do Power Mode (forte nos `high`) é candidata a mudar. Repetido no souls-like (uma run de cada, 11/11): padrão 66/66 por US$ 1,57 em 501 s; `--power` 62/66 por US$ 7,12 em 1241 s; `--power max` 61/66 por US$ 3,56 em 702 s; 4 desses ocultos cobravam valores que o `task.md` não fixava (corrigido depois das runs), e sobrou uma falha real de regra em cada run do Power Mode. Segunda rodada com ambientação (árvores, pedras, grama, cavaleiro com armadura e capa, chefe minotauro) e contrato fixado: padrão 65/66 por US$ 2,04 em 641 s; `--power` 66/66 por US$ 3,37 em 856 s; `--power max` 66/66 por US$ 4,12 em 913 s, sem raia perdida nem conserto ([qualidade.md](docs/benchmarks/runs/soulslike-20261111-ambientacao/qualidade.md)).
+
 ## 1.3.0 — 2026-10-24
 
 O advisor passa a ser o graph-eng. O motor de grafo saiu: no benchmark Minecraft ele levou 5 tentativas, gastou US$ 7,58 e nunca entregou o jogo, enquanto o advisor fechou 55/55 por US$ 1,59.

@@ -1,0 +1,13 @@
+// Contrato em task.md. Motor puro: sem three, react, motion nem DOM.
+
+export function hashSeed(seed: number | string): number {
+  throw new Error(`não implementado: hashSeed(${String(seed)})`)
+}
+
+export function randomStep(state: number): { value: number; next: number } {
+  throw new Error(`não implementado: randomStep(${state})`)
+}
+
+export function createRng(seed: number | string): () => number {
+  throw new Error(`não implementado: createRng(${String(seed)})`)
+}

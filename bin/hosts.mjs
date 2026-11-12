@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { createHash, randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { lstat, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -17,6 +18,13 @@ const MODEL_BY_ROLE = {
 const ADVISOR_BY_ROLE = { claude: { advisedExecutor: 'opus' } }
 // Modelos aceitos no executor contínuo (--executor e roteamento por complexidade). O Opus fica de fora: ele já é o advisor.
 const ADVISED_EXECUTOR_MODELS = new Set(['sonnet', 'haiku'])
+// Power Mode (1.4, docs/power-mode.md): o Fable 5.2 planeja, revisa o plano e é o advisor; o Opus é o executor padrão
+// (conserto do gate); as raias aceitam haiku, sonnet e opus. Os benchmarks de 11/11 fixaram o Fable no plano: com o
+// Sonnet nas raias, o plano do Fable fechou sem conserto nas 4 runs (Minecraft e souls-like) e o do Opus precisou em 3.
+export const FABLE = 'claude-fable-5-2'
+const POWER_MODEL_BY_ROLE = { planner: FABLE, planReviewer: FABLE, advisedExecutor: 'opus' }
+const POWER_ADVISOR_BY_ROLE = { advisedExecutor: FABLE }
+const POWER_EXECUTOR_MODELS = new Set(['sonnet', 'haiku', 'opus'])
 const WRITE_SHELL_ROLES = new Set(['advisedExecutor'])
 // Comando de check liberado ao executor: texto exato, sem metacaractere de shell nem curinga de permissão.
 const ALLOW_COMMAND = /^[A-Za-z0-9_./@=+:,-]+( [A-Za-z0-9_./@=+:,-]+)*$/
@@ -167,6 +175,8 @@ function validateSchema(value, schema, at = '$') {
 
 function errorFromCli(host, code, message, stderr = '', extra = {}) {
   const detail = `${message}\n${stderr}`
+  // Limite de uso da conta (semanal, diário ou de sessão): a run precisa dizer isso, não um CLI_FAILED genérico.
+  if (/(weekly|daily|monthly|usage|session) limit|rate limit|limit reached|resets? (at|in) /i.test(detail)) return new HostError('USAGE_LIMIT', `${host}: limite de uso atingido (${message.trim().slice(0, 200)})`, { stderr, ...extra })
   if (/auth|login|credential|unauthorized|api key|subscription.{0,30}(disabled|access)|organization.{0,30}disabled/i.test(detail)) return new HostError('AUTH_FAILED', `${host}: autenticação falhou`, { stderr, ...extra })
   if (/model.{0,30}(not found|unavailable|unknown)|does not exist/i.test(detail)) return new HostError('MODEL_UNAVAILABLE', `${host}: modelo indisponível`, { stderr, ...extra })
   return new HostError(code, `${host}: ${message}`, { stderr, ...extra })
@@ -205,16 +215,33 @@ function classifyExitFailure(host, stdout, stderr, exitCode, signal) {
 }
 
 function samePath(left, right) { return path.resolve(left) === path.resolve(right) }
+function realPath(dir) {
+  try { return realpathSync(dir) } catch { return path.resolve(dir) }
+}
 
 /**
  * Adapta Claude Code ou Codex CLI aos papéis do fluxo advisor: planner, planReviewer e advisedExecutor.
  * planner e planReviewer são sempre read-only. writeScope é rejeitado até haver enforcement real. A disponibilidade
  * de modelo permanece desconhecida até o CLI executar e reportar o identificador.
  */
-export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, advisedExecutorModel = null }) {
+export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, advisedExecutorModel = null, power = false, powerMax }) {
   if (!MODEL_BY_ROLE[host]) throw new TypeError(`Host desconhecido: ${host}`)
-  if (advisedExecutorModel !== null && (host !== 'claude' || !ADVISED_EXECUTOR_MODELS.has(advisedExecutorModel))) throw new TypeError('advisedExecutorModel aceita somente sonnet ou haiku, no host claude')
+  if (power && host !== 'claude') throw new TypeError('power vale só no host claude')
+  if (powerMax !== undefined) throw new TypeError('powerMax foi removido: --power já põe o Fable no plano')
+  const models = power ? POWER_MODEL_BY_ROLE : MODEL_BY_ROLE[host]
+  const executorModels = power ? POWER_EXECUTOR_MODELS : ADVISED_EXECUTOR_MODELS
+  const advisors = power ? POWER_ADVISOR_BY_ROLE : ADVISOR_BY_ROLE[host] ?? {}
+  if (advisedExecutorModel !== null && (host !== 'claude' || !executorModels.has(advisedExecutorModel))) throw new TypeError(`advisedExecutorModel aceita somente ${[...executorModels].join(', ')}, no host claude`)
   if (!cwd || !runDir) throw new TypeError('cwd e runDir são obrigatórios')
+  // O CLI roda no caminho real (benchmark 11/11, rodada 2: com cwd por symlink, /tmp → /private/tmp, a regra
+  // Edit(./**) casava com /private/tmp/..., o PWD herdado mostrava /tmp/..., o modelo escrevia em /tmp/... e todo
+  // Write era negado). O PWD vai igual, para o modelo ver o mesmo caminho da regra.
+  const realCwd = realPath(cwd)
+  const childOptions = () => ({ cwd: realCwd, env: { ...childEnv(), PWD: realCwd } })
+  // A regra de escrita vai pelo caminho real absoluto (//caminho/**), não por ./**: no benchmark souls-like a raia fez
+  // cd src/engine e ./** passou a valer no cwd do shell, negando todo Write (item 36 das melhorias). No Windows a regra
+  // absoluta não existe nesse formato; fica a relativa. cd é negado ao executor pelo mesmo motivo.
+  const writeScope = process.platform === 'win32' ? './**' : `//${realCwd.replace(/^\/+/, '')}/**`
   let eventSeq = 0
 
   function emit(event, request, handle, extra = {}) {
@@ -224,9 +251,9 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
   function prepare(request, id) {
     if (!request || typeof request !== 'object' || Array.isArray(request)) throw new HostError('INVALID_REQUEST', 'Solicitação inválida')
     const role = request.role
-    const model = role === 'advisedExecutor' ? request.executorModel ?? advisedExecutorModel ?? MODEL_BY_ROLE[host][role] : MODEL_BY_ROLE[host]?.[role]
-    // Roteamento por complexidade: cada trecho do plano escolhe o modelo do executor contínuo (sonnet ou haiku).
-    if (request.executorModel !== undefined && (role !== 'advisedExecutor' || host !== 'claude' || !ADVISED_EXECUTOR_MODELS.has(request.executorModel))) throw new HostError('INVALID_EXECUTOR_MODEL', 'executorModel vale só no advisedExecutor do claude, com sonnet ou haiku')
+    const model = role === 'advisedExecutor' ? request.executorModel ?? advisedExecutorModel ?? models[role] : models?.[role]
+    // Roteamento por complexidade: cada trecho ou raia do plano escolhe o modelo do executor contínuo.
+    if (request.executorModel !== undefined && (role !== 'advisedExecutor' || host !== 'claude' || !executorModels.has(request.executorModel))) throw new HostError('INVALID_EXECUTOR_MODEL', `executorModel vale só no advisedExecutor do claude, entre ${[...executorModels].join(', ')}`)
     if (!model) throw new HostError('UNKNOWN_ROLE', `Papel desconhecido: ${request.role}`)
     if (request.model && request.model !== model) throw new HostError('MODEL_MISMATCH', `Modelo do papel ${request.role} deve ser ${model}`)
     if (typeof request.prompt !== 'string' || !request.prompt.trim()) throw new HostError('INVALID_PROMPT', 'prompt deve ser texto não vazio')
@@ -244,14 +271,15 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const strict = wireSchema(request.schema)
     // Isolado do ambiente do usuário (MCPs, skills, settings globais): sem isso cada turno carregava ~75k tokens.
     // dontAsk nega toda ferramenta sem regra de permissão: a escrita do executor precisa de --allowedTools,
-    // e Edit(./**) (vale também para Write) a prende ao cwd do spawn.
+    // e Edit(<cwd>/**) e Write(<cwd>/**) a prendem ao cwd do spawn. Edit não cobre Write: no benchmark de 11/11 o executor
+    // teve todo Write negado, devolveu BLOCKED sem escrever e perdeu a sessão.
     const readTools = 'Read,Glob,Grep'
     // Laço de feedback do executor de escrita: Bash só nos comandos aprovados (o dontAsk nega qualquer outro comando).
     const shell = WRITE_SHELL_ROLES.has(role) && !readonly ? (request.allowCommands || []) : []
-    const advisor = ADVISOR_BY_ROLE[host]?.[role] || null
+    const advisor = advisors[role] || null
     if (host === 'claude') return {
       role, model, readonly, schema: request.schema, wireSchema: strict,
-      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : ['Read,Glob,Grep,Edit(./**)', ...shell.map(c => `Bash(${c})`)].join(','), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
+      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : [`Read,Glob,Grep,Edit(${writeScope}),Write(${writeScope})`, ...shell.map(c => `Bash(${c})`)].join(','), ...(readonly ? [] : ['--disallowedTools', 'Bash(cd:*)']), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
     }
     const schemaFile = path.join(runDir, `.host-${id}.schema.json`)
     const outputFile = path.join(runDir, `.host-${id}.output.json`)
@@ -261,9 +289,9 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
   function capabilities() {
     const readOnlyEnforced = host === 'claude' || process.platform !== 'win32'
     const readOnlyEnforcement = host === 'claude'
-      ? 'Claude Code usa permission-mode dontAsk e limita as ferramentas a Read, Glob e Grep; não oferece ferramenta de escrita nem shell. Papéis de escrita só gravam dentro do cwd (Edit(./**)).'
+      ? 'Claude Code usa permission-mode dontAsk e limita as ferramentas a Read, Glob e Grep; não oferece ferramenta de escrita nem shell. Papéis de escrita só gravam dentro do cwd (Edit e Write presos ao caminho real) e não mudam de diretório.'
       : readOnlyEnforced ? 'Codex CLI usa -s read-only para restringir gravações no sandbox do sistema de arquivos.' : null
-    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(MODEL_BY_ROLE[host]), structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex' }
+    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(models), power, structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex' }
   }
 
   async function spawnRequest(request) {
@@ -284,11 +312,11 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const injectedTransport = transport ?? null
     try {
       child = injectedTransport
-        ? injectedTransport.spawn(built.command, built.args, { cwd, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv() })
+        ? injectedTransport.spawn(built.command, built.args, { ...childOptions(), shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
         : process.platform === 'win32'
-          ? nodeSpawn(built.command, built.args, { cwd, shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'], env: childEnv() })
+          ? nodeSpawn(built.command, built.args, { ...childOptions(), shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'] })
           // O supervisor herda este env filtrado e o repassa ao CLI do agente.
-          : nodeSpawn(process.execPath, [SUPERVISOR_PATH, String(effectiveTimeout)], { cwd, shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'], env: childEnv() })
+          : nodeSpawn(process.execPath, [SUPERVISOR_PATH, String(effectiveTimeout)], { ...childOptions(), shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] })
     } catch (error) {
       await Promise.all([built.schemaFile, built.outputFile].filter(Boolean).map(file => rm(file, { force: true }).catch(() => {})))
       const code = error.code === 'ENOENT' ? 'CLI_MISSING' : 'SPAWN_FAILED'
@@ -423,8 +451,8 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
           try { child.send({ type: 'terminate', reason: handle.pendingTermination ?? 'cancelled' }) } catch {}
         } else {
           try {
-            const spec = commandTransform({ command: built.command, args: built.args, cwd, request })
-            child.send({ type: 'start', command: spec.command, args: spec.args, cwd: spec.cwd ?? cwd, timeoutMs: Math.max(1, effectiveTimeout - (Date.now() - handle.startedAt)) })
+            const spec = commandTransform({ command: built.command, args: built.args, cwd: realCwd, request })
+            child.send({ type: 'start', command: spec.command, args: spec.args, cwd: spec.cwd ?? realCwd, timeoutMs: Math.max(1, effectiveTimeout - (Date.now() - handle.startedAt)) })
           } catch (error) {
             handle.supervisorError ??= error
             try { child.send({ type: 'terminate', reason: 'transport-error' }) } catch {}

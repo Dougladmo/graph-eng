@@ -1,0 +1,445 @@
+{
+  "flow": "advisor",
+  "power": true,
+  "powerMax": false,
+  "powerSplit": {
+    "medium": "sonnet",
+    "high": "sonnet"
+  },
+  "haikuMax": "low",
+  "status": "done",
+  "plan": {
+    "goal": "Implement ASHEN GATE, a browser souls-like MVP. It needs a pure, deterministic TypeScript engine in src/engine/ that matches the contract exactly and passes `npm test`. On top of that goes a React 18 + three.js + motion front end: procedural visuals, camera-relative controls, a HUD, and title, rest and pause screens. `npm run build` must be type-clean and `npm run dev` must give a playable game.",
+    "steps": [
+      {
+        "step": "Engine foundations: implement every function stub in rng.ts (FNV-1a hashSeed, mulberry32 randomStep, createRng), vec.ts (all pure vector, yaw and arc helpers; yawDelta in (-π, π]; withinArc counts distance 0 as inside), stats.ts (constants table, createVitals, createPlayerVitals, canAct, spendStamina, regen, takeDamage, heal; all pure), attacks.ts (ATTACKS, ROLL, JUMP, FLASK, RIPOSTE, GUARD, STAGGER, LIGHT_COMBO_START exactly as tabled) and arena.ts (getRoom, pushOut with a +X push when pos is at the centre, resolveRoom: clamp to the rect or circle inset by radius, then push out of each pillar in order). Keep stub type names and shapes. No three, react or DOM imports, and `.ts` extensions on imports.",
+        "complexity": "medium",
+        "files": [
+          "src/engine/rng.ts",
+          "src/engine/vec.ts",
+          "src/engine/stats.ts",
+          "src/engine/attacks.ts",
+          "src/engine/arena.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "Procedural environment (three.js, src/render only): canvas textures (stone floor with dirt and grass patches, mossy wall, rock, bark, fog noise). buildCourtyard(scene) uses the arena.ts constants: floor, mossy walls on the rect edges, 4 pillars, InstancedMesh grass tufts and rocks, 6–10 autumn trees that cast shadows, a falling-leaves particle system, the bonfire (sword in embers, flickering point light, rising sparks) and the fog gate (animated semi-transparent plane between stone jambs at FOG_GATE). buildBossRoom(scene): a darker stone circle, rock wall ring, roots and dry branches, scattered bones and skulls, wall torches. Also a dusk sky, scene.fog, a moon glow, ambient light and a low orange directional light. Export an `update(dt, time)` hook for the animated parts. Budget: about 200 live meshes or fewer.",
+        "complexity": "medium",
+        "files": [
+          "src/render/textures.ts",
+          "src/render/environment.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "Character models (three.js primitives, no assets). createKnight(): capsule body, dark metal breastplate and pauldrons, visored helm, belt, boots, a swaying short cape, a longsword on a right-shoulder pivot and a round shield. Its pose(player: Player, dt) animates the sword by action.t: horizontal arc for light attacks, overhead for heavy and jumpAttack, glow on riposte. It also leans during a roll, raises y during a jump and lifts the shield on guard. createHollow(): thin hunched humanoid with rags, a rusty blade and emissive eyes. createMinotaur(): 2.6 m, furry torso, bull head with muzzle and big horns, thick legs, two-handed axe, amber emissive eyes that turn red in phase 2, plus a nostril steam particle system. Both enemy models get pose(enemy: Enemy, dt): windup leans back, attack brings the weapon down, charge lowers the head, stagger staggers, and dead topples then fades out over 2 s. Use only engine types from player.ts and enemies.ts (imports of types only). Characters cast shadows.",
+        "complexity": "high",
+        "files": [
+          "src/render/knight.ts",
+          "src/render/hollow.ts",
+          "src/render/minotaur.ts",
+          "src/render/materials.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "Input and camera modules. input.ts: a keyboard and mouse tracker. Held inputs: WASD, Shift sprint, Q guard. Each press yields one edge-triggered press: Space roll, F jump, LMB or J light, RMB or K heavy, R flask, E interact, Tab lockOn (preventDefault), Esc pause. It also handles pointer lock on canvas click, mouse delta accumulation and suppression of the context menu. `consume()` builds an engine Input from a camera yaw, with move made camera-relative so W follows the camera forward on the XZ plane. camera.ts: a third-person rig with distance 5, height 2.2 and look-at 1.2 m above the feet. With pointer lock, the mouse orbits (free yaw, pitch clamped to −20°..60°). Without it, the camera follows smoothly behind player.yaw. With lock-on, it sits behind the player facing the target. It exposes the yaw used for movement.",
+        "complexity": "medium",
+        "files": [
+          "src/ui/input.ts",
+          "src/render/camera.ts"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "React UI components with motion, driven by props only. Title screen: ASHEN GATE, an editable seed field prefilled with a random seed, and 'Pressione qualquer tecla'. Pause menu: Continuar and Voltar ao título. Rest screen: 'Fogueira' and 'Levantar [E]'. HUD: HP (red) and stamina (green) bars with a shrinking yellow trail, a flask counter top-left, runes bottom-right, a boss bar with the name 'Minotauro da Névoa' that flashes on phase 2, a lock-on reticle and target poise bar at given screen coordinates, fading centre messages (VOCÊ MORREU in red, INIMIGO ABATIDO in gold, GRANDE INIMIGO ABATIDO, Descansar [E], Atravessar a névoa [E]), and edge flashes (red on damage, blue on block, white on riposte). CSS goes in a .css file imported from TS.",
+        "complexity": "medium",
+        "files": [
+          "src/ui/Hud.tsx",
+          "src/ui/StatBar.tsx",
+          "src/ui/BossBar.tsx",
+          "src/ui/Messages.tsx",
+          "src/ui/Flashes.tsx",
+          "src/ui/TitleScreen.tsx",
+          "src/ui/PauseMenu.tsx",
+          "src/ui/RestScreen.tsx",
+          "src/ui/ui.css"
+        ],
+        "wave": 1
+      },
+      {
+        "step": "Implement player.ts exactly per contract: IDLE_ACTION, createPlayer, isInvulnerable, activeAttack, and pure stepPlayer. stepPlayer covers: 0.05 s substeps, with presses applied only in the first substep; t advance and expiry to IDLE (landing at y=0, guardCounter reset); guardCounter decaying only while idle; dead and stagger ignoring input; action start priority flask > roll (including the attack cancel after hitEnd) > jump > heavy > light (combo into light2 after 0.35, jumpAttack inside the window); stamina costs, with canAct required for everything except the flask; arming the guard counter when a heavy starts; guarding and sprinting computed after the action start; facing (always toward the lock target if there is one). Movement must be exact per action (the roll covers exactly 3.15 m and the lunge exactly its length, regardless of dt; the jump arc and the jumpAttack descent), then resolveRoom with radius 0.4. Flask heals once when t crosses healAt. regen allows only while idle and not sprinting. Add extra node tests only in your scratch, not in test/.",
+        "complexity": "high",
+        "files": [
+          "src/engine/player.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "Implement enemies.ts exactly per contract: ENEMY_PROFILES, ENEMY_ATTACKS (Record<EnemyKind, Partial<Record<...>>>, with startRange Infinity for charge and shockwave), the constants, createEnemy (stamina 0), respawnEnemy, enemyRadius, and pure stepEnemy returning {enemy, rng, hit}. stepEnemy covers: 0.05 s substeps; the state machine idle→intro (boss on first aggro)/chase, chase approach that stops at radius+0.4, attack selection with randomStep exactly as specified per phase (consuming rng only when a roll is required), windup tracking at TRACK_RATE (×0.75 duration in phase 2), attack with charge movement and a single hit test per attack (arc, radius or charge shape), recover (RIPOSTE_RECOVER when attack is null), stagger and intro durations, target-dead fallbacks to idle, and resolveRoom after movement. No poise decay.",
+        "complexity": "high",
+        "files": [
+          "src/engine/enemies.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "Scene orchestrator (three.js): a GameRenderer class that owns the WebGLRenderer (shadows on, sized to its container), scene, environment, camera rig, one knight, models keyed by enemy id, and the bloodstain glow mesh shown only in its room. Each render(state: GameState, input camera deltas, dt) syncs positions, yaws and poses from the state, shows only the current room's enemies (or keeps both rooms visible with culling), updates environment animations and camera, and returns screen-space projections for the lock target (reticle and poise bar) plus the camera yaw. It also needs dispose(). Read-only use of engine types; no game logic.",
+        "complexity": "high",
+        "files": [
+          "src/render/GameRenderer.ts"
+        ],
+        "wave": 2
+      },
+      {
+        "step": "Implement game.ts exactly per contract. createGame: hashed seed, 3 hollows with ids 1–3 at HOLLOW_SPAWNS with yaw π, and the boss with id 10. Pure stepGame: time += dt, 0.05 s substeps with events accumulated and presses applied only in the first substep, then per-phase behaviour (title, resting, dead with respawn and bloodstain, victory, and playing). The playing order is: lock-on toggle and validation, riposte (consumes light), stepPlayer with the lock target, player hits (guard counter ×1.5 damage and ×2 poise on heavy, stagger, death, runes, victory), boss phase 2, stepEnemy per current-room enemy in id order with the rng chained, enemy hits on the player (dodged, block with stamina cost and guardBreak, full hit with stagger and death), push-out from enemies then resolveRoom, bonfire and fog gate interactions while idle, and bloodstain pickup. Same seed and the same inputs give deepEqual states. Never mutate the input state.",
+        "complexity": "high",
+        "files": [
+          "src/engine/game.ts"
+        ],
+        "wave": 3
+      },
+      {
+        "step": "Wire the app end to end. App.tsx: holds the seed and GameState, mounts the GameRenderer on a canvas container, and runs a requestAnimationFrame loop with a fixed 1/60 s accumulator calling stepGame. Inputs come from input.ts using the camera yaw; pause on Esc freezes the sim and releases pointer lock. Starting from the title calls createGame(seed) and the key press leaves title. Turn state.events into HUD messages and flashes, and add proximity prompts for the bonfire and fog gate. The boss bar shows from enterBossRoom until victory. Render the Hud, Rest, Pause and Title overlays; Voltar ao título resets. main.tsx renders <App/>. Verify that `npm test` and `npm run build` pass and that there are no console errors in `npm run dev`.",
+        "complexity": "high",
+        "files": [
+          "src/App.tsx",
+          "src/main.tsx"
+        ],
+        "wave": 4
+      }
+    ],
+    "doneWhen": [
+      "`npm test` passes, including hidden contract and edge-case tests for every engine function",
+      "`npm run build` succeeds with strict tsc (no any, as unknown as, or ts-ignore) and produces a bundle",
+      "src/engine imports nothing from three, react, motion or the DOM, runs under Node, and its pure functions never mutate their arguments",
+      "Same seed plus the same input and dt sequence yields deepEqual GameState",
+      "`npm run dev` shows the title with an editable seed. Any key starts the game, and these all work: the courtyard with hollows, combos, heavy, jump attack, roll i-frames, guard with counter, riposte on staggered enemies, flask, bonfire rest and respawn, death with a recoverable bloodstain, the fog gate and the two-phase minotaur boss through to victory",
+      "The HUD shows HP and stamina bars with a trailing loss bar, flasks, runes, the boss bar, the lock reticle with poise bar, fading messages and flashes, plus pause, rest and title menus",
+      "All visuals are generated in code (no external assets), and the game runs at about 60 fps with no console errors"
+    ],
+    "risks": [
+      "Subtle contract mismatches in stepPlayer, stepEnemy or stepGame ordering (substep press handling, guardCounter timing, when rng is consumed, roll and lunge exactness) will fail hidden tests. Implementers must follow the spec text literally",
+      "Strict tsconfig (verbatimModuleSyntax, erasableSyntaxOnly, noUnused*) will break the build on type-only imports without `import type`, on enums or param properties, and on unused variables",
+      "Render and UI steps in waves 1–2 code against the stub signatures. Any change to exported engine types breaks them, so the stub types must stay frozen",
+      "Performance: too many meshes, lights or shadow casters could cost 60 fps. Use InstancedMesh, few point lights, and shadows only on characters and trees",
+      "Fixed-step loop and input edges: presses must be consumed once per sim step, not lost or repeated across several 1/60 steps in one frame, and pointer lock or Esc interplay can cause console errors"
+    ]
+  },
+  "review": {
+    "verdict": "REVISE",
+    "notes": [
+      "enemies.ts step: the wording \"a single hit test per attack\" contradicts the contract. The hit must be TESTED on every (sub)step of the `attack` state, after the charge movement of that step, and EMITTED at most once via `hitDone`. Testing only on the first active frame breaks `charge` (the target comes into range mid-dash) and targets that walk into an arc/radius during `active`. Also keep `hitDone`/`attack` resets exact (`windup` sets `t = 0`, `hitDone = false`).",
+      "Engine verification is deferred to wave 4. Each engine step (waves 1–3) must run `npm test` (or the relevant subset) and `npm run typecheck` before finishing, and add scratch tests for the spec's edge cases. `tsconfig.json` also has `noUncheckedIndexedAccess` (not listed in the risks): array/Record indexing returns `T | undefined` and must be narrowed without `!`-abuse or casts, including the `Partial<Record<...>>` lookups in `ENEMY_ATTACKS`. `types` is only `[\"node\"]` (no `vite/client`), so use only side-effect CSS imports (`import './ui.css'`), no CSS modules or asset imports.",
+      "Shared orientation convention for the wave-1 parallel render/camera/input steps is missing. State it explicitly: all models are built facing +Z so `group.rotation.y = yaw` matches the engine's `fromYaw(yaw) = (sin, cos)`; engine `(x, z)` maps to three `(x, y, z)` unchanged; the camera sits at `player − fromYaw(camYaw) * 5`; and `consume(camYaw)` produces `move = forward * fromYaw(camYaw) + right * fromYaw(camYaw − π/2)` (verify that W goes away from the camera and D goes screen-right). Without this, the knight, hollow, minotaur, camera and input modules will disagree on sign/handedness and only surface it in wave 4.",
+      "Death/respawn visuals: the engine freezes `t` in `dead` (\"dead não muda\"), so `pose(enemy, dt)` cannot drive the 2 s topple+fade from `enemy.t`. The model (or GameRenderer) must keep its own death timer, started on the transition into `dead`, and fully reset pose/opacity/visibility when the enemy returns to non-dead (bonfire rest, player respawn, or a new game via \"Voltar ao título\"). GameRenderer must also be reset or rebuilt on a new `createGame` so stale models, bloodstain and the phase-2 red eyes/steam do not leak across runs.",
+      "Input/pause edge cases to specify in input.ts/App.tsx: (a) on the title screen, keystrokes inside the editable seed field must not start the game (ignore events whose target is the input; start on click outside it or on keys when it is not focused); (b) under pointer lock the browser consumes Esc and may not deliver `keydown`, so also pause on `pointerlockchange` when the lock is lost during play, and wrap `requestPointerLock()` to swallow its rejection (no console errors); (c) pending presses must be kept when a frame runs zero sim steps, delivered only to the first `stepGame` call of a frame with several steps, and cleared while paused or on blur (also clear held keys on blur)."
+    ]
+  },
+  "sessions": [
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 1,
+      "steps": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "status": "DONE",
+      "summary": "Steps 1–5 are done. `npm run build` passes (strict `tsc` clean, bundle generated). `npm test` shows 4 passing and 4 failing; the failures are the player, enemy and game tests, which hit the stubs that waves 2–3 implement. I only ran the visible tests and wrote no scratch edge-case tests. I could not run the render or UI code in a browser.\n\n- **Engine (step 1):** `rng.ts`, `vec.ts`, `stats.ts` and `arena.ts` follow the contract. `attacks.ts` already matched the table and is unchanged.\n- **Environment (step 2):** `textures.ts` and `environment.ts` export `createEnvironment(scene)`, which returns `{ update(dt, time), focus(x, z), dispose(), courtyard, bossRoom }`. Trees, grass and rocks are instanced to stay under the mesh budget.\n- **Models (step 3):** `knight.ts`, `hollow.ts`, `minotaur.ts` and `materials.ts` provide `createKnight/createHollow/createMinotaur()`, each returning `{ group, pose(subject, dt), dispose() }`. All models face +Z, so the renderer sets `group.position` x/z and `group.rotation.y = yaw`. The knight's `pose` sets `group.position.y` from `player.y`. Enemy models keep their own 2 s death clock and reset when the enemy revives. They hide through an inner node, so `group.visible` is free for the renderer. The minotaur's red eyes and steam follow `enemy.phase`.\n- **Input and camera (step 4):** `InputTracker(canvas, { onPause, onAnyInput })` has `consume(camYaw, includePresses)`. Pass `true` for the first `stepGame` of a frame and `false` for later substeps. It also has `setActive`, `requestPointer` and `takeMouseDelta`. The seed input is ignored for keystrokes. Esc under pointer lock pauses via `pointerlockchange`, so `onPause` must be idempotent. Presses and held keys clear on blur. `CameraRig.update({...})` exposes `.yaw`, the movement yaw; the camera sits at `player − fromYaw(yaw) × 5`.\n- **UI (step 5):** `Hud`, `StatBar`, `BossBar`, `Messages`, `Flashes`, `TitleScreen`, `PauseMenu`, `RestScreen` and `ui.css`, all driven by props. `Hud.tsx` imports the CSS.",
+      "sessionId": "34aef908-deea-41e1-8f44-65c28aa9ccdb",
+      "advisorCalls": 0,
+      "ms": 441204
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 2,
+      "steps": [
+        6,
+        7,
+        8
+      ],
+      "status": "DONE",
+      "summary": "Steps 6–8 are done: `src/engine/player.ts`, `src/engine/enemies.ts` and `src/render/GameRenderer.ts` are written. `npm run build` passes (strict `tsc` plus the vite bundle). `npm test` gives 7 of 8 passing. The one failure is the `game.ts` test, which throws \"não implementado: createGame\" because that is a wave 3 step. I did not write scratch tests for the edge cases or drive the renderer in a browser, so the player/enemy edge cases are untested beyond the 7 visible tests.\n\nWhere the spec was ambiguous, I chose the following:\n\n- **Boss intro:** an idle enemy doesn't accumulate `t`, so the boss goes `idle`→`intro` whenever it has `t === 0` and the target is in aggro range. It also enters `intro` again after returning to `idle` (for example when the player dies), not only the first time.\n- **Player facing:** the player only turns toward `move` while `idle`. Jump and other actions don't turn it, except that a roll sets `yaw` from `dir`.\n- **Hit test:** `attack` tests the hit on every substep after the charge movement, and emits it once via `hitDone`.\n- **Substeps:** both `stepPlayer` and `stepEnemy` split `dt` into equal substeps of at most 0.05. The player's presses (roll, jump, light, heavy, flask) apply only to the first substep.\n- **Renderer:**\n  - `GameRenderer` shows enemies from both rooms.\n  - `render(state, {mouseDx, mouseDy, pointerLocked}, dt)` returns `{cameraYaw, target: {id, x, y, visible, poise} | null}`, with `x`/`y` in pixels relative to the container.\n  - It rebuilds the enemy models and snaps the camera when the seed changes or `state.time` goes backwards, and also has an explicit `reset()`.\n  - The death fade stays in the models, which keep their own death clocks.",
+      "sessionId": "d5583c07-a398-43b4-bb8d-7ab14d676b4a",
+      "advisorCalls": 0,
+      "ms": 131345
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 3,
+      "steps": [
+        9
+      ],
+      "status": "DONE",
+      "summary": "Implemented src/engine/game.ts: createGame and a pure stepGame covering the title, resting, dead, victory and playing phases. `npm test` passes (8/8) and `npm run build` is clean. I added no scratch tests for the edge cases, so those are covered only by the visible suite.\n\nWhere the contract was ambiguous I chose:\n- **`enemyStaggered`:** an enemy killed by the same hit does not also get this event.\n- **Player death/stagger:** death takes priority over a guard break or poise stagger on the same hit.\n- **`flask` event:** emitted when the flask action starts (flask count drops), not when the heal lands.\n- **Riposte target and range:** picks the nearest staggered enemy and uses `RIPOSTE.range` without adding the enemy radius, as the contract wording reads.\n- **Riposte kills:** a riposte that kills the enemy goes through the normal death handling (runes, `enemyDied`, victory for the boss).\n- **Substeps:** `stepGame` splits `dt` into equal substeps of at most 0.05 s, as `stepPlayer` does. Presses count only in the first substep, and `time` rises by the full `dt`.",
+      "sessionId": "c350185b-d8a9-4293-9bcc-f987b227b72c",
+      "advisorCalls": 0,
+      "ms": 108899
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "wave": 4,
+      "steps": [
+        10
+      ],
+      "status": "DONE",
+      "summary": "I wrote `src/App.tsx` and rewired `src/main.tsx` to render it. `npm run build` passes with strict tsc and produces a bundle (only the chunk-size warning), and `npm test` passes 8/8. I haven't run `npm run dev` or played the game in a browser, so the console-errors check and the actual play-through are untested.\n\n- **Loop:** a fixed 1/60 s accumulator calls `stepGame`, with at most 5 steps per frame. Edge presses go only to the first step of a frame. Pending presses are kept when a frame runs no steps, and cleared on pause or blur.\n- **Phases:** `uiPhase` runs title, playing and paused. The title screen shows a backdrop game; the seed field is editable and keystrokes inside it don't start the game. Clicking outside it or pressing a key starts via `createGame` plus one interact step, and \"Voltar ao título\" resets. Esc, and pointer lock being lost during play, both pause. `requestPointer` swallows rejections.\n- **HUD:** events become messages and flashes — \"VOCÊ MORREU\", \"INIMIGO ABATIDO\" for hollows, \"GRANDE INIMIGO ABATIDO\", and the red/blue/white flashes. The bonfire and fog gate prompts appear when idle within range. The boss bar shows from entering the boss room until `bossDefeated`.\n- **Render:** `GameRenderer` already resets itself when the seed or time changes, so a new game doesn't leak old models.",
+      "sessionId": "ca25d865-858c-412c-85b1-695ede75e484",
+      "advisorCalls": 0,
+      "ms": 74762
+    }
+  ],
+  "gate": [
+    {
+      "round": 1,
+      "pass": true,
+      "results": [
+        {
+          "id": "test",
+          "command": "npm test",
+          "exitCode": 0,
+          "ms": 168,
+          "outputTail": "\n> ashen-gate@0.0.0 test\n> node --test test/*.test.ts\n\nTAP version 13\n# Subtest: rng: determinístico e no intervalo\nok 1 - rng: determinístico e no intervalo\n  ---\n  duration_ms: 0.698875\n  type: 'test'\n  ...\n# Subtest: vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo\nok 2 - vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo\n  ---\n  duration_ms: 0.152084\n  type: 'test'\n  ...\n# Subtest: stats: gastar estamina atrasa a regeneração; poise acumulado quebra\nok 3 - stats: gastar estamina atrasa a regeneração; poise acumulado quebra\n  ---\n  duration_ms: 0.088125\n  type: 'test'\n  ...\n# Subtest: jogador: a esquiva tem i-frames e se desloca 3.15 m\nok 4 - jogador: a esquiva tem i-frames e se desloca 3.15 m\n  ---\n  duration_ms: 0.494417\n  type: 'test'\n  ...\n# Subtest: jogador: o ataque leve tem janela de acerto\nok 5 - jogador: o ataque leve tem janela de acerto\n  ---\n  duration_ms: 0.077041\n  type: 'test'\n  ...\n# Subtest: inimigo: o hollow só persegue dentro do alcance de agressão\nok 6 - inimigo: o hollow só persegue dentro do alcance de agressão\n  ---\n  duration_ms: 0.16725\n  type: 'test'\n  ...\n# Subtest: arena: os muros e os pilares prendem o jogador\nok 7 - arena: os muros e os pilares prendem o jogador\n  ---\n  duration_ms: 0.097709\n  type: 'test'\n  ...\n# Subtest: jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado\nok 8 - jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado\n  ---\n  duration_ms: 2.23725\n  type: 'test'\n  ...\n1..8\n# tests 8\n# suites 0\n# pass 8\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 68.48225\n"
+        },
+        {
+          "id": "build",
+          "command": "npm run build",
+          "exitCode": 0,
+          "ms": 1129,
+          "outputTail": "\n> ashen-gate@0.0.0 build\n> tsc --noEmit && vite build\n\nvite v8.3.8 building client environment for production...\ntransforming...\n✓ 470 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.39 kB │ gzip:   0.27 kB\ndist/assets/index-DRhxerTk.css    3.74 kB │ gzip:   1.32 kB\ndist/assets/index-Bo47q-eu.js   905.42 kB │ gzip: 253.03 kB\n\n[plugin builtin:vite-reporter] \n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n✓ built in 146ms\n"
+        }
+      ]
+    }
+  ],
+  "advisorCalls": 0,
+  "calls": [
+    {
+      "role": "planner",
+      "ms": 61818,
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 8,
+          "outputTokens": 6095,
+          "cacheReadInputTokens": 71368,
+          "cacheCreationInputTokens": 21702,
+          "webSearchRequests": 0,
+          "costUSD": 0.3098216,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 971,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 21702,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "099174ab-45f7-423c-bff0-c27481e18b8d",
+      "permissionDenials": 0
+    },
+    {
+      "role": "planReviewer",
+      "ms": 36894,
+      "usage": {
+        "claude-fable-5-2": {
+          "inputTokens": 4,
+          "outputTokens": 3087,
+          "cacheReadInputTokens": 30708,
+          "cacheCreationInputTokens": 26566,
+          "webSearchRequests": 0,
+          "costUSD": 0.5547096,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 1705,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 26566,
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "bea6e6aa-d884-44ed-8284-be7480127b60",
+      "permissionDenials": 0
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 441141,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 48,
+          "outputTokens": 70336,
+          "cacheReadInputTokens": 1723236,
+          "cacheCreationInputTokens": 105709,
+          "webSearchRequests": 0,
+          "costUSD": 1.2986156000000002,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 13335,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 105709,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "34aef908-deea-41e1-8f44-65c28aa9ccdb",
+      "permissionDenials": 2
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 131297,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 22,
+          "outputTokens": 20566,
+          "cacheReadInputTokens": 472388,
+          "cacheCreationInputTokens": 55867,
+          "webSearchRequests": 0,
+          "costUSD": 0.4764108,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 4784,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 55867,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "d5583c07-a398-43b4-bb8d-7ab14d676b4a",
+      "permissionDenials": 1
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 108865,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 14,
+          "outputTokens": 17276,
+          "cacheReadInputTokens": 265213,
+          "cacheCreationInputTokens": 47229,
+          "webSearchRequests": 0,
+          "costUSD": 0.38822529999999994,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 5102,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 47229,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "c350185b-d8a9-4293-9bcc-f987b227b72c",
+      "permissionDenials": 1
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 74720,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 16,
+          "outputTokens": 11508,
+          "cacheReadInputTokens": 310814,
+          "cacheCreationInputTokens": 48446,
+          "webSearchRequests": 0,
+          "costUSD": 0.3399774,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 2488,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 48446,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "ca25d865-858c-412c-85b1-695ede75e484",
+      "permissionDenials": 1
+    }
+  ],
+  "routing": [
+    {
+      "wave": 1,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            6,
+            7,
+            8
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            9
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 4,
+      "lanes": [
+        {
+          "model": "sonnet",
+          "steps": [
+            10
+          ]
+        }
+      ]
+    }
+  ],
+  "engineMs": 856222,
+  "cost": {
+    "costUSD": 3.3677603,
+    "input": 0.00024187515352690677,
+    "cacheWrite": 1.5083574032026057,
+    "cacheRead": 0.5478989037779354,
+    "output": 1.3112621178659323,
+    "tokens": {
+      "input": 112,
+      "cacheWrite": 305519,
+      "cacheRead": 2873727,
+      "output": 128868
+    },
+    "byModel": {
+      "claude-opus-5-5": 0.3098216,
+      "claude-fable-5-2": 0.5547096,
+      "claude-sonnet-5-5": 2.5032291
+    },
+    "byRole": {
+      "planner": 0.3098216,
+      "planReviewer": 0.5547096,
+      "advisedExecutor": 2.5032291
+    }
+  }
+}

@@ -1,12 +1,12 @@
 ---
 name: grapheng
-description: Planeje ou implemente uma tarefa com o graph-eng no fluxo advisor: um modelo médio planeja, o forte revisa e aconselha, o barato faz os passos simples, e a run só fecha com npm test e build passando.
-argument-hint: "plan <tarefa> | implemente [<tarefa>], com --effort low|medium|max, --haiku-max low|medium|off ou --executor sonnet|haiku opcionais"
+description: Planeje ou implemente uma tarefa com o graph-eng no fluxo advisor: um modelo médio planeja, o forte revisa e aconselha, o barato faz os passos simples, e a run só fecha com npm test e build passando. Com --power, o Fable 5.2 planeja, revisa e aconselha, e as ondas do plano rodam em paralelo.
+argument-hint: "plan <tarefa> | implemente [<tarefa>], com --effort low|medium|max, --haiku-max low|medium|off, --executor sonnet|haiku, --power opcionais"
 ---
 
 # grapheng
 
-Esta skill é a entrada para o runner do graph-eng no host atual. Desde a 1.3.0 o graph-eng tem um fluxo só, o **advisor**. Papéis e modelos são definidos pelo adapter confiável do host; não escolha modelo, papel nem limite.
+Esta skill é a entrada para o runner do graph-eng no host atual. Desde a 1.3.0 o graph-eng tem um fluxo só, o **advisor**; desde a 1.4.0 ele tem o **Power Mode** (`--power`). Papéis e modelos são definidos pelo adapter confiável do host; não escolha modelo, papel nem limite.
 
 Invocações nativas: Claude Code `/graph-eng:grapheng <comando>`, e também os commands `/graph-eng:plan` e `/graph-eng:implemente`. No Codex, use o nome da skill que o cliente mostra (ex.: `graph-eng:grapheng`); o Codex não tem slash global do plugin, então não há atalho `/plan` ali.
 
@@ -24,15 +24,18 @@ Invocações nativas: Claude Code `/graph-eng:grapheng <comando>`, e também os 
 
 **Roteamento por complexidade.** Os passos até o nível de `--haiku-max` vão para o modelo barato; o resto vai para o médio. Passos seguidos no mesmo modelo dividem uma sessão. O padrão no Claude é `low`: só os passos simples e repetitivos vão para o barato.
 
+**Power Mode (`--power`).** O modelo mais forte da família (Fable 5.2) escreve o plano, revisa o plano e fica de advisor; o médio pega os passos `high` e `medium`, o barato os `low`, e o forte só entra nos consertos do gate. É uma configuração só; todas as chamadas usam o `--effort` da run (`medium` por padrão). O plano sai em ondas: cada passo nomeia seus arquivos e sua onda, e dentro de uma onda os passos viram raias por modelo que rodam ao mesmo tempo em arquivos diferentes. As ondas rodam em série e o gate roda uma vez no fim. Raia que devolve `BLOCKED` tenta de novo uma vez, no mesmo modelo, antes do conserto. O advisor aceita até 6 chamadas por run, 2 por raia. Desenho completo em `docs/power-mode.md`.
+
 ## Flags
 
 Sempre na forma separada (`--effort max`); `--effort=max` é recusado.
 
-- `--effort low|medium|max` (padrão `medium`): esforço de raciocínio de todas as chamadas da run.
+- `--effort low|medium|max` (padrão `medium`): esforço de raciocínio de todas as chamadas da run, inclusive no Power Mode.
 - `--haiku-max low|medium|off` (padrão `low` no Claude): complexidade máxima que vai para o modelo barato. `off` deixa todos os passos no médio.
-- `--executor sonnet|haiku`: um modelo para todos os passos. Desliga o roteamento e não combina com `--haiku-max`.
+- `--executor sonnet|haiku`: um modelo para todos os passos. Desliga o roteamento e não combina com `--haiku-max` nem com `--power`.
+- `--power`: liga o Power Mode. Não tem valor: `--power=on` é recusado.
 
-`--haiku-max` e `--executor` só existem no host Claude; no Codex o fluxo não roteia. Em `implemente` sem tarefa, o roteamento vem do plano salvo, então essas duas flags vão no `plan`.
+`--haiku-max`, `--executor` e `--power` só existem no host Claude; no Codex o fluxo não roteia. Em `implemente` sem tarefa, o roteamento vem do plano salvo, então essas flags vão no `plan`.
 
 ## Status e bloqueios
 
@@ -58,4 +61,4 @@ const invocation = { host: 'claude', argv: ['plan', 'revisar o parser $(isso é 
 // node <raiz-portatil-do-plugin>/bin/grapheng.mjs --invocation <caminho-do-json>
 ```
 
-Cada run deixa a evidência em `.graph-runs/<runId>/advisor-run.json` dentro do repositório: plano, revisão, sessões, gate, chamadas e custo.
+Cada run deixa a evidência em `.graph-runs/<runId>/advisor-run.json` dentro do repositório: plano, revisão, sessões, gate, chamadas e custo. No Power Mode, `routing` lista as ondas com as raias de cada uma, e cada sessão traz `wave`, `steps`, `model` e `ms`.

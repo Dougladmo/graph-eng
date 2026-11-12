@@ -1,6 +1,6 @@
 {
   "name": "graph-eng",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Plan or implement a task with an advisor: a mid model plans, the strong model reviews and advises, a cheap model does the simple steps, and the run only ends DONE when npm test and build pass.",
   "interface": {
     "displayName": "Graph Eng",

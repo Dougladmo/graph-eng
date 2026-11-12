@@ -10,7 +10,7 @@ const json = async name => JSON.parse(await readFile(path.join(root, name), 'utf
 test('manifests preservam identidade e versão semver sincronizadas', async () => {
   const [portable, codex, claude] = await Promise.all([json('plugin.json'), json('.codex-plugin/plugin.json'), json('.claude-plugin/plugin.json')])
   assert.deepEqual([portable.name, codex.name, claude.name], ['graph-eng', 'graph-eng', 'graph-eng'])
-  assert.equal(portable.version, '1.3.0')
+  assert.equal(portable.version, '1.4.0')
   assert.equal(codex.version, portable.version)
   assert.equal(claude.version, portable.version)
   assert.match(portable.version, /^\d+\.\d+\.\d+$/)
@@ -28,7 +28,9 @@ test('skill portátil tem nome correspondente à pasta e descreve só o fluxo ad
   assert.match(skill, /use o nome da skill que o cliente mostra \(ex\.: `graph-eng:grapheng`\)/)
   assert.doesNotMatch(skill, /Codex `\$grapheng/)
   for (const command of ['plan', 'implemente']) assert.match(skill, new RegExp(`\`${command}`))
-  for (const flag of ['--effort low|medium|max', '--haiku-max low|medium|off', 'advisor-plan.json', 'advisor_plan_missing', 'advisor_gate_missing_test']) assert.ok(skill.includes(flag), flag)
+  for (const flag of ['--effort low|medium|max', '--haiku-max low|medium|off', '--power', 'advisor-plan.json', 'advisor_plan_missing', 'advisor_gate_missing_test']) assert.ok(skill.includes(flag), flag)
+  // --power max e --fable-min saíram antes de a 1.4 ser publicada.
+  assert.doesNotMatch(skill, /--fable-min|--power max|\[max\]/)
   // O motor de grafo saiu na 1.3.0: nada de clarify, tasks, init, painel ou --adaptive.
   assert.doesNotMatch(skill, /`(clarify|tasks|init)`|--adaptive|--flow|painel|DESIGN\.md|needs_clarification/)
   await assert.rejects(access(path.join(root, 'skills/grapheng/DESIGN.md')))
@@ -43,7 +45,8 @@ test('commands de Claude são exatamente implemente e plan, com envelope, argv[0
     const name = path.basename(file, '.md')
     const text = await readFile(path.join(root, 'commands', file), 'utf8')
     assert.match(text, /^---\s*\ndescription: .+\n/, file)
-    assert.match(text, /^argument-hint: .*\[--effort low\|medium\|max\] \[--haiku-max low\|medium\|off\] \[--executor sonnet\|haiku\]/m, file)
+    assert.match(text, /^argument-hint: .*\[--effort low\|medium\|max\] \[--haiku-max low\|medium\|off\] \[--executor sonnet\|haiku\] \[--power\]"/m, file)
+    assert.doesNotMatch(text, /--fable-min|--power max|\[max\]/, file)
     assert.match(text, /--invocation/, file)
     assert.match(text, /\$\{CLAUDE_PLUGIN_ROOT\}/, file)
     assert.match(text, new RegExp(`"argv"\\s*:\\s*\\["${name}"`), file)
@@ -53,11 +56,11 @@ test('commands de Claude são exatamente implemente e plan, com envelope, argv[0
 
 test('commands, SKILL e README não citam full, ceiling, economy, --model nem nomes de modelo', async () => {
   for (const file of ['commands/plan.md', 'commands/implemente.md', 'skills/grapheng/SKILL.md', 'README.md', 'README.pt-BR.md', 'README.es.md']) {
-    // As flags do advisor (--haiku-max, --executor sonnet|haiku) e os valores entre crases são a única
-    // menção permitida a modelo; a prosa usa forte/médio/barato.
+    // As flags do advisor (--haiku-max, --executor sonnet|haiku) e os valores entre crases são a única menção
+    // permitida a modelo; a prosa usa forte/médio/barato. O Power Mode pode nomear o Fable 5.2. --fable-min saiu.
     const text = (await readFile(path.join(root, file), 'utf8'))
       .replace(/--executor (sonnet\|haiku|sonnet|haiku)|--haiku-max|--executor|`(sonnet|haiku)`/g, 'flag')
-    assert.doesNotMatch(text, /\b(full|ceiling|economy)\b|--model\b|\b(opus|sonnet|haiku)\b|gpt-/i, file)
+    assert.doesNotMatch(text, /\b(full|ceiling|economy)\b|--model\b|\b(opus|sonnet|haiku)\b|gpt-|--fable-min/i, file)
   }
 })
 

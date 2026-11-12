@@ -1,0 +1,67 @@
+// Contrato em task.md. Motor puro: sem three, react, motion nem DOM.
+import type { Vec2 } from './vec.ts'
+import type { Player, PlayerInput } from './player.ts'
+import type { Enemy } from './enemies.ts'
+import type { RoomId } from './arena.ts'
+
+export type Phase = 'title' | 'playing' | 'resting' | 'dead' | 'victory'
+
+export type Input = PlayerInput & { interact: boolean; lockOn: boolean }
+
+export type GameEvent =
+  | { type: 'playerHit'; damage: number; blocked: boolean }
+  | { type: 'dodged' }
+  | { type: 'guardBreak' }
+  | { type: 'playerStaggered' }
+  | { type: 'enemyHit'; id: number; damage: number; riposte: boolean }
+  | { type: 'enemyStaggered'; id: number }
+  | { type: 'enemyDied'; id: number; runes: number }
+  | { type: 'flask' }
+  | { type: 'playerDied' }
+  | { type: 'respawn' }
+  | { type: 'rest' }
+  | { type: 'enterBossRoom' }
+  | { type: 'bossPhase2' }
+  | { type: 'victory' }
+  | { type: 'runesRecovered'; runes: number }
+
+export type Bloodstain = { room: RoomId; pos: Vec2; runes: number }
+
+export type GameState = {
+  seed: number
+  rng: number
+  time: number
+  phase: Phase
+  room: RoomId
+  player: Player
+  enemies: Enemy[]
+  runes: number
+  bloodstain: Bloodstain | null
+  bossDefeated: boolean
+  deathTimer: number
+  events: GameEvent[]
+}
+
+export const IDLE_INPUT: Input = {
+  move: { x: 0, z: 0 },
+  sprint: false,
+  roll: false,
+  jump: false,
+  light: false,
+  heavy: false,
+  guard: false,
+  flask: false,
+  interact: false,
+  lockOn: false,
+}
+
+export const DEATH_DELAY = 3.0
+export const RUNES_PICKUP_RANGE = 1.0
+
+export function createGame(seed: number | string): GameState {
+  throw new Error(`não implementado: createGame(${String(seed)})`)
+}
+
+export function stepGame(state: GameState, input: Input, dt: number): GameState {
+  throw new Error(`não implementado: stepGame(${state.phase},${input.interact},${dt})`)
+}

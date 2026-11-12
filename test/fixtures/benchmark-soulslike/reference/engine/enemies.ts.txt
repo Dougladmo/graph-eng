@@ -1,0 +1,197 @@
+import { add, distance, fromYaw, scale, turnTowards, withinArc, yawTo, type Vec2 } from './vec.ts'
+import { createVitals, type Vitals } from './stats.ts'
+import { randomStep } from './rng.ts'
+import { PLAYER_RADIUS, resolveRoom, type Room, type RoomId } from './arena.ts'
+
+export type EnemyKind = 'hollow' | 'boss'
+export type EnemyState = 'idle' | 'intro' | 'chase' | 'windup' | 'attack' | 'recover' | 'stagger' | 'dead'
+export type EnemyAttackName = 'slash' | 'slam' | 'charge' | 'shockwave'
+export type EnemyAttackShape = 'arc' | 'radius' | 'charge'
+
+export type Enemy = {
+  id: number
+  kind: EnemyKind
+  room: RoomId
+  home: Vec2
+  homeYaw: number
+  pos: Vec2
+  yaw: number
+  vitals: Vitals
+  state: EnemyState
+  t: number
+  attack: EnemyAttackName | null
+  hitDone: boolean
+  phase: 1 | 2
+}
+
+export type EnemyHit = { damage: number; poiseDamage: number; origin: Vec2 }
+export type EnemyTarget = { pos: Vec2; alive: boolean }
+
+export type EnemyProfile = {
+  hp: number
+  poise: number
+  radius: number
+  speed: number
+  aggroRange: number
+  staggerTime: number
+  runes: number
+  intro: number
+}
+
+export type EnemyAttack = {
+  windup: number
+  active: number
+  recover: number
+  damage: number
+  poiseDamage: number
+  range: number
+  arcDeg: number
+  shape: EnemyAttackShape
+  startRange: number
+}
+
+export const ENEMY_PROFILES: Record<EnemyKind, EnemyProfile> = {
+  hollow: { hp: 120, poise: 30, radius: 0.45, speed: 3, aggroRange: 9, staggerTime: 1.5, runes: 100, intro: 0 },
+  boss: { hp: 1500, poise: 80, radius: 1.0, speed: 3.5, aggroRange: 40, staggerTime: 2.0, runes: 5000, intro: 2.0 },
+}
+
+export const ENEMY_ATTACKS: Record<EnemyKind, Partial<Record<EnemyAttackName, EnemyAttack>>> = {
+  hollow: {
+    slash: { windup: 0.5, active: 0.3, recover: 0.8, damage: 60, poiseDamage: 20, range: 1.8, arcDeg: 100, shape: 'arc', startRange: 2.0 },
+  },
+  boss: {
+    slash: { windup: 0.6, active: 0.3, recover: 0.9, damage: 110, poiseDamage: 25, range: 2.8, arcDeg: 120, shape: 'arc', startRange: 4.0 },
+    slam: { windup: 1.0, active: 0.3, recover: 1.2, damage: 160, poiseDamage: 40, range: 3.0, arcDeg: 360, shape: 'radius', startRange: 4.0 },
+    charge: { windup: 0.4, active: 0.7, recover: 1.0, damage: 90, poiseDamage: 20, range: 1.4, arcDeg: 0, shape: 'charge', startRange: Infinity },
+    shockwave: { windup: 0.8, active: 0.2, recover: 1.5, damage: 120, poiseDamage: 30, range: 5.0, arcDeg: 360, shape: 'radius', startRange: Infinity },
+  },
+}
+
+export const CHARGE_SPEED = 12
+export const TRACK_RATE = 2.5
+export const BOSS_PHASE2_HP = 750
+export const PHASE2_SPEED = 4.5
+export const PHASE2_WINDUP = 0.75
+export const CHARGE_DISTANCE = 5
+export const RIPOSTE_RECOVER = 1.0
+
+const MAX_STEP = 0.05
+const CLOSE_RANGE = 4.0
+
+export function createEnemy(id: number, kind: EnemyKind, room: RoomId, pos: Vec2, yaw: number): Enemy {
+  const profile = ENEMY_PROFILES[kind]
+  return { id, kind, room, home: pos, homeYaw: yaw, pos, yaw, vitals: createVitals(profile.hp, 0, profile.poise), state: 'idle', t: 0, attack: null, hitDone: false, phase: 1 }
+}
+
+export function respawnEnemy(enemy: Enemy): Enemy {
+  const profile = ENEMY_PROFILES[enemy.kind]
+  return { ...enemy, pos: enemy.home, yaw: enemy.homeYaw, vitals: createVitals(profile.hp, 0, profile.poise), state: 'idle', t: 0, attack: null, hitDone: false, phase: 1 }
+}
+
+export function enemyRadius(enemy: Enemy): number {
+  return ENEMY_PROFILES[enemy.kind].radius
+}
+
+type Step = { enemy: Enemy; rng: number; hit: EnemyHit | null }
+
+function attackOf(e: Enemy): EnemyAttack | null {
+  return e.attack ? ENEMY_ATTACKS[e.kind][e.attack] ?? null : null
+}
+
+function chooseAttack(e: Enemy, d: number, rng: number): { attack: EnemyAttackName | null; rng: number } {
+  if (e.kind === 'hollow') return { attack: d <= 2.0 ? 'slash' : null, rng }
+  if (d > CHARGE_DISTANCE) {
+    if (e.phase === 1) return { attack: 'charge', rng }
+    const r = randomStep(rng)
+    return { attack: r.value < 0.5 ? 'charge' : 'shockwave', rng: r.next }
+  }
+  if (d > CLOSE_RANGE) return { attack: null, rng }
+  const r = randomStep(rng)
+  if (e.phase === 1) return { attack: r.value < 0.6 ? 'slash' : 'slam', rng: r.next }
+  return { attack: r.value < 0.45 ? 'slash' : r.value < 0.75 ? 'slam' : 'shockwave', rng: r.next }
+}
+
+function enter(e: Enemy, state: EnemyState): Enemy {
+  return { ...e, state, t: 0 }
+}
+
+function chase(e: Enemy, target: EnemyTarget, dt: number, rng: number, room: Room): Step {
+  if (!target.alive) return { enemy: enter(e, 'idle'), rng, hit: null }
+  const profile = ENEMY_PROFILES[e.kind]
+  const yaw = yawTo(e.pos, target.pos)
+  const stop = profile.radius + PLAYER_RADIUS
+  const speed = e.phase === 2 ? PHASE2_SPEED : profile.speed
+  const gap = distance(e.pos, target.pos) - stop
+  const step = Math.min(speed * dt, Math.max(0, gap))
+  const pos = resolveRoom(room, add(e.pos, scale(fromYaw(yaw), step)), profile.radius)
+  let next: Enemy = { ...e, yaw, pos }
+  const choice = chooseAttack(next, distance(pos, target.pos), rng)
+  if (choice.attack) next = { ...enter(next, 'windup'), attack: choice.attack, hitDone: false }
+  return { enemy: next, rng: choice.rng, hit: null }
+}
+
+function windup(e: Enemy, target: EnemyTarget, dt: number): Enemy {
+  const attack = attackOf(e)
+  const yaw = turnTowards(e.yaw, yawTo(e.pos, target.pos), TRACK_RATE * dt)
+  const total = (attack?.windup ?? 0) * (e.phase === 2 ? PHASE2_WINDUP : 1)
+  const next = { ...e, yaw }
+  return next.t >= total ? enter(next, 'attack') : next
+}
+
+function connects(e: Enemy, attack: EnemyAttack, target: EnemyTarget): boolean {
+  if (attack.shape === 'arc') return withinArc(e.pos, e.yaw, target.pos, attack.range, attack.arcDeg)
+  return distance(e.pos, target.pos) <= attack.range
+}
+
+function strike(e: Enemy, target: EnemyTarget, dt: number, room: Room): { enemy: Enemy; hit: EnemyHit | null } {
+  const attack = attackOf(e)
+  if (!attack) return { enemy: enter(e, 'recover'), hit: null }
+  const profile = ENEMY_PROFILES[e.kind]
+  let next: Enemy = e
+  if (attack.shape === 'charge') next = { ...next, pos: resolveRoom(room, add(next.pos, scale(fromYaw(next.yaw), CHARGE_SPEED * dt)), profile.radius) }
+  let hit: EnemyHit | null = null
+  if (!next.hitDone && target.alive && connects(next, attack, target)) {
+    hit = { damage: attack.damage, poiseDamage: attack.poiseDamage, origin: next.pos }
+    next = { ...next, hitDone: true }
+  }
+  if (next.t >= attack.active) next = enter(next, 'recover')
+  return { enemy: next, hit }
+}
+
+function stepOnce(enemy: Enemy, target: EnemyTarget, dt: number, rng: number, room: Room): Step {
+  const profile = ENEMY_PROFILES[enemy.kind]
+  const e: Enemy = { ...enemy, t: enemy.t + dt }
+  switch (e.state) {
+    case 'dead':
+      return { enemy: e, rng, hit: null }
+    case 'stagger':
+      return { enemy: e.t >= profile.staggerTime ? enter(e, 'chase') : e, rng, hit: null }
+    case 'intro':
+      return { enemy: e.t >= profile.intro ? enter(e, 'chase') : e, rng, hit: null }
+    case 'idle': {
+      if (!target.alive || distance(e.pos, target.pos) > profile.aggroRange) return { enemy: e, rng, hit: null }
+      return { enemy: enter(e, e.kind === 'boss' ? 'intro' : 'chase'), rng, hit: null }
+    }
+    case 'chase':
+      return chase(e, target, dt, rng, room)
+    case 'windup':
+      return { enemy: windup(e, target, dt), rng, hit: null }
+    case 'attack':
+      return { ...strike(e, target, dt, room), rng }
+    case 'recover': {
+      const total = attackOf(e)?.recover ?? RIPOSTE_RECOVER
+      return { enemy: e.t >= total ? enter(e, target.alive ? 'chase' : 'idle') : e, rng, hit: null }
+    }
+  }
+}
+
+export function stepEnemy(enemy: Enemy, target: EnemyTarget, dt: number, rng: number, room: Room): Step {
+  const steps = Math.max(1, Math.ceil(dt / MAX_STEP))
+  const sub = dt / steps
+  let current: Step = { enemy, rng, hit: null }
+  for (let i = 0; i < steps; i++) {
+    const next = stepOnce(current.enemy, target, sub, current.rng, room)
+    current = { enemy: next.enemy, rng: next.rng, hit: current.hit ?? next.hit }
+  }
+  return current
+}

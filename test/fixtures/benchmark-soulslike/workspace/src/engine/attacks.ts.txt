@@ -1,0 +1,30 @@
+// Contrato em task.md. Motor puro: sem three, react, motion nem DOM.
+
+export type AttackName = 'light1' | 'light2' | 'heavy' | 'jumpAttack'
+
+export type AttackProfile = {
+  duration: number
+  hitStart: number
+  hitEnd: number
+  damage: number
+  poiseDamage: number
+  range: number
+  arcDeg: number
+  stamina: number
+  lunge: number
+}
+
+export const ATTACKS: Record<AttackName, AttackProfile> = {
+  light1: { duration: 0.55, hitStart: 0.2, hitEnd: 0.3, damage: 45, poiseDamage: 10, range: 1.8, arcDeg: 100, stamina: 20, lunge: 0.6 },
+  light2: { duration: 0.6, hitStart: 0.22, hitEnd: 0.32, damage: 55, poiseDamage: 12, range: 1.8, arcDeg: 110, stamina: 20, lunge: 0.8 },
+  heavy: { duration: 1.0, hitStart: 0.45, hitEnd: 0.6, damage: 90, poiseDamage: 25, range: 2.2, arcDeg: 120, stamina: 35, lunge: 0.5 },
+  jumpAttack: { duration: 0.6, hitStart: 0.25, hitEnd: 0.35, damage: 110, poiseDamage: 30, range: 2.0, arcDeg: 120, stamina: 30, lunge: 0 },
+}
+
+export const ROLL = { duration: 0.6, iframeStart: 0.08, iframeEnd: 0.4, moveTime: 0.45, speed: 7, stamina: 25 }
+export const JUMP = { duration: 0.7, height: 1.2, stamina: 10, attackWindow: 0.45 }
+export const FLASK = { duration: 1.2, healAt: 0.8 }
+export const RIPOSTE = { damage: 200, duration: 0.9, range: 2.0, arcDeg: 90 }
+export const GUARD = { damageFactor: 0.3, staminaFactor: 0.5, arcDeg: 180, counterWindow: 0.5, counterDamage: 1.5, counterPoise: 2 }
+export const STAGGER = { player: 1.0, hollow: 1.5, boss: 2.0 }
+export const LIGHT_COMBO_START = 0.35

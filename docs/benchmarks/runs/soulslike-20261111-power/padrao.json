@@ -1,0 +1,258 @@
+{
+  "flow": "advisor",
+  "haikuMax": "low",
+  "status": "done",
+  "plan": {
+    "goal": "Entregar ASHEN GATE: motor puro em src/engine/ implementado conforme o contrato (passando em npm test) e interface React + three.js + motion jogável, com tipos estritos e build limpo.",
+    "steps": [
+      {
+        "step": "Implementar src/engine/rng.ts, vec.ts e stats.ts (constantes e funções puras). yawDelta em (-π, π]; turnTowards pelo caminho mais curto; withinArc com distância zero dentro; regen e takeDamage exatamente como o contrato. Ler test/engine.test.ts para o estilo dos testes.",
+        "complexity": "low"
+      },
+      {
+        "step": "Implementar src/engine/attacks.ts (tabelas ATTACKS, ROLL, JUMP, FLASK, RIPOSTE, GUARD, STAGGER, LIGHT_COMBO_START) e src/engine/arena.ts (COURTYARD, BOSS_ROOM, pontos, getRoom, pushOut, resolveRoom: rect/círculo recuados pelo raio e depois pilares em ordem). Mantém os tipos dos stubs.",
+        "complexity": "low"
+      },
+      {
+        "step": "Implementar src/engine/player.ts: createPlayer, IDLE_ACTION, stepPlayer (subpassos de 0.05, pressionamentos só no 1º subpasso, ordem de prioridade de início de ação, cancelar ataque com esquiva após hitEnd, combos, jumpAttack, guardCounter, lock-on, movimento por deslocamento exato independente de dt, cura do frasco ao cruzar healAt, regen), isInvulnerable e activeAttack. Cuidar das bordas: t0=max(0,t-dt), passo inicial com t=0 não anda, y=0 ao pousar.",
+        "complexity": "high"
+      },
+      {
+        "step": "Implementar src/engine/enemies.ts: ENEMY_PROFILES, ENEMY_ATTACKS, constantes, createEnemy, respawnEnemy, enemyRadius e stepEnemy (máquina de estados idle/intro/chase/windup/attack/recover/stagger/dead, escolha de ataque com randomStep na ordem exata do contrato, charge, hit emitido uma vez, fase 2 com windup×0.75 e velocidade 4.5, subpassos, resolveRoom, sem decay de poise, alvo morto).",
+        "complexity": "high"
+      },
+      {
+        "step": "Implementar src/engine/game.ts: createGame e stepGame com subpassos (eventos acumulados), fases title/resting/dead/victory e as 10 etapas de playing na ordem do contrato (lock-on, riposte, jogador, acertos do jogador com contra-ataque de guarda, fase 2, inimigos com rng encadeado por id, acertos no jogador com i-frames/bloqueio/guardBreak/stagger/morte, empurrão, interações fogueira e névoa, rastro de sangue), evento flask, renascimento. Determinismo e pureza (sem mutar o estado de entrada). Rodar npm test e corrigir até passar; adicionar cenários próprios temporários no scratchpad para as bordas.",
+        "complexity": "high"
+      },
+      {
+        "step": "Criar src/game/ (camada de interface, fora do motor): input.ts (teclado/mouse → Input com pressionamentos únicos consumidos a cada tick, WASD relativo à câmera, pointer lock, Tab, Esc), loop com acumulador de 1/60 s, e câmera em terceira pessoa (distância 5, altura 2.2, olhar +1.2; orbita com pointer lock, segue com suavização sem lock, lock-on olhando o alvo) em módulo puro de cálculo testável.",
+        "complexity": "medium"
+      },
+      {
+        "step": "Criar src/render/ com three.js sem assets: texturas procedurais em canvas; cenário do pátio (chão, 4 pilares, muros, fogueira com luz tremulante e partículas, porta de névoa animada), sala do chefe (círculo, muro, neblina, tochas), rastro de sangue, luzes e sombras; modelos de jogador/hollow/chefe com poses animadas por state/t (espada por t da ação, inclinações de esquiva/windup/stagger/dead que some em 2 s, emissão vermelha na fase 2). Uma função sync(state) que atualiza a cena, e projeção do alvo do lock-on para tela.",
+        "complexity": "high"
+      },
+      {
+        "step": "Criar a HUD em React com motion em src/ui/: barras de HP/estamina com rastro amarelo, frascos, runas, barra do chefe (pisca na fase 2), retículo e barra de poise do alvo, mensagens com fade (morte, abatido, grande inimigo, Descansar, Atravessar a névoa por proximidade), tela de descanso, flashes de dano/bloqueio/crítico dirigidos por state.events, menu de pausa (Continuar / Voltar ao título) e tela inicial com seed editável aleatória.",
+        "complexity": "medium"
+      },
+      {
+        "step": "Integrar em src/main.tsx e um componente App/GameCanvas: tela inicial → createGame(seed), montar o renderer, loop com passo fixo chamando stepGame, render sync, HUD alimentada pelo estado, pausa, limpeza no unmount (sem erros no console, StrictMode seguro).",
+        "complexity": "high"
+      },
+      {
+        "step": "Verificação final: npm test, npm run build (tsc estrito sem any/ts-ignore), revisar visibilidade de todas as mecânicas no dev server (esquiva, combo, pesado, salto, guarda+contra, riposte, frasco, fogueira, morte e rastro, névoa, chefe fase 2, vitória) e desempenho/console limpo.",
+        "complexity": "medium"
+      }
+    ],
+    "doneWhen": [
+      "npm test passa, inclusive casos de borda além dos testes visíveis",
+      "npm run build termina sem erro de tipos e gera o bundle",
+      "Todas as funções do motor seguem o contrato numérico e de ordem, são determinísticas e puras (mesma seed e entradas dão estados deepEqual)",
+      "npm run dev abre a tela inicial com seed editável e começa o jogo com qualquer tecla ou clique",
+      "Estamina, esquiva com i-frames, combo leve, pesado, ataque em salto, guarda com contra-ataque, poise, riposte, frasco, fogueira com respawn, morte com rastro de sangue recuperável, porta de névoa e chefe de duas fases funcionam jogando",
+      "Câmera, lock-on com retículo, HUD, mensagens, flashes e pausa funcionam como especificado",
+      "Nenhum asset externo, motor sem imports de three/react/motion/DOM, sem erros no console e rodando a ~60 fps"
+    ],
+    "risks": [
+      "Divergências sutis do contrato no player/enemy (ordem das regras, subpassos, pressionamentos só no 1º subpasso) quebram testes ocultos",
+      "Ordem de consumo do rng em stepEnemy/stepGame afeta o determinismo e os resultados esperados",
+      "Pureza: mutação acidental de arrays (hitIds, enemies) vazando entre estados",
+      "Passo fixo e pressionamentos únicos: entradas perdidas ou repetidas entre frames de render e ticks",
+      "Desempenho e vazamento de recursos do three.js (geometrias, texturas, listeners) e StrictMode duplicando o loop",
+      "Regras estritas do tsc (noUnusedLocals, erasableSyntaxOnly, sem any) quebrando o build"
+    ]
+  },
+  "review": {
+    "verdict": "REVISE",
+    "notes": [
+      "Engine runs under Node's built-in type stripping, so state these constraints in steps 1–5. Every relative import inside src/engine/ must use the explicit `.ts` extension. Type-only imports must use `import type` (verbatimModuleSyntax). No enums, namespaces, parameter properties or other non-erasable syntax. Keep the exported stub type names and shapes exactly as they are. Run `npm test` after each engine module, not only at the end of step 5.",
+      "stepGame subpasses: apply the rule 'presses only in the first subpass' to stepGame too. That covers interact, lockOn, the riposte light and the title/resting transitions. Pass held-only input (move, sprint, guard) into later subpasses and on to stepPlayer/stepEnemy. Re-read `phase` at the start of each subpass, so a title→playing or playing→dead/victory change mid-step is handled by the right branch. After victory or death inside a subpass, stop that subpass's remaining playing steps.",
+      "Make these game.ts edge cases explicit in step 5. The riposte must set the enemy's `attack = null` and state `recover`, `t = 0`, so `recover` uses RIPOSTE_RECOVER. It must also start the player `riposte` action and pass `light: false` to stepPlayer. Emit the `flask` event when a flask action starts (compare the action before and after stepPlayer). Stagger from guardBreak or poise break sets the action to `{kind:'stagger', t:0}` and `y = 0`. On death, record the room, pos and runes of the death so respawn can build the bloodstain from them. Once the player is dead, stop handling further hits that step. Clear lockOn when changing room or resting.",
+      "Rendering: the engine does not advance `t` for dead enemies ('dead não muda'). So 'tomba e some em 2 s' needs a per-enemy death timestamp kept in the render layer, along with the render-side timers for flashes and messages. Keep the three.js scene in refs, outside React state. Throttle HUD updates (or read them from a ref or store) so React does not re-render the whole tree on every tick. Dispose geometries, materials and textures on unmount.",
+      "Input/UI integration: clear one-shot presses only after a tick actually consumed them. If a frame runs no tick, hold the press for the next one; if a frame runs several ticks, only the first gets it. Call preventDefault on Tab and on the right-click contextmenu. While pointer lock is active the browser takes Esc, so trigger pause from the `pointerlockchange` event. The click that requests pointer lock must not also count as a light attack. Keypresses typed into the title screen's seed field must not start the game."
+    ]
+  },
+  "sessions": [
+    {
+      "round": 1,
+      "model": "haiku",
+      "from": 1,
+      "to": 2,
+      "status": "DONE",
+      "summary": "Steps 1–2 are implemented.\n\n- **rng.ts**: `hashSeed` is FNV-1a over `String(seed)`. `randomStep` is mulberry32, pure. `createRng` chains `randomStep` from `hashSeed(seed)`.\n- **vec.ts**: all functions are pure. `yawDelta` returns a value in (-π, π]. `turnTowards` moves toward the target by the shortest path, capped at `maxDelta`, and does not re-wrap the result. `withinArc` treats distance zero as inside and uses a 1e-9 epsilon on the angle.\n- **stats.ts**: the constants and functions follow the contract. `regen` raises stamina by `STAMINA_REGEN * dt` only when `regenDelay` is 0 after the decrement. `takeDamage` resets poise to 0 on break. All functions return new objects.\n- **arena.ts**: `getRoom`, `pushOut` (with the centre case pushing to +X) and `resolveRoom` (rect clamp, circle projection, then pillars in order). The `distance` import is a value import and `Vec2` is a type import.\n- **attacks.ts**: the stub already had the tables, `ROLL`, `JUMP`, `FLASK`, `RIPOSTE`, `GUARD`, `STAGGER` and `LIGHT_COMBO_START`. I checked each value against the contract and left the file unchanged.\n\nVerification:\n- `npm run build` passes (`tsc --noEmit` and `vite build`).\n- `npm test`: 4 of 8 pass (rng, vec, stats, arena). The other 4 fail only because they call `stepPlayer`, `createEnemy` or `createGame`, which are still stubs from steps 3–5. The failures are \"não implementado\" throws, not wrong values.\n\nI did not run `tsc` or `node` directly, because the shell only allows `npm test` and `npm run build` as written.",
+      "sessionId": "cb8a13bb-4b38-49b6-aad4-fb236f6f936e",
+      "advisorCalls": 0,
+      "ms": 45305
+    },
+    {
+      "round": 1,
+      "model": "sonnet",
+      "from": 3,
+      "to": 10,
+      "status": "DONE",
+      "summary": "Steps 3–9 are done. `npm test` passes (8/8) and `npm run build` finishes with clean types and a bundle. I could not run the dev server or a browser in this environment. The game is therefore not played through, and 60 fps and console cleanliness are unchecked. Step 10 (the manual in-browser check of every mechanic) is not done. The engine also has no tests of its own beyond the 8 visible ones.\n\n**Engine (`src/engine/`)**\n- `player.ts`, `enemies.ts` and `game.ts` follow the contract, including the substep rules and the order of the 10 `playing` steps.\n- Where the contract was ambiguous I chose, so check these if a hidden test disagrees:\n  - **Idle enemies:** `idle` does not advance `t`. This is how the boss tells whether it is the first time (`t === 0`) and goes `idle` → `intro`; a boss that returns to `idle` later goes straight to `chase`.\n  - **Killing blow with poise break:** a hit that both breaks poise and kills emits `enemyStaggered` and then `enemyDied`. This is the order I read from the contract.\n  - **Enemy exit from `recover`:** the enemy's `attack` is set back to `null`.\n\n**Interface**\n- **`src/game/`:** `camera.ts` has the pure camera math. `input.ts` turns keys and mouse into one-shot presses that only the first tick of a frame consumes. A frame with no tick keeps the press for the next one. Tab and the context menu call `preventDefault`. Pointer lock is requested on the first click, which does not count as an attack, and pause comes from `pointerlockchange`.\n- **`src/render/`:** `textures.ts` has the procedural canvas textures. `models.ts` has the rigs and poses. `world.ts` has the courtyard, boss room, bonfire, fog gate, torches and bloodstain. `renderer.ts` keeps the three.js scene outside React and keeps a per-enemy death timestamp for the 2 s fade-out. Everything is disposed on unmount.\n- **`src/ui/`:**\n  - **HUD:** `hudStore.ts` is a throttled store plus an event bus. `Hud.tsx` has the HP and stamina bars with the yellow trail, flasks, runes, boss bar, messages and flashes.\n  - **Prompts and screens:** the \"Descansar [E]\" and \"Atravessar a névoa [E]\" prompts, the bonfire screen, the title screen with an editable seed that ignores typing in its field, and the pause menu.\n  - **Lock-on reticle:** it is moved directly on the DOM, not through React.\n  - **App wiring:** `GameCanvas.tsx` runs the 1/60 s fixed-step loop and `App.tsx` switches between title and game. `main.tsx` wraps everything in StrictMode, and the loop and listeners are cleaned up on unmount.",
+      "sessionId": "3fdde8ad-5d05-494b-9e5c-6ae48694fc8e",
+      "advisorCalls": 0,
+      "ms": 399753
+    }
+  ],
+  "gate": [
+    {
+      "round": 1,
+      "pass": true,
+      "results": [
+        {
+          "id": "test",
+          "command": "npm test",
+          "exitCode": 0,
+          "ms": 260,
+          "outputTail": "\n> ashen-gate@0.0.0 test\n> node --test test/*.test.ts\n\nTAP version 13\n# Subtest: rng: determinístico e no intervalo\nok 1 - rng: determinístico e no intervalo\n  ---\n  duration_ms: 1.115\n  type: 'test'\n  ...\n# Subtest: vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo\nok 2 - vec: yaw 0 olha para +Z e o arco respeita alcance e ângulo\n  ---\n  duration_ms: 0.16\n  type: 'test'\n  ...\n# Subtest: stats: gastar estamina atrasa a regeneração; poise acumulado quebra\nok 3 - stats: gastar estamina atrasa a regeneração; poise acumulado quebra\n  ---\n  duration_ms: 0.097916\n  type: 'test'\n  ...\n# Subtest: jogador: a esquiva tem i-frames e se desloca 3.15 m\nok 4 - jogador: a esquiva tem i-frames e se desloca 3.15 m\n  ---\n  duration_ms: 0.631209\n  type: 'test'\n  ...\n# Subtest: jogador: o ataque leve tem janela de acerto\nok 5 - jogador: o ataque leve tem janela de acerto\n  ---\n  duration_ms: 0.124208\n  type: 'test'\n  ...\n# Subtest: inimigo: o hollow só persegue dentro do alcance de agressão\nok 6 - inimigo: o hollow só persegue dentro do alcance de agressão\n  ---\n  duration_ms: 0.157792\n  type: 'test'\n  ...\n# Subtest: arena: os muros e os pilares prendem o jogador\nok 7 - arena: os muros e os pilares prendem o jogador\n  ---\n  duration_ms: 0.053542\n  type: 'test'\n  ...\n# Subtest: jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado\nok 8 - jogo: começa na tela inicial e qualquer tecla entra; mesma seed, mesmo estado\n  ---\n  duration_ms: 3.316791\n  type: 'test'\n  ...\n1..8\n# tests 8\n# suites 0\n# pass 8\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 97.456875\n"
+        },
+        {
+          "id": "build",
+          "command": "npm run build",
+          "exitCode": 0,
+          "ms": 1861,
+          "outputTail": "\n> ashen-gate@0.0.0 build\n> tsc --noEmit && vite build\n\nvite v8.3.8 building client environment for production...\ntransforming...\n✓ 462 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                  0.32 kB │ gzip:   0.24 kB\ndist/assets/index-I2VuwcOK.js  860.80 kB │ gzip: 240.61 kB\n\n[plugin builtin:vite-reporter] \n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n✓ built in 143ms\n"
+        }
+      ]
+    }
+  ],
+  "advisorCalls": 0,
+  "calls": [
+    {
+      "role": "planner",
+      "ms": 25170,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 6,
+          "outputTokens": 2962,
+          "cacheReadInputTokens": 45092,
+          "cacheCreationInputTokens": 18887,
+          "webSearchRequests": 0,
+          "costUSD": 0.10968919999999999,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 25,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 18887,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "925324e3-68c6-4bd6-a6c8-811081837fbf",
+      "permissionDenials": 0
+    },
+    {
+      "role": "planReviewer",
+      "ms": 28227,
+      "usage": {
+        "claude-opus-5-5": {
+          "inputTokens": 6,
+          "outputTokens": 2337,
+          "cacheReadInputTokens": 49187,
+          "cacheCreationInputTokens": 20283,
+          "webSearchRequests": 0,
+          "costUSD": 0.21886540000000002,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 1175,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 20283,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "e641a072-d31b-4553-a4bf-7b17aa768dab",
+      "permissionDenials": 0
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 45260,
+      "usage": {
+        "claude-haiku-5-5": {
+          "inputTokens": 10,
+          "outputTokens": 9568,
+          "cacheReadInputTokens": 163994,
+          "cacheCreationInputTokens": 43044,
+          "webSearchRequests": 0,
+          "costUSD": 0.01503374,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 4207,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 43044,
+          "canonicalModel": "claude-haiku-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "cb8a13bb-4b38-49b6-aad4-fb236f6f936e",
+      "permissionDenials": 1
+    },
+    {
+      "role": "advisedExecutor",
+      "ms": 399711,
+      "usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 52,
+          "outputTokens": 64734,
+          "cacheReadInputTokens": 1752580,
+          "cacheCreationInputTokens": 101956,
+          "webSearchRequests": 0,
+          "costUSD": 1.2305260000000002,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 17725,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 101956,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "sessionId": "3fdde8ad-5d05-494b-9e5c-6ae48694fc8e",
+      "permissionDenials": 2
+    }
+  ],
+  "routing": [
+    {
+      "model": "haiku",
+      "from": 1,
+      "to": 2
+    },
+    {
+      "model": "sonnet",
+      "from": 3,
+      "to": 10
+    }
+  ],
+  "engineMs": 500581,
+  "cost": {
+    "costUSD": 1.5741143400000004,
+    "input": 0.00012652823906215095,
+    "cacheWrite": 0.5934390274134189,
+    "cacheRead": 0.33594819490433026,
+    "output": 0.644600589443189,
+    "tokens": {
+      "input": 74,
+      "cacheWrite": 184170,
+      "cacheRead": 2010853,
+      "output": 79601
+    },
+    "byModel": {
+      "claude-sonnet-5-5": 1.3402152000000003,
+      "claude-opus-5-5": 0.21886540000000002,
+      "claude-haiku-5-5": 0.01503374
+    },
+    "byRole": {
+      "planner": 0.10968919999999999,
+      "planReviewer": 0.21886540000000002,
+      "advisedExecutor": 1.2455597400000002
+    }
+  }
+}

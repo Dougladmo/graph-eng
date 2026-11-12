@@ -1,0 +1,38 @@
+// Contrato em task.md. Motor puro: sem three, react, motion nem DOM.
+import type { Vec2 } from './vec.ts'
+
+export type RoomId = 'courtyard' | 'bossRoom'
+export type Circle = { x: number; z: number; r: number }
+export type Rect = { minX: number; maxX: number; minZ: number; maxZ: number }
+export type Room = { id: RoomId; rect: Rect | null; circle: Circle | null; pillars: Circle[] }
+
+export const COURTYARD: Room = {
+  id: 'courtyard',
+  rect: { minX: -12, maxX: 12, minZ: -10, maxZ: 14 },
+  circle: null,
+  pillars: [{ x: -5, z: 2, r: 0.8 }, { x: 5, z: 2, r: 0.8 }, { x: -5, z: 8, r: 0.8 }, { x: 5, z: 8, r: 0.8 }],
+}
+
+export const BOSS_ROOM: Room = { id: 'bossRoom', rect: null, circle: { x: 0, z: 28, r: 11 }, pillars: [] }
+
+export const BONFIRE: Vec2 = { x: 0, z: -6 }
+export const START_POS: Vec2 = { x: 0, z: -4 }
+export const FOG_GATE: Vec2 = { x: 0, z: 14 }
+export const BOSS_ROOM_ENTRY: Vec2 = { x: 0, z: 18 }
+export const BOSS_SPAWN: Vec2 = { x: 0, z: 34 }
+export const HOLLOW_SPAWNS: Vec2[] = [{ x: -4, z: 6 }, { x: 4, z: 7 }, { x: 0, z: 11 }]
+export const INTERACT_RANGE = 2.0
+export const LOCK_RANGE = 12
+export const PLAYER_RADIUS = 0.4
+
+export function getRoom(id: RoomId): Room {
+  throw new Error(`não implementado: getRoom(${id})`)
+}
+
+export function pushOut(pos: Vec2, radius: number, obstacle: Circle): Vec2 {
+  throw new Error(`não implementado: pushOut(${pos.x},${radius},${obstacle.r})`)
+}
+
+export function resolveRoom(room: Room, pos: Vec2, radius: number): Vec2 {
+  throw new Error(`não implementado: resolveRoom(${room.id},${pos.x},${radius})`)
+}
