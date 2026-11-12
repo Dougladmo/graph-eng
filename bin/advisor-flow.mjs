@@ -65,10 +65,11 @@ export function routeSteps(steps, haikuMax) {
   return segments
 }
 
-// Power: Haiku até haikuMax, Opus nos high, Sonnet no resto e na complexidade inválida. GRAPHENG_POWER_SPLIT troca
-// o modelo dos medium e dos high (experimento do benchmark).
+// Power: Haiku até haikuMax, Sonnet nos medium, nos high e na complexidade inválida (benchmark Minecraft de 11/11: o Opus
+// nas raias custou de 4 a 7 vezes o padrão sem nota melhor; o Sonnet em todas as raias entregou no tempo do padrão).
+// GRAPHENG_POWER_SPLIT troca o modelo dos medium e dos high (experimento do benchmark).
 export const POWER_SPLIT_MODELS = new Set(['sonnet', 'opus'])
-export function powerModelFor(complexity, { haikuMax = 'low', medium = 'sonnet', high = 'opus' } = {}) {
+export function powerModelFor(complexity, { haikuMax = 'low', medium = 'sonnet', high = 'sonnet' } = {}) {
   const level = COMPLEXITIES.indexOf(complexity)
   if (level >= 0 && level <= COMPLEXITIES.indexOf(haikuMax)) return 'haiku'
   return level === 2 ? high : medium
@@ -233,7 +234,7 @@ Return structured output only.`
 
 const partOf = s => s.steps ? `steps ${listSteps(s.steps)}` : s.from ? `steps ${s.from}–${s.to}` : 'the whole task'
 
-export function executorPrompt({ task, plan, review, commands, advisorLeft = ADVISOR_MAX_CALLS, gateFailure = null, blocked = null, hostName = 'claude', segment = null, lane = null }) {
+export function executorPrompt({ task, plan, review, commands, advisorLeft = ADVISOR_MAX_CALLS, gateFailure = null, blocked = null, hostName = 'claude', segment = null, lane = null, retry = null }) {
   const role = lane
     ? 'You implement your part of this task in one continuous session. The plan is split into waves; inside a wave, sessions run in parallel, each on the files its steps name.'
     : segment
@@ -251,11 +252,14 @@ Implement only these steps, with their review notes. Other sessions are implemen
 Implement only these steps, with their review notes. Earlier steps were done by a previous session and are in the working tree: read what you need and do not redo them. Later steps belong to another session: do not implement them. The commands below may still fail only because later steps are missing; everything your steps cover must pass.`)
   if (review?.notes?.length) parts.push(`## Plan review notes (apply them)\n${review.notes.map(n => `- ${n}`).join('\n')}`)
   if (commands.length) parts.push(`## Feedback loop
-You can run these commands yourself, exactly as written: ${commands.map(c => `\`${c}\``).join(' | ')}. Any other shell command is denied. Run them after meaningful changes and before you finish, and fix what fails. The supervisor re-runs them after you return; never weaken, skip or delete a test to make them pass.`)
+You can run these commands yourself, exactly as written: ${commands.map(c => `\`${c}\``).join(' | ')}. Any other shell command is denied; \`cd\` is denied too: create and edit files with the Write and Edit tools, by repository path, never through the shell. Run them after meaningful changes and before you finish, and fix what fails. The supervisor re-runs them after you return; never weaken, skip or delete a test to make them pass.`)
   if (hostName === 'claude') parts.push(advisorLeft > 0 ? `## Advisor
 A stronger advisor model is available through the advisor tool; it sees this whole session. You may consult it at most ${advisorLeft} time(s) in total: before committing to the architecture of the hardest part, and when the same failure survives two fixes. Ask for a short plan, not code. Do not consult it for routine work.` : '## Advisor\nThe advisor budget is spent: do not call the advisor tool.')
+  if (retry) parts.push(`## Your previous attempt at these steps returned BLOCKED\n${retry.summary}\nIts code, where any exists, is in the working tree. Finish your steps now; return BLOCKED again only if something outside your steps makes them impossible, and say exactly what.`)
   if (gateFailure) parts.push(`## Your previous session did not pass the supervisor gate\n${gateFailure.map(r => `\`${r.command}\` exited ${r.exitCode}. Output tail:\n\`\`\`\n${r.outputTail}\n\`\`\``).join('\n')}\nThe code from that session is in the working tree. Fix it.`)
   if (blocked?.length) parts.push(`## Earlier sessions reported these parts BLOCKED\n${blocked.map(s => `- ${partOf(s)}: ${s.summary}`).join('\n')}\nTheir code, where any exists, is in the working tree. Do what they left undone; the commands above passing is not enough.`)
+  // Benchmark souls-like (--power): o conserto reescreveu o motor inteiro e perdeu casos que já passavam.
+  if (gateFailure || blocked?.length) parts.push('## Repair scope\nThe task text above is the contract. Change only what the failures above call for and keep what already works; do not redesign or rewrite parts that pass.')
   parts.push(segment || lane
     ? 'Return DONE only when your steps are complete and what they cover passes; otherwise BLOCKED with the reason in summary. Return structured output only.'
     : 'Return DONE only when the task is complete and every command above passes; otherwise BLOCKED with the reason in summary. Return structured output only.')
@@ -263,12 +267,12 @@ A stronger advisor model is available through the advisor tool; it sees this who
 }
 
 // planOnly: para depois da revisão do plano (comando plan). planned: { plan, review } de um plan anterior, que pula
-// o planner e a revisão (implemente sem tarefa). power: Power Mode; powerMax: o Fable também planeja. Todas as chamadas
-// usam o effort da run (medium por padrão, o que a Anthropic recomenda para o Fable).
-export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {}, haikuMax = null, planOnly = false, planned = null, power = false, powerMax = false, powerSplit = null } = {}) {
+// o planner e a revisão (implemente sem tarefa). power: Power Mode (o host põe o Fable no plano, na revisão e no advisor).
+// Todas as chamadas usam o effort da run (medium por padrão, o que a Anthropic recomenda para o Fable).
+export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, runDir, gate = null, maxExecutorSessions = DEFAULT_EXECUTOR_SESSIONS, effort = 'medium', runGateImpl = runGate, countAdvisor = countAdvisorCalls, log = () => {}, haikuMax = null, planOnly = false, planned = null, power = false, powerMax, powerSplit = null } = {}) {
   if (haikuMax !== null && !['low', 'medium'].includes(haikuMax)) throw new TypeError('haikuMax aceita somente low ou medium')
   if (power && hostName !== 'claude') throw new TypeError('power vale só no host claude')
-  if (powerMax && !power) throw new TypeError('powerMax exige power')
+  if (powerMax !== undefined) throw new TypeError('powerMax foi removido: --power já põe o Fable no plano')
   if (!host || typeof task !== 'string' || !task.trim() || !cwd) throw new TypeError('runAdvisorFlow exige host, cwd e tarefa')
   const started = Date.now()
   const checks = gate ?? gateCommands(JSON.parse(await readFile(path.join(cwd, 'package.json'), 'utf8')))
@@ -286,7 +290,7 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
     }
   }
   const advisorMax = power ? POWER_ADVISOR_MAX_CALLS : ADVISOR_MAX_CALLS
-  const record = { flow: 'advisor', ...(power ? { power: true, powerMax: Boolean(powerMax), ...(powerSplit ? { powerSplit } : {}) } : {}), ...(haikuMax ? { haikuMax } : {}), status: 'blocked', plan: null, review: null, sessions: [], gate: [], advisorCalls: 0, calls }
+  const record = { flow: 'advisor', ...(power ? { power: true, ...(powerSplit ? { powerSplit } : {}) } : {}), ...(haikuMax ? { haikuMax } : {}), status: 'blocked', plan: null, review: null, sessions: [], gate: [], advisorCalls: 0, calls }
   const finish = async (status, reason = null) => {
     Object.assign(record, { status, ...(reason ? { feedback: { kind: 'BLOCK', reason } } : {}), engineMs: Date.now() - started, cost: splitCost(calls) })
     if (runDir) {
@@ -302,7 +306,7 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
       record.review = planned.review
     } else {
       if (power) {
-        log(`power${powerMax ? ' max' : ''}: planejador (effort ${effort})`)
+        log(`power: planejador (effort ${effort})`)
         record.plan = (await call('planner', plannerPrompt(task, { power: true }), POWER_PLAN_SCHEMA, { readOnly: true })).output
       } else {
         log('advisor: planner')
@@ -321,35 +325,44 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
     const allowCommands = checks.map(commandText)
     let gateFailure = null
     let blocked = null
-    const session = async (round, { segment = null, lane = null, advisorLeft = Math.max(0, advisorMax - record.advisorCalls) } = {}) => {
+    const session = async (round, { segment = null, lane = null, retry = null, advisorLeft = Math.max(0, advisorMax - record.advisorCalls) } = {}) => {
       const executorModel = lane?.model ?? segment?.model ?? (power ? 'opus' : haikuMax ? 'sonnet' : undefined)
-      const part = lane ? ` (onda ${lane.wave}, passos ${listSteps(lane.steps)}, ${lane.model})` : segment ? ` (passos ${segment.from}–${segment.to}, ${segment.model})` : ''
+      const part = lane ? ` (onda ${lane.wave}, passos ${listSteps(lane.steps)}, ${lane.model}${retry ? ', segunda tentativa' : ''})` : segment ? ` (passos ${segment.from}–${segment.to}, ${segment.model})` : ''
       log(`advisor: sessão do executor ${round}/${maxExecutorSessions}${part} (advisor restante: ${advisorLeft})`)
       const t0 = Date.now()
       const total = record.plan.steps.length
-      const prompt = executorPrompt({ task, plan: record.plan, review: record.review, commands: allowCommands, advisorLeft, gateFailure, blocked, hostName, segment: segment && { ...segment, total }, lane: lane && { ...lane, total, waves: waves.length } })
+      const prompt = executorPrompt({ task, plan: record.plan, review: record.review, commands: allowCommands, advisorLeft, gateFailure, blocked, hostName, segment: segment && { ...segment, total }, lane: lane && { ...lane, total, waves: waves.length }, retry })
       const result = await call('advisedExecutor', prompt, EXECUTOR_SCHEMA, { allowCommands, timeoutMs: EXECUTOR_TIMEOUT_MS, ...(executorModel ? { executorModel } : {}) })
       const advisorCalls = hostName === 'claude' ? await countAdvisor(result.sessionId) : 0
       record.advisorCalls += advisorCalls ?? 0
-      record.sessions.push({ round, ...(executorModel ? { model: executorModel } : {}), ...(segment ? { from: segment.from, to: segment.to } : {}), ...(lane ? { wave: lane.wave, steps: lane.steps } : {}), status: result.output.status, summary: result.output.summary, sessionId: result.sessionId ?? null, advisorCalls, ms: Date.now() - t0 })
-      return result.output.status
+      record.sessions.push({ round, ...(executorModel ? { model: executorModel } : {}), ...(segment ? { from: segment.from, to: segment.to } : {}), ...(lane ? { wave: lane.wave, steps: lane.steps } : {}), ...(retry ? { retry: true } : {}), status: result.output.status, summary: result.output.summary, sessionId: result.sessionId ?? null, advisorCalls, ms: Date.now() - t0 })
+      return result.output
     }
     // As raias de uma onda rodam juntas e a onda só fecha quando todas terminam; uma falha derruba a run depois disso.
+    // Raia BLOCKED tenta de novo uma vez, no mesmo modelo e com o próprio motivo, antes de o conserto no Opus abrir
+    // (benchmark souls-like: o conserto refazia o trabalho da raia e de outras por um tropeço só dela).
     const runWave = async (round, wave) => {
-      const remaining = Math.max(0, advisorMax - record.advisorCalls)
+      const laneBudget = () => Math.min(Math.max(0, advisorMax - record.advisorCalls), POWER_LANE_ADVISOR_MAX)
+      const settle = async lanes => {
+        const settled = await Promise.allSettled(lanes.map(({ lane, retry }) => session(round, { lane, retry, advisorLeft: laneBudget() })))
+        const failed = settled.find(s => s.status === 'rejected')
+        if (failed) throw failed.reason
+        return settled.map(s => s.value)
+      }
       log(`power: onda ${wave.wave}/${waves.length}: ${wave.lanes.map(l => `${l.model} passos ${listSteps(l.steps)}`).join(' | ')}`)
-      const settled = await Promise.allSettled(wave.lanes.map(lane => session(round, { lane: { ...lane, wave: wave.wave }, advisorLeft: Math.min(remaining, POWER_LANE_ADVISOR_MAX) })))
-      const failed = settled.find(s => s.status === 'rejected')
-      if (failed) throw failed.reason
-      return settled.map(s => s.value)
+      const lanes = wave.lanes.map(lane => ({ lane: { ...lane, wave: wave.wave }, retry: null }))
+      const outputs = await settle(lanes)
+      const retries = lanes.map((entry, i) => ({ ...entry, retry: outputs[i], i })).filter(({ retry }) => retry.status === 'BLOCKED')
+      if (retries.length) for (const [n, output] of (await settle(retries)).entries()) outputs[retries[n].i] = output
+      return outputs.map(o => o.status)
     }
     // O gate é necessário, não suficiente (benchmark 11/11: a raia da UI devolveu BLOCKED, o motor passou nos testes
     // e o jogo não existia). Gate verde com sessão BLOCKED também abre o conserto, com o que ficou por fazer.
     for (let round = 1; round <= maxExecutorSessions; round++) {
       const statuses = []
       if (round === 1 && waves) for (const wave of waves) statuses.push(...await runWave(round, wave))
-      else if (round === 1 && segments) for (const segment of segments) statuses.push(await session(round, { segment }))
-      else statuses.push(await session(round))
+      else if (round === 1 && segments) for (const segment of segments) statuses.push((await session(round, { segment })).status)
+      else statuses.push((await session(round)).status)
       log(`advisor: gate externo (${allowCommands.join(', ')})`)
       const gateResult = await runGateImpl(cwd, checks)
       record.gate.push({ round, ...gateResult })
@@ -357,7 +370,9 @@ export async function runAdvisorFlow({ host, hostName = 'claude', cwd, task, run
       if (gateResult.pass && allDone) return finish('done')
       if (round === maxExecutorSessions) return finish('blocked', gateResult.pass ? 'advisor_executor_blocked' : 'advisor_gate_failed')
       gateFailure = gateResult.pass ? null : gateResult.results.filter(r => r.exitCode !== 0)
-      blocked = record.sessions.filter(s => s.round === round && s.status === 'BLOCKED')
+      // Raia que tentou duas vezes entra uma vez só no conserto, com o motivo da segunda tentativa.
+      const retried = new Set(record.sessions.filter(s => s.round === round && s.retry).map(s => s.steps.join()))
+      blocked = record.sessions.filter(s => s.round === round && s.status === 'BLOCKED' && (s.retry || !retried.has(s.steps?.join())))
     }
   } catch (error) {
     record.exception = { code: error.code ?? 'EXCEPTION', message: String(error.message ?? error).slice(0, 500) }

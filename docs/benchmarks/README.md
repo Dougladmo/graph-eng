@@ -2,6 +2,8 @@
 
 Evidência versionada das runs reais do benchmark Minecraft MVP. A pasta `.graph-runs/` é ignorada pelo git, então o que precisa ficar no repositório é copiado para cá.
 
+**Nomes das variantes.** As runs abaixo foram feitas com a 1.4 de antes da publicação, que tinha `--power` (Opus no plano) e `--power max` (Fable no plano). A 1.4 publicada tem um `--power` só, que corresponde ao `--power max` com `GRAPHENG_POWER_SPLIT=sonnet/sonnet` destas tabelas: o Fable no plano, na revisão e no advisor, o Sonnet em todas as raias, o Opus só no conserto.
+
 ## O cenário
 
 Um clone jogável do Minecraft em React e three.js, a partir do esqueleto em [`test/fixtures/benchmark-minecraft/`](../../test/fixtures/benchmark-minecraft/). Os agentes recebem só `workspace/` (com `task.md`, que é o prompt). A nota vem de:

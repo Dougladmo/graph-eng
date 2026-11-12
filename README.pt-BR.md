@@ -118,22 +118,21 @@ Passos seguidos no mesmo modelo dividem uma sessão. O orçamento do advisor é 
 
 ## Power Mode
 
-`--power` sobe cada papel um degrau na família: o forte planeja, o **mais forte** (Fable 5.2) revisa o plano e aconselha, e os passos rodam em paralelo. `--power max` põe o mais forte também no plano. São as duas únicas configurações. Todas as chamadas usam o esforço da run (`medium` por padrão, o que a Anthropic recomenda para o Fable 5.2).
+`--power` põe o **mais forte** da família (Fable 5.2) no plano, na revisão do plano e no advisor, mantém o médio em todos os passos e roda os passos em paralelo. Uma configuração só, afinada pelos benchmarks abaixo: o forte nos passos custou de 4 a 7 vezes mais sem nota melhor, enquanto o médio em todas as raias, com o plano do mais forte, passou tudo sem conserto nas quatro runs. Todas as chamadas usam o esforço da run (`medium` por padrão, o que a Anthropic recomenda para o Fable 5.2).
 
-| Papel | Padrão | `--power` | `--power max` |
-| --- | --- | --- | --- |
-| Planejador | 📝 médio | 🧠 **forte** | 🔥 **mais forte** |
-| Revisão do plano | 🧠 forte | 🔥 **mais forte** | 🔥 **mais forte** |
-| Advisor | 🧠 forte (3 chamadas por run) | 🔥 **mais forte** (6 por run, 2 por raia) | 🔥 **mais forte** (6 por run, 2 por raia) |
-| Passos `high` e consertos do gate | 📝 médio | 🧠 **forte** | 🧠 **forte** |
-| Passos `medium` | 📝 médio | 📝 médio | 📝 médio |
-| Passos `low` | ⚙️ barato | ⚙️ barato | ⚙️ barato |
+| Papel | Padrão | `--power` |
+| --- | --- | --- |
+| Planejador | 📝 médio | 🔥 **mais forte** |
+| Revisão do plano | 🧠 forte | 🔥 **mais forte** |
+| Advisor | 🧠 forte (3 chamadas por run) | 🔥 **mais forte** (6 por run, 2 por raia) |
+| Passos `high` e `medium` | 📝 médio | 📝 médio, em raias paralelas |
+| Passos `low` | ⚙️ barato | ⚙️ barato |
+| Consertos do gate | 📝 médio | 🧠 **forte** |
 
-O plano sai em **ondas**: cada passo nomeia seus arquivos e a onda em que roda. Dentro de uma onda, os passos viram **raias** por modelo, que rodam ao mesmo tempo em arquivos diferentes; as ondas rodam em série, e o gate roda uma vez no fim. O runner confere a pegada de arquivos antes de rodar: conflito na mesma onda abre uma onda nova. Desenho completo, exemplo com o Minecraft e plano de benchmark em [docs/power-mode.md](docs/power-mode.md).
+O plano sai em **ondas**: cada passo nomeia seus arquivos e a onda em que roda. Dentro de uma onda, os passos viram **raias** por modelo, que rodam ao mesmo tempo em arquivos diferentes; as ondas rodam em série, e o gate roda uma vez no fim. O runner confere a pegada de arquivos antes de rodar: conflito na mesma onda abre uma onda nova. Raia que devolve `BLOCKED` ganha uma segunda tentativa no mesmo modelo, com o próprio motivo, antes de o conserto do gate abrir. Desenho completo, exemplo com o Minecraft e resultados do benchmark em [docs/power-mode.md](docs/power-mode.md).
 
 ```
 /graph-eng:implemente construir o clone de Minecraft descrito em task.md --power
-/graph-eng:implemente construir o clone de Minecraft descrito em task.md --power max
 ```
 
 ## Comandos
@@ -158,7 +157,7 @@ Sempre na forma separada (`--effort max`, nunca `--effort=max`).
 | `--effort` | `low`, `medium`, `max` | `medium` | Esforço de raciocínio de todas as chamadas da run. |
 | `--haiku-max` | `low`, `medium`, `off` | `low` no Claude | Complexidade máxima de passo que vai para o modelo barato. `off` deixa todos os passos no médio. |
 | `--executor` | `sonnet`, `haiku` | nenhum | Um modelo para todos os passos. Desliga o roteamento e não combina com `--haiku-max` nem com `--power`. |
-| `--power` | —, `max` | desligado | Liga o [Power Mode](#power-mode). `--power max` põe o mais forte também no plano. |
+| `--power` | — | desligado | Liga o [Power Mode](#power-mode): o mais forte planeja, revisa e aconselha; os passos rodam em raias paralelas. |
 
 `--haiku-max`, `--executor` e `--power` só existem no host Claude; no Codex o fluxo não roteia. Em `implemente` sem tarefa, o roteamento vem do plano salvo, então passe essas flags no `plan`.
 
@@ -213,7 +212,7 @@ Cada run deixa a evidência em `.graph-runs/<runId>/advisor-run.json`: plano, re
 
 O modelo forte custou menos de 10% da run. A evidência bruta de cada run está em [docs/benchmarks/](docs/benchmarks/).
 
-**Power Mode (5 rodadas de cada variante, 11/11/2026):** as 15 runs passaram nos 55 testes ocultos e no build. O padrão entregou um jogo jogável nas 5 rodadas por US$ 1,34 a 1,83 em 8 a 11 min. O Power Mode como desenhado (forte nos passos `high`) custou de 4 a 7 vezes mais, levou de 2 a 3 vezes mais e o `--power max` não entregou jogo jogável em 2 de 2 rodadas. Com o médio em todos os passos do executor (`GRAPHENG_POWER_SPLIT`, ver [docs/benchmarks/](docs/benchmarks/)), o `--power max` entregou nas duas rodadas por US$ 2,75 a 3,15 em 10 a 12 min, com código do tamanho e da forma do padrão. Mesma nota, mesmas features: o padrão continua a recomendação. No benchmark maior, o souls-like (66 testes ocultos, TypeScript estrito, uma run de cada), o quadro se manteve: o padrão passou tudo por US$ 1,57 em 8 min, e as duas runs do Power Mode custaram 2,3 e 4,5 vezes mais, levaram mais tempo e ficaram cada uma com uma falha real de regra. Uma segunda rodada com a spec de ambientação (árvores de outono, pedras, grama, cavaleiro com armadura, chefe minotauro) inverteu a nota (Power Mode 66/66, padrão 65/66, dentro da variação entre runs) por 1,7 e 2,0 vezes o custo do padrão, com 30 a 36 % mais código de cenário e nenhuma raia perdida. As tabelas completas, a análise de qualidade do código e os próximos passos estão em [docs/benchmarks/README.md](docs/benchmarks/README.md) e [docs/power-mode.md](docs/power-mode.md).
+**Power Mode (5 rodadas de cada variante, 11/11/2026):** as 15 runs passaram nos 55 testes ocultos e no build. O padrão entregou um jogo jogável nas 5 rodadas por US$ 1,34 a 1,83 em 8 a 11 min. O Power Mode como desenhado (forte nos passos `high`) custou de 4 a 7 vezes mais, levou de 2 a 3 vezes mais e o `--power max` não entregou jogo jogável em 2 de 2 rodadas. Com o médio em todos os passos do executor (`GRAPHENG_POWER_SPLIT`, ver [docs/benchmarks/](docs/benchmarks/)), o `--power max` entregou nas duas rodadas por US$ 2,75 a 3,15 em 10 a 12 min, com código do tamanho e da forma do padrão. Mesma nota, mesmas features: o padrão continua a recomendação. No benchmark maior, o souls-like (66 testes ocultos, TypeScript estrito, uma run de cada), o quadro se manteve: o padrão passou tudo por US$ 1,57 em 8 min, e as duas runs do Power Mode custaram 2,3 e 4,5 vezes mais, levaram mais tempo e ficaram cada uma com uma falha real de regra. Uma segunda rodada com a spec de ambientação (árvores de outono, pedras, grama, cavaleiro com armadura, chefe minotauro) inverteu a nota (Power Mode 66/66, padrão 65/66, dentro da variação entre runs) por 1,7 e 2,0 vezes o custo do padrão, com 30 a 36 % mais código de cenário e nenhuma raia perdida. O `--power` publicado é a configuração que nunca precisou de conserto nessas rodadas: o mais forte no plano e na revisão, o médio em todas as raias. As tabelas completas, a análise de qualidade do código e os próximos passos estão em [docs/benchmarks/README.md](docs/benchmarks/README.md) e [docs/power-mode.md](docs/power-mode.md).
 
 ### Por que o motor de grafo saiu
 

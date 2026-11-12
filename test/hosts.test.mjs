@@ -11,6 +11,8 @@ import path from 'node:path'
 import { FABLE, createHost as createHostImpl } from '../bin/hosts.mjs'
 
 const schema = { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] }
+// Regra de permissão absoluta do Claude Code: //<caminho real sem a barra inicial>/**. No Windows fica relativa ao cwd.
+const writeScope = dir => process.platform === 'win32' ? './**' : `//${realpathSync(dir).replace(/^\/+/, '')}/**`
 
 function createHost(options) {
   const fakeTransport = Boolean(options.transport)
@@ -73,7 +75,7 @@ test('papéis do advisor: Sonnet planeja, Opus revisa e Sonnet executa; papel do
   const capabilities = host.capabilities()
   assert.equal(capabilities.readOnlyEnforced, true)
   assert.match(capabilities.readOnlyEnforcement, /Read, Glob e Grep/)
-  assert.deepEqual(Object.keys(capabilities).sort(), ['agentShell', 'cancellation', 'cli', 'host', 'lifecycleEvents', 'modelAvailability', 'power', 'powerMax', 'promptTransport', 'readOnlyEnforced', 'readOnlyEnforcement', 'roles', 'schemaTransport', 'structuredOutput'].sort())
+  assert.deepEqual(Object.keys(capabilities).sort(), ['agentShell', 'cancellation', 'cli', 'host', 'lifecycleEvents', 'modelAvailability', 'power', 'promptTransport', 'readOnlyEnforced', 'readOnlyEnforcement', 'roles', 'schemaTransport', 'structuredOutput'].sort())
   assert.equal(capabilities.power, false)
   assert.deepEqual(capabilities.roles, ['planner', 'planReviewer', 'advisedExecutor'])
   assert.equal(capabilities.agentShell, false, 'Claude não dá shell ao agente')
@@ -176,10 +178,15 @@ test('Claude libera escrita do executor só dentro do cwd e mantém papéis de l
   const allowed = call => call.args[call.args.indexOf('--allowedTools') + 1]
   assert.ok(writer.args.includes('--allowedTools'), 'executor sem --allowedTools tem Edit/Write negados pelo dontAsk')
   // Regressão (benchmark 11/11): sem Write(./**) o executor tinha todo Write negado e devolvia BLOCKED sem escrever.
-  assert.equal(allowed(writer), 'Read,Glob,Grep,Edit(./**),Write(./**)')
+  // Regressão (benchmark souls-like, item 36): a raia fez cd src/engine e Write(./**) passou a valer no cwd do shell,
+  // negando a escrita; a regra vai pelo caminho real absoluto e cd é negado.
+  const scope = writeScope(runDir)
+  assert.equal(allowed(writer), `Read,Glob,Grep,Edit(${scope}),Write(${scope})`)
+  assert.equal(writer.args[writer.args.indexOf('--disallowedTools') + 1], 'Bash(cd:*)')
   assert.equal(writer.args[writer.args.indexOf('--tools') + 1], 'Read,Glob,Grep,Edit,Write')
   assert.equal(writer.options.cwd, realpathSync(runDir))
   assert.equal(allowed(reader), 'Read,Glob,Grep')
+  assert.ok(!reader.args.includes('--disallowedTools'))
   assert.ok(!reader.args.some(arg => /Edit|Write/.test(arg)))
 })
 
@@ -668,17 +675,18 @@ test('executorModel por pedido troca o modelo só do advisedExecutor, entre sonn
   await assert.rejects(host.spawn({ role: 'planner', prompt: 'x', schema, executorModel: 'haiku' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
 })
 
-// Power Mode (1.4): cada papel sobe um degrau. --power: o Opus planeja, o Fable 5.2 revisa e é o advisor, o Opus é o
-// executor padrão (conserto do gate); --power max: o Fable também planeja. As raias aceitam haiku, sonnet e opus.
-// Fora do power, o Opus segue fora do executor porque é o advisor.
-test('power: Opus planeja, Fable 5.2 revisa e aconselha, Opus conserta, executor aceita opus; power max põe o Fable no plano; só no claude', async t => {
+// Power Mode (1.4): o Fable 5.2 planeja, revisa e é o advisor; o Opus é o executor padrão (conserto do gate). As raias
+// aceitam haiku, sonnet e opus. Fora do power, o Opus segue fora do executor porque é o advisor. O powerMax (Fable no
+// plano só com --power max) saiu: nos benchmarks de 11/11 o plano do Fable fechou sem conserto nas 4 runs e o do Opus
+// precisou de conserto em 3.
+test('power: Fable 5.2 planeja, revisa e aconselha, Opus conserta, executor aceita opus; powerMax recusado; só no claude', async t => {
   const runDir = await tempRun(t)
   const fake = fixtureSpawn({ run(child) { child.stdout.write(JSON.stringify({ structured_output: { answer: 'ok' }, is_error: false })); close(child) } })
   const host = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn }, power: true })
   assert.equal(host.capabilities().power, true)
-  assert.equal(host.capabilities().powerMax, false)
+  assert.equal('powerMax' in host.capabilities(), false)
   const modelOf = args => args[args.indexOf('--model') + 1]
-  for (const [role, model] of [['planner', 'opus'], ['planReviewer', FABLE], ['advisedExecutor', 'opus']]) {
+  for (const [role, model] of [['planner', FABLE], ['planReviewer', FABLE], ['advisedExecutor', 'opus']]) {
     await host.wait(await host.spawn({ role, prompt: 'x', schema }))
     const args = fake.calls.at(-1).args
     assert.equal(modelOf(args), model, role)
@@ -691,14 +699,9 @@ test('power: Opus planeja, Fable 5.2 revisa e aconselha, Opus conserta, executor
     assert.equal(args[args.indexOf('--advisor') + 1], FABLE)
   }
   for (const model of [FABLE, 'gpt-6-luna']) await assert.rejects(host.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: model }), error => error.code === 'INVALID_EXECUTOR_MODEL')
-  const max = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn }, power: true, powerMax: true })
-  assert.equal(max.capabilities().powerMax, true)
-  for (const [role, model] of [['planner', FABLE], ['planReviewer', FABLE], ['advisedExecutor', 'opus']]) {
-    await max.wait(await max.spawn({ role, prompt: 'x', schema }))
-    assert.equal(modelOf(fake.calls.at(-1).args), model, `max ${role}`)
-  }
   assert.throws(() => createHost({ host: 'codex', cwd: runDir, runDir, power: true }), /power/)
-  assert.throws(() => createHost({ host: 'claude', cwd: runDir, runDir, powerMax: true }), /powerMax exige power/)
+  assert.throws(() => createHost({ host: 'claude', cwd: runDir, runDir, power: true, powerMax: true }), /powerMax foi removido/)
+  assert.throws(() => createHost({ host: 'claude', cwd: runDir, runDir, power: true, powerMax: false }), /powerMax foi removido/)
   const plain = createHost({ host: 'claude', cwd: runDir, runDir, transport: { spawn: fake.spawn } })
   await assert.rejects(plain.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: 'opus' }), error => error.code === 'INVALID_EXECUTOR_MODEL')
   await assert.rejects(plain.spawn({ role: 'advisedExecutor', prompt: 'x', schema, executorModel: FABLE }), error => error.code === 'INVALID_EXECUTOR_MODEL')
@@ -720,7 +723,7 @@ test('executor de escrita ganha Bash só nos comandos aprovados; leitura e papé
   const argsOf = async request => { await host.wait(await host.spawn({ prompt: 'x', schema, ...request })); const a = fake.calls.at(-1).args; return { tools: a[a.indexOf('--tools') + 1], allowed: a[a.indexOf('--allowedTools') + 1] } }
   const writer = await argsOf({ role: 'advisedExecutor', allowCommands: ['npm test', 'npm run build'] })
   assert.equal(writer.tools, 'Read,Glob,Grep,Edit,Write,Bash')
-  assert.equal(writer.allowed, 'Read,Glob,Grep,Edit(./**),Write(./**),Bash(npm test),Bash(npm run build)')
+  assert.equal(writer.allowed, `Read,Glob,Grep,Edit(${writeScope(runDir)}),Write(${writeScope(runDir)}),Bash(npm test),Bash(npm run build)`)
   assert.equal((await argsOf({ role: 'advisedExecutor', readOnly: true, allowCommands: ['npm test'] })).tools.includes('Bash'), false)
   assert.equal((await argsOf({ role: 'planReviewer', allowCommands: ['npm test'] })).tools.includes('Bash'), false)
   assert.equal((await argsOf({ role: 'advisedExecutor' })).tools, 'Read,Glob,Grep,Edit,Write')

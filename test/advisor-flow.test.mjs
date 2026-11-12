@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { ADVISOR_MAX_CALLS, POWER_ADVISOR_MAX_CALLS, countAdvisorCalls, executorPrompt, gateCommands, parsePowerSplit, powerWaves, routeSteps, runAdvisorFlow, splitCost } from '../bin/advisor-flow.mjs'
+import { ADVISOR_MAX_CALLS, POWER_ADVISOR_MAX_CALLS, countAdvisorCalls, executorPrompt, gateCommands, parsePowerSplit, powerModelFor, powerWaves, routeSteps, runAdvisorFlow, splitCost } from '../bin/advisor-flow.mjs'
 
 async function tempDir(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'advisor-flow-'))
@@ -85,6 +85,9 @@ test('executor BLOCKED com gate verde abre o conserto com o que ficou por fazer;
   assert.equal(sessions.length, 2)
   assert.match(sessions[1].prompt, /reported these parts BLOCKED\n- the whole task: UI incompleta/)
   assert.doesNotMatch(sessions[1].prompt, /did not pass the supervisor gate/)
+  // Regressão (benchmark souls-like, --power): o conserto reescreveu o motor inteiro e perdeu casos que já passavam.
+  assert.match(sessions[1].prompt, /The task text above is the contract/)
+  assert.doesNotMatch(sessions[0].prompt, /The task text above is the contract/)
   assert.equal(gates, 2)
   assert.deepEqual(result.sessions.map(s => s.status), ['BLOCKED', 'DONE'])
   const spent = await runAdvisorFlow({ host: fakeHost({ executorOutputs: [{ status: 'BLOCKED', summary: 'UI incompleta' }] }), cwd, task: 't', gate: GATE, runGateImpl: passing, countAdvisor: async () => 0 })
@@ -220,9 +223,9 @@ test('effort chega a todas as chamadas do fluxo', async t => {
   assert.deepEqual(host.requests.map(r => r.effort), ['max', 'max', 'max'])
 })
 
-// Power Mode (1.4): o Fable 5.2 revisa e aconselha (e planeja, com max); dentro de cada onda do plano, os passos viram
-// raias por modelo (Opus nos high, Sonnet nos medium, Haiku nos low) que rodam em paralelo em arquivos disjuntos.
-// Ondas em série. O modelo de cada papel é do host; o fluxo só decide as raias e o effort, que é o da run.
+// Power Mode (1.4): o Fable 5.2 planeja, revisa e aconselha; dentro de cada onda do plano, os passos viram raias por
+// modelo (Sonnet nos medium e nos high, Haiku nos low) que rodam em paralelo em arquivos disjuntos. Ondas em série.
+// O modelo de cada papel é do host; o fluxo só decide as raias e o effort, que é o da run.
 const powerPlan = { goal: 'g', doneWhen: ['d1'], risks: [], steps: [
   { step: 'blocks', complexity: 'low', files: ['src/engine/blocks.js'], wave: 1 },
   { step: 'noise', complexity: 'medium', files: ['src/engine/noise.js'], wave: 1 },
@@ -232,15 +235,31 @@ const powerPlan = { goal: 'g', doneWhen: ['d1'], risks: [], steps: [
   { step: 'inventory', complexity: 'medium', files: ['src/engine/inventory.js'], wave: 2 },
   { step: 'main', complexity: 'medium', files: ['src/main.jsx'], wave: 3 },
 ] }
+const OPUS_HIGH = { medium: 'sonnet', high: 'opus' }
+
+// Benchmark Minecraft (11/11): o Opus nas raias custou de 4 a 7 vezes o padrão sem nota melhor; o Sonnet em todas as
+// raias entregou no tempo do padrão. A divisão padrão é sonnet/sonnet; opus nos high só por GRAPHENG_POWER_SPLIT.
+test('powerModelFor: high vai para o Sonnet por padrão; a divisão experimental ainda põe o Opus', () => {
+  assert.equal(powerModelFor('high'), 'sonnet')
+  assert.equal(powerModelFor('medium'), 'sonnet')
+  assert.equal(powerModelFor('low'), 'haiku')
+  assert.equal(powerModelFor('high', { high: 'opus' }), 'opus')
+  assert.equal(powerModelFor('medium', { medium: 'opus' }), 'opus')
+})
 
 test('powerWaves: as ondas do plano viram raias por modelo; conflito de arquivo e passo sem arquivo dividem a onda', () => {
   assert.deepEqual(powerWaves(powerPlan.steps, { haikuMax: 'low' }), [
+    { wave: 1, lanes: [{ model: 'haiku', steps: [1, 3] }, { model: 'sonnet', steps: [2] }] },
+    { wave: 2, lanes: [{ model: 'sonnet', steps: [4, 5, 6] }] },
+    { wave: 3, lanes: [{ model: 'sonnet', steps: [7] }] },
+  ])
+  assert.deepEqual(powerWaves(powerPlan.steps, { haikuMax: 'low', ...OPUS_HIGH }), [
     { wave: 1, lanes: [{ model: 'haiku', steps: [1, 3] }, { model: 'sonnet', steps: [2] }] },
     { wave: 2, lanes: [{ model: 'opus', steps: [4, 5] }, { model: 'sonnet', steps: [6] }] },
     { wave: 3, lanes: [{ model: 'sonnet', steps: [7] }] },
   ])
   // --haiku-max medium manda os medium para o Haiku; sem Haiku, low vai para o Sonnet.
-  assert.deepEqual(powerWaves(powerPlan.steps.slice(3, 6), { haikuMax: 'medium' }), [{ wave: 1, lanes: [{ model: 'opus', steps: [1, 2] }, { model: 'haiku', steps: [3] }] }])
+  assert.deepEqual(powerWaves(powerPlan.steps.slice(3, 6), { haikuMax: 'medium', ...OPUS_HIGH }), [{ wave: 1, lanes: [{ model: 'opus', steps: [1, 2] }, { model: 'haiku', steps: [3] }] }])
   assert.deepEqual(powerWaves(powerPlan.steps.slice(0, 1), { haikuMax: null }), [{ wave: 1, lanes: [{ model: 'sonnet', steps: [1] }] }])
   // Divisão experimental: medium e high no mesmo modelo viram uma raia só; o Haiku não muda.
   assert.deepEqual(powerWaves(powerPlan.steps.slice(3, 6), { haikuMax: 'low', medium: 'opus', high: 'opus' }), [{ wave: 1, lanes: [{ model: 'opus', steps: [1, 2, 3] }] }])
@@ -256,7 +275,7 @@ test('powerWaves: as ondas do plano viram raias por modelo; conflito de arquivo 
     { step: 'b', complexity: 'high', files: ['src\\x.js'], wave: 1 },
     { step: 'c', complexity: 'low', files: ['src/y.js'], wave: 1 },
   ]
-  assert.deepEqual(powerWaves(clash), [{ wave: 1, lanes: [{ model: 'haiku', steps: [1] }] }, { wave: 2, lanes: [{ model: 'opus', steps: [2] }, { model: 'haiku', steps: [3] }] }])
+  assert.deepEqual(powerWaves(clash), [{ wave: 1, lanes: [{ model: 'haiku', steps: [1] }] }, { wave: 2, lanes: [{ model: 'sonnet', steps: [2] }, { model: 'haiku', steps: [3] }] }])
   // Passo sem arquivo roda sozinho; onda ausente ou inválida herda a do passo anterior; complexidade inválida fica no Sonnet.
   const loose = [
     { step: 'a', complexity: 'low', files: ['src/a.js'], wave: 2 },
@@ -284,10 +303,10 @@ test('fluxo power: todas as chamadas no effort da run, as raias de cada onda rod
   }
   let gates = 0
   const gate = async () => (++gates === 1 ? { pass: false, results: [{ id: 'test', command: 'npm test', exitCode: 1, outputTail: 'física falhou' }] } : { pass: true, results: [] })
-  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: gate, countAdvisor: async () => 1, haikuMax: 'low', power: true, runDir: path.join(cwd, 'run') })
+  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: gate, countAdvisor: async () => 1, haikuMax: 'low', power: true, powerSplit: OPUS_HIGH, runDir: path.join(cwd, 'run') })
   assert.equal(result.status, 'done')
   assert.equal(result.power, true)
-  assert.equal(result.powerMax, false)
+  assert.equal('powerMax' in result, false)
   const [planner, reviewer] = host.requests
   assert.equal(planner.role, 'planner')
   assert.equal(planner.effort, 'medium')
@@ -303,34 +322,99 @@ test('fluxo power: todas as chamadas no effort da run, as raias de cada onda rod
   assert.match(sessions[2].prompt, /steps 4–5 of 7 \(wave 2 of 3\)/)
   assert.match(sessions[0].prompt, /Other sessions are implementing/)
   assert.match(sessions[0].prompt, /at most 2 time/)
+  // Regressão (item 36 das melhorias): a raia fez cd e Write(./**) resolveu fora do cwd; o prompt diz como escrever.
+  assert.match(sessions[0].prompt, /`cd` is denied too: create and edit files with the Write and Edit tools, by repository path/)
   assert.match(sessions[5].prompt, /física falhou/)
+  assert.match(sessions[5].prompt, /The task text above is the contract/)
   assert.doesNotMatch(sessions[5].prompt, /Your part/)
   // 5 raias consultaram o advisor uma vez cada: do orçamento power de 6 sobra 1 para o conserto.
   assert.equal(POWER_ADVISOR_MAX_CALLS, 6)
   assert.match(sessions[5].prompt, /at most 1 time/)
   assert.equal(result.advisorCalls, 6)
-  assert.deepEqual(result.routing, powerWaves(powerPlan.steps, { haikuMax: 'low' }))
+  assert.deepEqual(result.routing, powerWaves(powerPlan.steps, { haikuMax: 'low', ...OPUS_HIGH }))
   const lanes = result.sessions.filter(s => s.wave).map(s => [s.wave, s.model, s.steps]).sort((a, b) => a[0] - b[0] || a[2][0] - b[2][0])
   assert.deepEqual(lanes, [[1, 'haiku', [1, 3]], [1, 'sonnet', [2]], [2, 'opus', [4, 5]], [2, 'sonnet', [6]], [3, 'sonnet', [7]]])
   assert.ok(result.sessions.every(s => Number.isInteger(s.ms)))
   assert.equal(JSON.parse(await readFile(path.join(cwd, 'run', 'advisor-run.json'), 'utf8')).power, true)
+  // Sem GRAPHENG_POWER_SPLIT, os high vão para o Sonnet e o conserto segue no Opus.
+  const plain = fakeHost({ plan: powerPlan })
+  gates = 0
+  await runAdvisorFlow({ host: plain, cwd, task: 't', gate: GATE, runGateImpl: gate, countAdvisor: async () => 0, haikuMax: 'low', power: true })
+  assert.deepEqual(plain.requests.filter(r => r.role === 'advisedExecutor').map(r => r.executorModel), ['haiku', 'sonnet', 'sonnet', 'sonnet', 'opus'])
 })
 
-test('fluxo power max: --effort vale para todas as chamadas; planOnly devolve as ondas e grava powerMax; host sem Fable e powerMax sem power são recusados', async t => {
+test('fluxo power: --effort vale para todas as chamadas; planOnly devolve as ondas; host sem Fable e powerMax são recusados', async t => {
   const cwd = await tempDir(t)
   const host = fakeHost({ plan: powerPlan })
-  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: passing, haikuMax: 'low', power: true, powerMax: true, effort: 'max', planOnly: true })
+  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: passing, haikuMax: 'low', power: true, effort: 'max', planOnly: true })
   assert.equal(result.status, 'planned')
-  assert.equal(result.powerMax, true)
+  assert.equal('powerMax' in result, false)
   assert.deepEqual(host.requests.map(r => r.effort), ['max', 'max'])
   assert.deepEqual(host.requests.map(r => r.role), ['planner', 'planReviewer'])
-  assert.equal(result.routing[1].lanes[0].model, 'opus')
+  assert.deepEqual(result.routing[1].lanes.map(l => l.model), ['sonnet'])
   assert.equal(result.powerSplit, undefined)
-  const split = await runAdvisorFlow({ host: fakeHost({ plan: powerPlan }), cwd, task: 't', gate: GATE, runGateImpl: passing, haikuMax: 'low', power: true, planOnly: true, powerSplit: { medium: 'sonnet', high: 'sonnet' } })
-  assert.deepEqual(split.powerSplit, { medium: 'sonnet', high: 'sonnet' })
-  assert.deepEqual(split.routing[1].lanes.map(l => l.model), ['sonnet'])
+  const split = await runAdvisorFlow({ host: fakeHost({ plan: powerPlan }), cwd, task: 't', gate: GATE, runGateImpl: passing, haikuMax: 'low', power: true, planOnly: true, powerSplit: OPUS_HIGH })
+  assert.deepEqual(split.powerSplit, OPUS_HIGH)
+  assert.equal(split.routing[1].lanes[0].model, 'opus')
   await assert.rejects(runAdvisorFlow({ host, cwd, task: 't', gate: GATE, hostName: 'codex', power: true }), /power vale só no host claude/)
-  await assert.rejects(runAdvisorFlow({ host, cwd, task: 't', gate: GATE, powerMax: true }), /powerMax exige power/)
+  // --power max saiu na 1.4: o Fable já planeja com --power.
+  await assert.rejects(runAdvisorFlow({ host, cwd, task: 't', gate: GATE, power: true, powerMax: true }), /powerMax foi removido/)
+})
+
+// Regressão (benchmark souls-like, --power): uma raia devolveu BLOCKED por um tropeço próprio (escrita negada) e a run
+// foi direto ao conserto no Opus, que refez o trabalho da raia e de outras. A raia ganha uma segunda tentativa no
+// mesmo modelo, com o próprio motivo, antes de o conserto abrir.
+const retryPlan = { goal: 'g', doneWhen: ['d1'], risks: [], steps: [
+  { step: 'blocks', complexity: 'low', files: ['src/engine/blocks.js'], wave: 1 },
+  { step: 'noise', complexity: 'medium', files: ['src/engine/noise.js'], wave: 1 },
+  { step: 'main', complexity: 'medium', files: ['src/main.jsx'], wave: 2 },
+] }
+function retryHost(blockedTimes) {
+  const host = fakeHost({ plan: retryPlan })
+  const wait = host.wait
+  let blocked = 0
+  host.wait = async handle => {
+    const result = await wait(handle)
+    const { role, prompt } = handle.request
+    if (role === 'advisedExecutor' && /steps 2 of 3/.test(prompt) && blocked < blockedTimes) { blocked++; return { ...result, output: { status: 'BLOCKED', summary: 'noise incompleto' } } }
+    return result
+  }
+  return host
+}
+
+test('fluxo power: raia BLOCKED tenta de novo uma vez no mesmo modelo, com o próprio motivo, antes do conserto', async t => {
+  const cwd = await tempDir(t)
+  const host = retryHost(1)
+  let gates = 0
+  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: async () => { gates++; return { pass: true, results: [] } }, countAdvisor: async () => 0, haikuMax: 'low', power: true })
+  assert.equal(result.status, 'done')
+  assert.equal(gates, 1)
+  const sessions = host.requests.filter(r => r.role === 'advisedExecutor')
+  assert.deepEqual(sessions.map(r => r.executorModel), ['haiku', 'sonnet', 'sonnet', 'sonnet'])
+  const retry = sessions[2]
+  assert.match(retry.prompt, /## Your part: steps 2 of 3 \(wave 1 of 2\)/)
+  assert.match(retry.prompt, /## Your previous attempt at these steps returned BLOCKED\nnoise incompleto/)
+  assert.match(retry.prompt, /is in the working tree. Finish your steps now/)
+  assert.doesNotMatch(sessions[1].prompt, /previous attempt/)
+  assert.doesNotMatch(sessions[3].prompt, /previous attempt/)
+  const lane = result.sessions.filter(s => s.wave === 1 && s.steps[0] === 2)
+  assert.deepEqual(lane.map(s => [s.status, s.retry ?? false]), [['BLOCKED', false], ['DONE', true]])
+})
+
+test('fluxo power: raia BLOCKED duas vezes vai ao conserto no Opus, listada uma vez só', async t => {
+  const cwd = await tempDir(t)
+  const host = retryHost(2)
+  const result = await runAdvisorFlow({ host, cwd, task: 't', gate: GATE, runGateImpl: passing, countAdvisor: async () => 0, haikuMax: 'low', power: true })
+  assert.equal(result.status, 'done')
+  const sessions = host.requests.filter(r => r.role === 'advisedExecutor')
+  assert.deepEqual(sessions.map(r => r.executorModel), ['haiku', 'sonnet', 'sonnet', 'sonnet', 'opus'])
+  const repair = sessions[4].prompt
+  assert.match(repair, /reported these parts BLOCKED\n- steps 2: noise incompleto\n/)
+  assert.equal(repair.match(/noise incompleto/g).length, 1)
+  assert.match(repair, /The task text above is the contract/)
+  assert.deepEqual(result.sessions.filter(s => s.steps?.[0] === 2).map(s => [s.status, s.retry ?? false]), [['BLOCKED', false], ['BLOCKED', true]])
+  assert.equal(result.sessions.at(-1).model, 'opus')
+  assert.equal(result.sessions.at(-1).round, 2)
 })
 
 test('fluxo power: uma raia que falha bloqueia a run depois que as outras raias da onda terminam', async t => {

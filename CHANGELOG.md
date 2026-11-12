@@ -2,15 +2,16 @@
 
 ## 1.4.0 — 2026-11-10
 
-Power Mode: cada papel sobe um degrau na família, os passos rodam em paralelo, e o gate continua decidindo o DONE. Desenho em [docs/power-mode.md](docs/power-mode.md).
+Power Mode: o Fable 5.2 planeja, revisa e aconselha, os passos rodam em paralelo, e o gate continua decidindo o DONE. Desenho em [docs/power-mode.md](docs/power-mode.md).
 
 ### Added
 
-- **`--power` (host Claude).** O Opus escreve o plano; o Fable 5.2 (`claude-fable-5-2`) revisa o plano e fica de advisor; o Opus pega os passos `high` e as sessões de conserto do gate; o Sonnet pega os `medium` e o Haiku os `low` (até `--haiku-max`).
-- **`--power max`.** Igual ao `--power`, com o Fable 5.2 também escrevendo o plano. São as duas únicas configurações do Power Mode; todas as chamadas usam o `--effort` da run (`medium` por padrão, o que a Anthropic recomenda para o Fable 5.2).
+- **`--power` (host Claude).** O Fable 5.2 (`claude-fable-5-2`) escreve o plano, revisa o plano e fica de advisor; o Sonnet pega os passos `high` e `medium` em raias paralelas e o Haiku os `low` (até `--haiku-max`); o Opus entra só nas sessões de conserto do gate. É a única configuração do Power Mode; todas as chamadas usam o `--effort` da run (`medium` por padrão, o que a Anthropic recomenda para o Fable 5.2). A divisão saiu dos benchmarks de 11/11: o Opus nas raias custou de 4 a 7 vezes o padrão sem nota melhor, e o plano do Fable com o Sonnet nas raias fechou sem conserto nas quatro runs (o do Opus precisou de conserto em três).
+- **Segunda tentativa da raia `BLOCKED`.** Uma raia que devolve `BLOCKED` roda de novo uma vez, no mesmo modelo e com o próprio motivo no prompt, antes de a onda fechar; só se bloquear de novo é que entra no conserto, listada uma vez. A sessão repetida traz `retry: true` no `advisor-run.json`. No benchmark souls-like, um tropeço de uma raia só mandava a run inteira para o conserto no Opus, que refazia o trabalho das outras.
+- **Conserto preso ao contrato.** A sessão de conserto (gate vermelho ou raia `BLOCKED`) recebe o texto da tarefa como contrato e a ordem de mudar só o que a falha pede, mantendo o que já passa. No souls-like, um conserto reescreveu o motor inteiro e perdeu casos que já passavam.
 - **Ondas e raias.** No Power Mode o planejador devolve, para cada passo, os arquivos que ele toca e a onda em que roda. Dentro de uma onda os passos viram raias por modelo, que rodam ao mesmo tempo em arquivos disjuntos; as ondas rodam em série e o gate roda uma vez no fim. O runner valida a pegada: dois passos da mesma onda com o mesmo arquivo, ou um passo sem arquivo, abrem uma onda nova sem mudar a ordem dos passos.
 - **Orçamento do advisor no Power Mode:** 6 chamadas por run, no máximo 2 por sessão de raia.
-- **`routing` e sessões no `advisor-run.json`:** no Power Mode, `routing` lista as ondas com as raias de cada uma, e cada sessão traz `wave`, `steps`, `model` e `ms`. O plano salvo pelo `plan` guarda `power` e `powerMax`, e `implemente` sem tarefa reaplica os dois.
+- **`routing` e sessões no `advisor-run.json`:** no Power Mode, `routing` lista as ondas com as raias de cada uma, e cada sessão traz `wave`, `steps`, `model` e `ms`. O plano salvo pelo `plan` guarda `power`, e `implemente` sem tarefa reaplica.
 - **`USAGE_LIMIT`:** o limite de uso da conta (semanal, diário ou de sessão) voltava como `CLI_FAILED` genérico; agora a chamada falha com `USAGE_LIMIT` e o texto do CLI, e a run bloqueia com `advisor_call_failed` dizendo isso.
 - **`test/fixtures/benchmark-minecraft/bench.sh`:** roda o benchmark Minecraft de ponta a ponta (cria o repositório, roda `implemente` com as flags pedidas, dá a nota com os 55 testes ocultos e o build, e resume custo, tempo e sessões).
 - **`test/fixtures/benchmark-soulslike/`:** segundo benchmark, um MVP de souls-like ("ASHEN GATE") em TypeScript estrito, React, three.js e motion: motor puro com contrato exato no `task.md` (estamina, esquiva com i-frames, combo, pesado, ataque em salto, guarda com contra-ataque, poise, riposte, frasco, lock-on, fogueira, rastro de runas, porta de névoa e chefe com duas fases), 66 testes ocultos, motor de referência e `bench.sh` com `tsc` estrito no corretor.
@@ -21,11 +22,14 @@ Power Mode: cada papel sobe um degrau na família, os passos rodam em paralelo, 
 - Uma raia que falha derruba a run só depois que as outras raias da onda terminam, para nenhuma sessão ficar órfã.
 - `implemente` sem tarefa com qualquer flag de roteamento (`--power`, `--haiku-max`, `--executor`) é recusado com a mensagem apontando o `plan`.
 - `--fable-min` (desta mesma versão, nunca publicada) saiu: é recusada como opção removida. O planejador do Power Mode não tem mais piso `high` de esforço.
+- `--power max` (desta mesma versão, nunca publicada: o Fable só no plano com o `max`) saiu, porque o Fable no plano virou o próprio `--power`. `--power max` e `--power=max` são recusados como opção removida; um plano salvo com `powerMax` é lido como `--power`. O `bench.sh` dos dois benchmarks mostra só `power` ou `padrão`.
+- **O executor do Claude não muda de diretório.** O papel de escrita recebe `--disallowedTools Bash(cd:*)` e o prompt diz para criar e editar arquivos com `Write` e `Edit` pelo caminho do repositório. Motivo no item de `Fixed` abaixo.
 
 ### Fixed
 
 - **Executor do Claude com `Write` negado.** O `--allowedTools` do papel de escrita só tinha `Edit(./**)`, e essa regra não cobre `Write`: no benchmark de 11/11 (rodada 1) a primeira sessão do executor padrão e duas raias do Power Mode devolveram `BLOCKED` sem escrever nada, e a run só fechou na sessão de conserto. Agora `Write(./**)` também é liberado, preso ao cwd.
 - **Gate verde com sessão `BLOCKED` fechava a run sem conserto.** Na rodada 1 de `--power max`, a raia da UI devolveu `BLOCKED`, o gate passou (os testes cobrem só o motor e o build compila o esqueleto) e a run fechou `blocked` sem usar a sessão de conserto que ainda tinha; a página mostrava "em construção". Agora o conserto também abre nesse caso, recebendo o que cada sessão deixou por fazer, e `advisor_executor_blocked` só sai quando as sessões acabam.
+- **Executor do Claude com `Write` negado depois de um `cd`.** As regras `Edit(./**)` e `Write(./**)` valem em relação ao cwd do shell, não ao do spawn: no benchmark souls-like (`--power`, 11/11) uma raia rodou `cd src/engine` dentro do Bash, toda escrita seguinte foi negada e a raia devolveu `BLOCKED` sem o arquivo; outra raia foi junto, e a run só fechou no conserto. Agora as regras vão pelo caminho real absoluto do cwd (`Edit(//<cwd>/**)`, `Write(//<cwd>/**)`) e o `cd` é negado ao executor.
 - **Executor do Claude com `Write` negado quando o cwd é um symlink.** O CLI resolve `Edit(./**)`/`Write(./**)` pelo caminho real do cwd, mas herdava o `PWD` com o atalho (`/tmp` → `/private/tmp` no macOS): o modelo escrevia em `/tmp/...`, a regra esperava `/private/tmp/...` e todo `Write` era negado. Na rodada 2 do benchmark de 11/11 a primeira sessão do executor padrão devolveu `BLOCKED` em 85 s só por isso. Agora o CLI é lançado com o cwd e o `PWD` já no caminho real.
 
 ### Pendente

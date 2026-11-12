@@ -118,22 +118,21 @@ Consecutive steps on the same model share one session. The advisor budget is sha
 
 ## Power Mode
 
-`--power` moves every role one step up the family: the strong model plans, the **strongest** (Fable 5.2) reviews the plan and advises, and the steps run in parallel. `--power max` puts the strongest model on the plan too. There are only these two settings. Every call keeps the run's effort (`medium` by default, what Anthropic recommends for Fable 5.2).
+`--power` puts the **strongest** model of the family (Fable 5.2) on the plan, the plan review and the advisor, keeps the mid model on every step, and runs the steps in parallel. One setting, tuned by the benchmarks below: the strong model on the steps cost 4 to 7 times more without a better grade, while the mid model on every lane, with the strongest model's plan, passed everything without a repair in all four runs. Every call keeps the run's effort (`medium` by default, what Anthropic recommends for Fable 5.2).
 
-| Role | Default | `--power` | `--power max` |
-| --- | --- | --- | --- |
-| Planner | 📝 mid | 🧠 **strong** | 🔥 **strongest** |
-| Plan review | 🧠 strong | 🔥 **strongest** | 🔥 **strongest** |
-| Advisor | 🧠 strong (3 calls per run) | 🔥 **strongest** (6 per run, 2 per lane) | 🔥 **strongest** (6 per run, 2 per lane) |
-| `high` steps and gate repairs | 📝 mid | 🧠 **strong** | 🧠 **strong** |
-| `medium` steps | 📝 mid | 📝 mid | 📝 mid |
-| `low` steps | ⚙️ cheap | ⚙️ cheap | ⚙️ cheap |
+| Role | Default | `--power` |
+| --- | --- | --- |
+| Planner | 📝 mid | 🔥 **strongest** |
+| Plan review | 🧠 strong | 🔥 **strongest** |
+| Advisor | 🧠 strong (3 calls per run) | 🔥 **strongest** (6 per run, 2 per lane) |
+| `high` and `medium` steps | 📝 mid | 📝 mid, in parallel lanes |
+| `low` steps | ⚙️ cheap | ⚙️ cheap |
+| Gate repairs | 📝 mid | 🧠 **strong** |
 
-The plan comes out in **waves**: each step names its files and the wave it runs in. Inside a wave, the steps become **lanes** by model, which run at the same time on different files; waves run in order, and the gate runs once at the end. The runner checks the file footprint before running: a clash inside a wave opens a new wave. The complete design, the Minecraft example and the benchmark plan are in [docs/power-mode.md](docs/power-mode.md) (Portuguese).
+The plan comes out in **waves**: each step names its files and the wave it runs in. Inside a wave, the steps become **lanes** by model, which run at the same time on different files; waves run in order, and the gate runs once at the end. The runner checks the file footprint before running: a clash inside a wave opens a new wave. A lane that returns `BLOCKED` gets one more try on the same model, with its own reason, before the gate repair opens. The complete design, the Minecraft example and the benchmark results are in [docs/power-mode.md](docs/power-mode.md) (Portuguese).
 
 ```
 /graph-eng:implemente build the Minecraft clone described in task.md --power
-/graph-eng:implemente build the Minecraft clone described in task.md --power max
 ```
 
 ## Commands
@@ -158,7 +157,7 @@ Always in the separated form (`--effort max`, never `--effort=max`).
 | `--effort` | `low`, `medium`, `max` | `medium` | Reasoning effort for every call in the run. |
 | `--haiku-max` | `low`, `medium`, `off` | `low` on Claude | Highest step complexity that goes to the cheap model. `off` keeps every step on the mid model. |
 | `--executor` | `sonnet`, `haiku` | none | One model for every step. Turns routing off and does not combine with `--haiku-max` or `--power`. |
-| `--power` | —, `max` | off | Turns on [Power Mode](#power-mode). `--power max` also puts the strongest model on the plan. |
+| `--power` | — | off | Turns on [Power Mode](#power-mode): the strongest model plans, reviews and advises; the steps run in parallel lanes. |
 
 `--haiku-max`, `--executor` and `--power` only exist on the Claude host; on Codex the flow does not route. With `implemente` and no task, routing comes from the saved plan, so pass these flags to `plan`.
 
@@ -213,7 +212,7 @@ Every run leaves its evidence in `.graph-runs/<runId>/advisor-run.json`: plan, r
 
 The strong model cost under 10% of the run. Raw evidence for every run is in [docs/benchmarks/](docs/benchmarks/).
 
-**Power Mode (5 rounds per variant, 2026-11-11):** all 15 runs passed the 55 hidden tests and the build. The default delivered a playable game in 5 of 5 rounds for $1.34 to $1.83 in 8 to 11 min. Power Mode as designed (strong model on the `high` steps) cost 4 to 7 times more, took 2 to 3 times longer, and `--power max` did not deliver a playable game in 2 of 2 rounds. With the mid model on every executor step (`GRAPHENG_POWER_SPLIT`, see [docs/benchmarks/](docs/benchmarks/)), `--power max` delivered in both rounds for $2.75 to $3.15 in 10 to 12 min, with code the size and shape of the default's. Same grade, same features, so the default stays the recommendation. On the larger souls-like benchmark (66 hidden tests, strict TypeScript, one run per variant) the picture held: the default passed everything for $1.57 in 8 min, while the two Power Mode runs cost 2.3 and 4.5 times more, took longer, and each kept one real rule failure. A second round with the scenery spec (autumn trees, rocks, grass, an armoured knight, a minotaur boss) flipped the grade (Power Mode 66/66, default 65/66, within run-to-run variation) at 1.7 and 2.0 times the default's cost, with 30 to 36 % more scenery code and no lost lane. The complete tables, the code-quality analysis and the next steps are in [docs/benchmarks/README.md](docs/benchmarks/README.md) and [docs/power-mode.md](docs/power-mode.md) (Portuguese).
+**Power Mode (5 rounds per variant, 2026-11-11):** all 15 runs passed the 55 hidden tests and the build. The default delivered a playable game in 5 of 5 rounds for $1.34 to $1.83 in 8 to 11 min. Power Mode as designed (strong model on the `high` steps) cost 4 to 7 times more, took 2 to 3 times longer, and `--power max` did not deliver a playable game in 2 of 2 rounds. With the mid model on every executor step (`GRAPHENG_POWER_SPLIT`, see [docs/benchmarks/](docs/benchmarks/)), `--power max` delivered in both rounds for $2.75 to $3.15 in 10 to 12 min, with code the size and shape of the default's. Same grade, same features, so the default stays the recommendation. On the larger souls-like benchmark (66 hidden tests, strict TypeScript, one run per variant) the picture held: the default passed everything for $1.57 in 8 min, while the two Power Mode runs cost 2.3 and 4.5 times more, took longer, and each kept one real rule failure. A second round with the scenery spec (autumn trees, rocks, grass, an armoured knight, a minotaur boss) flipped the grade (Power Mode 66/66, default 65/66, within run-to-run variation) at 1.7 and 2.0 times the default's cost, with 30 to 36 % more scenery code and no lost lane. The published `--power` is the configuration that never needed a repair in those rounds: the strongest model on the plan and the review, the mid model on every lane. The complete tables, the code-quality analysis and the next steps are in [docs/benchmarks/README.md](docs/benchmarks/README.md) and [docs/power-mode.md](docs/power-mode.md) (Portuguese).
 
 ### Why the graph engine was removed
 

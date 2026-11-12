@@ -18,11 +18,11 @@ const MODEL_BY_ROLE = {
 const ADVISOR_BY_ROLE = { claude: { advisedExecutor: 'opus' } }
 // Modelos aceitos no executor contínuo (--executor e roteamento por complexidade). O Opus fica de fora: ele já é o advisor.
 const ADVISED_EXECUTOR_MODELS = new Set(['sonnet', 'haiku'])
-// Power Mode (1.4, docs/power-mode.md): cada papel sobe um degrau. --power: o Opus planeja, o Fable 5.2 revisa o plano
-// e é o advisor, o Opus é o executor padrão (conserto do gate) e entra nas raias high. --power max: o Fable também planeja.
+// Power Mode (1.4, docs/power-mode.md): o Fable 5.2 planeja, revisa o plano e é o advisor; o Opus é o executor padrão
+// (conserto do gate); as raias aceitam haiku, sonnet e opus. Os benchmarks de 11/11 fixaram o Fable no plano: com o
+// Sonnet nas raias, o plano do Fable fechou sem conserto nas 4 runs (Minecraft e souls-like) e o do Opus precisou em 3.
 export const FABLE = 'claude-fable-5-2'
-const POWER_MODEL_BY_ROLE = { planner: 'opus', planReviewer: FABLE, advisedExecutor: 'opus' }
-const POWER_MAX_MODEL_BY_ROLE = { ...POWER_MODEL_BY_ROLE, planner: FABLE }
+const POWER_MODEL_BY_ROLE = { planner: FABLE, planReviewer: FABLE, advisedExecutor: 'opus' }
 const POWER_ADVISOR_BY_ROLE = { advisedExecutor: FABLE }
 const POWER_EXECUTOR_MODELS = new Set(['sonnet', 'haiku', 'opus'])
 const WRITE_SHELL_ROLES = new Set(['advisedExecutor'])
@@ -224,11 +224,11 @@ function realPath(dir) {
  * planner e planReviewer são sempre read-only. writeScope é rejeitado até haver enforcement real. A disponibilidade
  * de modelo permanece desconhecida até o CLI executar e reportar o identificador.
  */
-export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, advisedExecutorModel = null, power = false, powerMax = false }) {
+export function createHost({ host, cwd, runDir, runId = randomUUID(), transport, commandTransform = spec => spec, killProcess = process.kill.bind(process), onEvent = () => {}, timeoutMs = DEFAULT_TIMEOUT_MS, advisedExecutorModel = null, power = false, powerMax }) {
   if (!MODEL_BY_ROLE[host]) throw new TypeError(`Host desconhecido: ${host}`)
   if (power && host !== 'claude') throw new TypeError('power vale só no host claude')
-  if (powerMax && !power) throw new TypeError('powerMax exige power')
-  const models = power ? (powerMax ? POWER_MAX_MODEL_BY_ROLE : POWER_MODEL_BY_ROLE) : MODEL_BY_ROLE[host]
+  if (powerMax !== undefined) throw new TypeError('powerMax foi removido: --power já põe o Fable no plano')
+  const models = power ? POWER_MODEL_BY_ROLE : MODEL_BY_ROLE[host]
   const executorModels = power ? POWER_EXECUTOR_MODELS : ADVISED_EXECUTOR_MODELS
   const advisors = power ? POWER_ADVISOR_BY_ROLE : ADVISOR_BY_ROLE[host] ?? {}
   if (advisedExecutorModel !== null && (host !== 'claude' || !executorModels.has(advisedExecutorModel))) throw new TypeError(`advisedExecutorModel aceita somente ${[...executorModels].join(', ')}, no host claude`)
@@ -238,6 +238,10 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
   // Write era negado). O PWD vai igual, para o modelo ver o mesmo caminho da regra.
   const realCwd = realPath(cwd)
   const childOptions = () => ({ cwd: realCwd, env: { ...childEnv(), PWD: realCwd } })
+  // A regra de escrita vai pelo caminho real absoluto (//caminho/**), não por ./**: no benchmark souls-like a raia fez
+  // cd src/engine e ./** passou a valer no cwd do shell, negando todo Write (item 36 das melhorias). No Windows a regra
+  // absoluta não existe nesse formato; fica a relativa. cd é negado ao executor pelo mesmo motivo.
+  const writeScope = process.platform === 'win32' ? './**' : `//${realCwd.replace(/^\/+/, '')}/**`
   let eventSeq = 0
 
   function emit(event, request, handle, extra = {}) {
@@ -267,7 +271,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const strict = wireSchema(request.schema)
     // Isolado do ambiente do usuário (MCPs, skills, settings globais): sem isso cada turno carregava ~75k tokens.
     // dontAsk nega toda ferramenta sem regra de permissão: a escrita do executor precisa de --allowedTools,
-    // e Edit(./**) e Write(./**) a prendem ao cwd do spawn. Edit(./**) não cobre Write: no benchmark de 11/11 o executor
+    // e Edit(<cwd>/**) e Write(<cwd>/**) a prendem ao cwd do spawn. Edit não cobre Write: no benchmark de 11/11 o executor
     // teve todo Write negado, devolveu BLOCKED sem escrever e perdeu a sessão.
     const readTools = 'Read,Glob,Grep'
     // Laço de feedback do executor de escrita: Bash só nos comandos aprovados (o dontAsk nega qualquer outro comando).
@@ -275,7 +279,7 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
     const advisor = advisors[role] || null
     if (host === 'claude') return {
       role, model, readonly, schema: request.schema, wireSchema: strict,
-      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : ['Read,Glob,Grep,Edit(./**),Write(./**)', ...shell.map(c => `Bash(${c})`)].join(','), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
+      command: 'claude', args: ['-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(strict), '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--setting-sources', 'project,local', '--permission-mode', 'dontAsk', '--allowedTools', readonly ? readTools : [`Read,Glob,Grep,Edit(${writeScope}),Write(${writeScope})`, ...shell.map(c => `Bash(${c})`)].join(','), ...(readonly ? [] : ['--disallowedTools', 'Bash(cd:*)']), '--tools', readonly ? readTools : `Read,Glob,Grep,Edit,Write${shell.length ? ',Bash' : ''}`, ...(advisor ? ['--advisor', advisor] : []), ...(request.effort ? ['--effort', request.effort] : [])],
     }
     const schemaFile = path.join(runDir, `.host-${id}.schema.json`)
     const outputFile = path.join(runDir, `.host-${id}.output.json`)
@@ -285,9 +289,9 @@ export function createHost({ host, cwd, runDir, runId = randomUUID(), transport,
   function capabilities() {
     const readOnlyEnforced = host === 'claude' || process.platform !== 'win32'
     const readOnlyEnforcement = host === 'claude'
-      ? 'Claude Code usa permission-mode dontAsk e limita as ferramentas a Read, Glob e Grep; não oferece ferramenta de escrita nem shell. Papéis de escrita só gravam dentro do cwd (Edit(./**)).'
+      ? 'Claude Code usa permission-mode dontAsk e limita as ferramentas a Read, Glob e Grep; não oferece ferramenta de escrita nem shell. Papéis de escrita só gravam dentro do cwd (Edit e Write presos ao caminho real) e não mudam de diretório.'
       : readOnlyEnforced ? 'Codex CLI usa -s read-only para restringir gravações no sandbox do sistema de arquivos.' : null
-    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(models), power, powerMax, structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex' }
+    return { host, cli: host === 'claude' ? 'claude' : 'codex', roles: Object.keys(models), power, structuredOutput: true, schemaTransport: host === 'claude' ? 'json-schema-argument' : 'schema-file', promptTransport: 'stdin', lifecycleEvents: true, cancellation: process.platform === 'win32' ? 'process' : 'process-group', modelAvailability: 'unknown', readOnlyEnforced, readOnlyEnforcement, agentShell: host === 'codex' }
   }
 
   async function spawnRequest(request) {

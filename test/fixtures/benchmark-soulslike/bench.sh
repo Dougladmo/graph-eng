@@ -36,7 +36,7 @@ node -e '
 const r = JSON.parse(require("node:fs").readFileSync("bench-result.json", "utf8"))
 const money = v => `US$ ${Number(v ?? 0).toFixed(2)}`
 console.log(`status: ${r.status}${r.feedback ? ` (${r.feedback.reason})` : ""}${r.exception ? ` ${r.exception.code}: ${r.exception.message}` : ""}`)
-console.log(`modo: ${r.power ? (r.powerMax ? "power max" : "power") : "padrão"}${r.haikuMax ? ` · haiku-max ${r.haikuMax}` : ""}${r.powerSplit ? ` · split medium=${r.powerSplit.medium} high=${r.powerSplit.high}` : ""}`)
+console.log(`modo: ${r.power ? "power" : "padrão"}${r.haikuMax ? ` · haiku-max ${r.haikuMax}` : ""}${r.powerSplit ? ` · split medium=${r.powerSplit.medium} high=${r.powerSplit.high}` : ""}`)
 console.log(`tempo: ${Math.round((r.engineMs ?? 0) / 1000)} s · custo: ${money(r.cost?.costUSD)} · advisor: ${r.advisorCalls ?? 0} chamada(s) · runDir: ${r.runDir}`)
 for (const [model, usd] of Object.entries(r.cost?.byModel ?? {})) console.log(`  ${model}: ${money(usd)}`)
 if (r.power) for (const wave of r.routing ?? []) console.log(`  onda ${wave.wave}: ${wave.lanes.map(l => `${l.model} [${l.steps.join(", ")}]`).join(" | ")}`)

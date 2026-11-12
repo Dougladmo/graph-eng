@@ -28,8 +28,9 @@ test('skill portátil tem nome correspondente à pasta e descreve só o fluxo ad
   assert.match(skill, /use o nome da skill que o cliente mostra \(ex\.: `graph-eng:grapheng`\)/)
   assert.doesNotMatch(skill, /Codex `\$grapheng/)
   for (const command of ['plan', 'implemente']) assert.match(skill, new RegExp(`\`${command}`))
-  for (const flag of ['--effort low|medium|max', '--haiku-max low|medium|off', '--power', '--power max', 'advisor-plan.json', 'advisor_plan_missing', 'advisor_gate_missing_test']) assert.ok(skill.includes(flag), flag)
-  assert.doesNotMatch(skill, /--fable-min/)
+  for (const flag of ['--effort low|medium|max', '--haiku-max low|medium|off', '--power', 'advisor-plan.json', 'advisor_plan_missing', 'advisor_gate_missing_test']) assert.ok(skill.includes(flag), flag)
+  // --power max e --fable-min saíram antes de a 1.4 ser publicada.
+  assert.doesNotMatch(skill, /--fable-min|--power max|\[max\]/)
   // O motor de grafo saiu na 1.3.0: nada de clarify, tasks, init, painel ou --adaptive.
   assert.doesNotMatch(skill, /`(clarify|tasks|init)`|--adaptive|--flow|painel|DESIGN\.md|needs_clarification/)
   await assert.rejects(access(path.join(root, 'skills/grapheng/DESIGN.md')))
@@ -44,8 +45,8 @@ test('commands de Claude são exatamente implemente e plan, com envelope, argv[0
     const name = path.basename(file, '.md')
     const text = await readFile(path.join(root, 'commands', file), 'utf8')
     assert.match(text, /^---\s*\ndescription: .+\n/, file)
-    assert.match(text, /^argument-hint: .*\[--effort low\|medium\|max\] \[--haiku-max low\|medium\|off\] \[--executor sonnet\|haiku\] \[--power \[max\]\]"/m, file)
-    assert.doesNotMatch(text, /--fable-min/, file)
+    assert.match(text, /^argument-hint: .*\[--effort low\|medium\|max\] \[--haiku-max low\|medium\|off\] \[--executor sonnet\|haiku\] \[--power\]"/m, file)
+    assert.doesNotMatch(text, /--fable-min|--power max|\[max\]/, file)
     assert.match(text, /--invocation/, file)
     assert.match(text, /\$\{CLAUDE_PLUGIN_ROOT\}/, file)
     assert.match(text, new RegExp(`"argv"\\s*:\\s*\\["${name}"`), file)

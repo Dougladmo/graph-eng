@@ -19,7 +19,7 @@ const EXECUTORS = new Set(['sonnet', 'haiku'])
 // Padrão no claude: low (benchmark Minecraft 23/10: 55/55 por US$ 1,59). off ou --executor desligam o roteamento.
 const HAIKU_MAX = new Set(['low', 'medium', 'off'])
 const DEFAULT_HAIKU_MAX = 'low'
-// --power: Power Mode (docs/power-mode.md). Sozinho ou seguido de max (--power max): as duas únicas configurações.
+// --power: Power Mode (docs/power-mode.md), uma configuração só. --power max saiu antes de a 1.4 ser publicada.
 const FLAGS = { '--effort': ['effort', EFFORTS, 'low, medium ou max'], '--executor': ['executor', EXECUTORS, 'sonnet ou haiku'], '--haiku-max': ['haikuMax', HAIKU_MAX, 'low, medium ou off'] }
 const POWER_FLAG = '--power'
 const POWER_MAX = 'max'
@@ -42,10 +42,10 @@ export function parseGrapheng(argv) {
     if (!literal && token.startsWith('-')) {
       const [flag, inline] = token.split('=')
       if (flag === POWER_FLAG) {
-        if (inline !== undefined) throw new Error(`${token} não é aceito; use --power ou --power max`)
+        if (inline === POWER_MAX || tail[i + 1] === POWER_MAX) throw new Error(`--power max foi removido: --power já põe o Fable no plano e na revisão`)
+        if (inline !== undefined) throw new Error(`${token} não é aceito; use --power`)
         if (parsed.power !== undefined) throw new Error('--power repetido')
         parsed.power = true
-        if (tail[i + 1] === POWER_MAX) { parsed.powerMax = true; i++ }
         continue
       }
       if (FLAGS[flag]) {
@@ -78,11 +78,11 @@ function validateHost(host) {
   return host
 }
 
-// Roteamento efetivo: --executor fixa um modelo; senão --haiku-max (padrão low no claude). --power liga o Power Mode;
-// --power max sobe também o planejador. Codex não roteia nem tem Fable.
+// Roteamento efetivo: --executor fixa um modelo; senão --haiku-max (padrão low no claude). --power liga o Power Mode.
+// Codex não roteia nem tem Fable.
 function routing(parsed, host) {
   if (parsed.power && host !== 'claude') throw new Error('--power vale só no host claude')
-  const power = { power: Boolean(parsed.power), powerMax: Boolean(parsed.powerMax) }
+  const power = { power: Boolean(parsed.power) }
   if (parsed.executor) {
     if (host !== 'claude') throw new Error('--executor vale só no host claude')
     return { executor: parsed.executor, haikuMax: null, ...power }
@@ -107,21 +107,21 @@ export async function executeGrapheng({ invocation, cwd = process.cwd(), host, a
     catch { return { status: 'blocked', runId, runDir, feedback: { kind: 'BLOCK', reason: 'advisor_plan_missing', detail: 'nenhum plano salvo: rode plan <tarefa> ou implemente <tarefa>' } } }
     if (saved.host !== trustedHost) return { status: 'blocked', runId, runDir, feedback: { kind: 'BLOCK', reason: 'advisor_plan_host_mismatch', detail: `o plano salvo é do host ${saved.host}` } }
     task = saved.task
-    route = { executor: saved.executor ?? null, haikuMax: saved.haikuMax ?? null, power: saved.power === true, powerMax: saved.powerMax === true }
+    route = { executor: saved.executor ?? null, haikuMax: saved.haikuMax ?? null, power: saved.power === true }
     planned = { plan: saved.plan, review: saved.review }
   }
-  const flowHost = hostFactory({ host: trustedHost, cwd, runDir, runId, ...(route.executor ? { advisedExecutorModel: route.executor } : {}), ...(route.power ? { power: true, powerMax: route.powerMax } : {}) })
+  const flowHost = hostFactory({ host: trustedHost, cwd, runDir, runId, ...(route.executor ? { advisedExecutorModel: route.executor } : {}), ...(route.power ? { power: true } : {}) })
   const result = await advisorFlowImpl({
     host: flowHost, hostName: trustedHost, cwd, task, runDir, log,
     effort: parsed.effort ?? DEFAULT_EFFORT,
     ...(route.haikuMax ? { haikuMax: route.haikuMax } : {}),
-    ...(route.power ? { power: true, powerMax: route.powerMax, powerSplit: parsePowerSplit(env.GRAPHENG_POWER_SPLIT) } : {}),
+    ...(route.power ? { power: true, powerSplit: parsePowerSplit(env.GRAPHENG_POWER_SPLIT) } : {}),
     ...(parsed.command === 'plan' ? { planOnly: true } : {}),
     ...(planned ? { planned } : {}),
   })
   if (parsed.command === 'plan' && result.status === 'planned') {
     await mkdir(path.dirname(savedPlanFile), { recursive: true })
-    await writeFile(savedPlanFile, JSON.stringify({ host: trustedHost, task, haikuMax: route.haikuMax, executor: route.executor, power: route.power, powerMax: route.powerMax, runId, plan: result.plan, review: result.review }, null, 2) + '\n')
+    await writeFile(savedPlanFile, JSON.stringify({ host: trustedHost, task, haikuMax: route.haikuMax, executor: route.executor, power: route.power, runId, plan: result.plan, review: result.review }, null, 2) + '\n')
   }
   return { ...result, runId, runDir }
 }
